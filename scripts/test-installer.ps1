@@ -1,5 +1,5 @@
 # Destructive lifecycle smoke: disposable elevated Windows x64 CI runners only.
-# Never invoke on the owner's PC. Does not launch the tray or dashboard.
+# Never invoke on the owner's PC. Launches the tray once to verify first-run startup.
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)][string]$Setup,
@@ -40,10 +40,11 @@ $rules = Join-Path $userData 'rules.json'
 Set-Content -LiteralPath $rules -Value '{"rules":[]}' -NoNewline -Encoding utf8
 $sourceHash = (Get-FileHash -LiteralPath $rules).Hash
 Invoke-Bounded $Setup @('/S')
-# The unelevated tray applies the first-run machine default in its own profile.
-# No UAC request: CI already runs under the test user's identity.
+# The tray applies the first-run default in the CI user's own profile. This does
+# not prove unelevation on an already elevated runner. No UAC request is made.
 $tray = Start-Process -FilePath (Join-Path $dir 'Corewright.Tray.exe') -PassThru -WindowStyle Hidden
 Write-Host "Tray PID $($tray.Id); setup closes it during the bounded upgrade below."
+try {
 $startupDeadline = (Get-Date).AddSeconds(10)
 while (!(Get-ItemProperty -LiteralPath $runKey -Name Corewright -ErrorAction SilentlyContinue) -and (Get-Date) -lt $startupDeadline) { Start-Sleep -Milliseconds 100 }
 foreach ($file in 'Corewright.Service.exe', 'Corewright.Tray.exe', 'Corewright.Dashboard.exe', 'Corewright.Dashboard.dll', 'Corewright.Dashboard.runtimeconfig.json', 'appsettings.json', 'corewright.ico', 'wwwroot/index.html', 'uninstall.exe', 'install-manifest.txt') {
@@ -79,7 +80,6 @@ Invoke-Bounded $uninstaller @('/S')
 $deadline = (Get-Date).AddSeconds(120)
 while (((Test-Path -LiteralPath $key) -or (Test-Path -LiteralPath $dir)) -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 250 }
 if (!$tray.WaitForExit(10000)) { throw "CI's tray PID $($tray.Id) did not close" }
-$tray.Dispose()
 Assert (!(Get-Service Corewright -ErrorAction SilentlyContinue)) 'service removed'
 Assert (!(Test-Path -LiteralPath $key)) 'Installed apps entry removed'
 Assert (!(Get-ItemProperty -LiteralPath $runKey -Name Corewright -ErrorAction SilentlyContinue)) 'autostart removed'
@@ -89,4 +89,10 @@ Assert (!(Test-Path -LiteralPath (Join-Path $dir 'wwwroot'))) 'dashboard assets 
 Assert ((Get-Content -LiteralPath $sentinel -Raw).Trim() -eq 'keep') 'ProgramData survives silent uninstall'
 Assert ((Get-FileHash -LiteralPath (Join-Path $data 'rules.json')).Hash -eq $sourceHash) 'rules survive silent uninstall'
 Assert (!(Test-Path -LiteralPath $dir)) 'install folder removed'
+} finally {
+    # On a failed CI assertion, clean up only the exact tray process this script
+    # started. The fixture is disposable; no unrelated process is selected.
+    if (!$tray.HasExited) { $tray.Kill(); $null = $tray.WaitForExit(5000) }
+    $tray.Dispose()
+}
 exit 0
