@@ -150,3 +150,16 @@
 .swatch.custom { background: var(--sw, conic-gradient(#d13438, #ca5010, #c19c00, #107c10, #038387, #0078d4, #8764b8, #e3008c, #d13438)); overflow: hidden; }
 .swatch.custom input { position: absolute; inset: 0; opacity: 0; cursor: default; }
 @media (prefers-reduced-motion: reduce) { .swatch:hover { transform: none; } }
+
+/* Overview charts: the card's width, a labelled top line and a 50 % guide (owner, 2026-11-02). */
+.card.metric { padding: 12px 14px 10px; display: flex; flex-direction: column; }
+.metric .metric-sub { margin-bottom: 8px; }
+.spark { position: relative; margin: 0 -2px; border-bottom: 1px solid var(--stroke-control); }
+.spark-plot { position: absolute; inset: 0; }
+.spark-plot .uplot, .spark-plot canvas { display: block; }
+.spark-line { position: absolute; left: 0; right: 0; border-top: 1px dashed var(--divider); pointer-events: none; }
+.spark-line.top { top: 0; border-top-style: solid; border-top-color: var(--stroke-control); }
+.spark-line.mid { top: 50%; }
+.spark-line span { position: absolute; right: 2px; top: 1px; font-size: 11px; line-height: 14px; color: var(--secondary-text); font-variant-numeric: tabular-nums;
+  background: color-mix(in srgb, var(--layer) 80%, transparent); padding: 0 3px; border-radius: 3px; }
+.metric-foot { display: flex; justify-content: space-between; margin-top: 4px; font-size: 11px; color: var(--secondary-text); font-variant-numeric: tabular-nums; }

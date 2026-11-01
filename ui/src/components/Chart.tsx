@@ -85,3 +85,78 @@ export function Chart({ time, values, colorVar, height = 120, max, format }: Pro
 
   return <div ref={host} className="chart" />
 }
+
+/** 1, 2 or 5 × 10^n at or above v, so the top line is a round number with some headroom. */
+export function niceCeil(v: number): number {
+  if (v <= 0) return 1
+  const p = 10 ** Math.floor(Math.log10(v))
+  for (const m of [1, 2, 5, 10]) if (m * p >= v) return m * p
+  return 10 * p
+}
+
+interface SparkProps {
+  time: number[]
+  values: number[]
+  colorVar: string
+  /** The top of the scale: the real maximum (100 %, total memory) or a rounded peak. */
+  top: number
+  /** Labels for the top and middle guide lines, e.g. "100 %" / "50 %" or "61 GB" / "31 GB". */
+  topLabel: string
+  midLabel: string
+  format: (v: number) => string
+  height?: number
+}
+
+/**
+ * The overview chart (owner, 2026-11-02: "with these graphs you dont get a real feeling what the maximum is and how
+ * much is used"): the whole card width, a fixed scale from 0 to a labelled top line, a 50 % guide, no axis clutter.
+ */
+export function Spark({ time, values, colorVar, top, topLabel, midLabel, format, height = 84 }: SparkProps) {
+  const host = useRef<HTMLDivElement>(null)
+  const plot = useRef<uPlot | null>(null)
+  const topRef = useRef(top)
+  topRef.current = top
+  const formatRef = useRef(format)
+  formatRef.current = format
+  const dark = useScheme()
+
+  useEffect(() => {
+    const el = host.current
+    if (!el) return
+    const color = css(colorVar) || '#60cdff'
+    const opts: uPlot.Options = {
+      width: el.clientWidth,
+      height,
+      padding: [1, 0, 0, 0],
+      legend: { show: false },
+      cursor: { points: { size: 6 }, drag: { x: false, y: false }, y: false },
+      scales: { x: { time: true }, y: { range: () => [0, topRef.current] } },
+      axes: [{ show: false }, { show: false }],
+      series: [{}, { stroke: color, width: 1.5, fill: withAlpha(color, 0.22), points: { show: false }, value: (_u, v) => (v == null ? '' : formatRef.current(v)) }],
+    }
+    plot.current = new uPlot(opts, [[], []], el)
+    const ro = new ResizeObserver(() => plot.current?.setSize({ width: el.clientWidth, height }))
+    ro.observe(el)
+    return () => {
+      ro.disconnect()
+      plot.current?.destroy()
+      plot.current = null
+    }
+  }, [colorVar, height, dark])
+
+  useEffect(() => {
+    plot.current?.setData([time.map((t) => t / 1000), values])
+  }, [time, values, top, dark])
+
+  return (
+    <div className="spark" style={{ height }}>
+      <div ref={host} className="spark-plot" />
+      <div className="spark-line top">
+        <span>{topLabel}</span>
+      </div>
+      <div className="spark-line mid">
+        <span>{midLabel}</span>
+      </div>
+    </div>
+  )
+}
