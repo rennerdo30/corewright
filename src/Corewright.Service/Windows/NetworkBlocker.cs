@@ -56,7 +56,8 @@ internal sealed unsafe partial class NetworkBlocker : IDisposable
         finally { if (appId != 0) FwpmFreeMemory0(ref appId); }
     }
     private static void Check(uint result) { if (result != 0) throw new Win32Exception(unchecked((int)result)); }
-    public void Dispose() { if (_engine != 0) FwpmEngineClose0(_engine); _engine = 0; _filters.Clear(); }
+    public void Dispose() { if (_engine != 0) Check(FwpmEngineClose0(_engine)); _engine = 0; _filters.Clear(); }
+    public bool Closed => _engine == 0;
 
     // Layouts from the Windows SDK fwpmtypes.h; pointer-sized members keep the native alignment.
     [StructLayout(LayoutKind.Sequential)] private struct Blob { public uint Size; public nint Data; }

@@ -97,7 +97,7 @@ public sealed class RuleEngine(IActuator actuator, IEngineEventSink sink)
         if (Paused) return;
         RevertAll();
         Paused = true;
-        sink.Emit(new EngineEvent(EngineEventKind.Info, 0, "", null, null, null, "rules paused, all changes reverted"));
+        sink.Emit(new EngineEvent(EngineEventKind.Info, 0, "", null, null, null, "rules paused; releases requested"));
     }
 
     public void Resume()
@@ -268,7 +268,7 @@ public sealed class RuleEngine(IActuator actuator, IEngineEventSink sink)
             return;
         }
 
-        if (st.IsApplied[s] && st.Applied[s] == value)
+        if (st.IsApplied[s] && st.Applied[s] == value && (st.RevertFailed & (1 << s)) == 0)
         {
             st.AppliedRule[s] = rule;
             if (slot == Slot.CpuPriority && p.BasePriority != 0 &&
@@ -301,6 +301,7 @@ public sealed class RuleEngine(IActuator actuator, IEngineEventSink sink)
             st.Applied[s] = value;
             st.AppliedRule[s] = rule;
             st.Failed[s] = false;
+            st.RevertFailed &= ~(1 << s);
             sink.Emit(new EngineEvent(EngineEventKind.Applied, p.Key.Pid, p.Name, rule!.Name, Slots.Name(slot),
                 Slots.FormatValue(slot, value), null));
         }
@@ -324,10 +325,19 @@ public sealed class RuleEngine(IActuator actuator, IEngineEventSink sink)
     private void Revert(ProcState st, int s)
     {
         var slot = (Slot)s;
+        bool network = slot is Slot.NetworkBlocked or Slot.UploadLimit or Slot.NetworkPriority;
+        bool reported = (st.RevertFailed & (1 << s)) != 0;
         bool ok = actuator.TryWrite(st.Key, slot, st.Original[s], out var err);
-        sink.Emit(new EngineEvent(ok ? EngineEventKind.Reverted : EngineEventKind.Failed, st.Key.Pid, st.Name,
-            st.AppliedRule[s]?.Name, Slots.Name(slot), Slots.FormatValue(slot, st.Original[s]),
-            ok ? null : $"revert failed: {err}"));
+        if (ok || !reported)
+            sink.Emit(new EngineEvent(ok ? EngineEventKind.Reverted : EngineEventKind.Failed, st.Key.Pid, st.Name,
+                st.AppliedRule[s]?.Name, Slots.Name(slot), Slots.FormatValue(slot, st.Original[s]),
+                ok ? null : $"revert failed: {err}"));
+        if (!ok && network)
+        {
+            st.RevertFailed |= 1 << s;
+            return; // Keep confirmed enforcement until release, or transfer it to actuator.Forget.
+        }
+        st.RevertFailed &= ~(1 << s);
         st.IsApplied[s] = false;
         st.AppliedRule[s] = null;
     }
@@ -339,6 +349,7 @@ public sealed class RuleEngine(IActuator actuator, IEngineEventSink sink)
         public long Seen;
         public int Version = -1;
         public int DriftCount;
+        public int RevertFailed;
 
         // Per rule (resized when the rule set changes).
         public byte[] StaticCache = [];

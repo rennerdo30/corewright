@@ -262,8 +262,9 @@ internal sealed class Monitor : BackgroundService
             _actuator.Dispose();
             _gpu?.Dispose();
             _processNetwork?.Dispose();
+            _actuator.Network.Ownership.Dispose();
             _sampler.Dispose();
-            _log.LogInformation("Corewright monitor stopped; all changes reverted");
+            _log.LogInformation("Corewright monitor stopped; cleanup failures, if any, are reported above");
         }
     }
 
@@ -273,6 +274,7 @@ internal sealed class Monitor : BackgroundService
         {
             _sampler.Sample();
             _ctx.NowMs = Environment.TickCount64;
+            _actuator.Network.RetryPending(_ctx.NowMs);
             bool needNetwork = Engine.Rules.NeedsNetwork || (IsClientActive && _ctx.NowMs - Interlocked.Read(ref _networkLastUse) < 5000);
             if (needNetwork && _processNetwork is null && !_networkFailed)
             {
