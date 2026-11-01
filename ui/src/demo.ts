@@ -3,7 +3,7 @@
  * real machine's processes, paths or user names are ever published. Only built with VITE_DEMO=1; the normal
  * build drops this file (the import in api.ts is behind a compile-time constant).
  */
-import type { AppSettings, BackgroundRow, EngineEvent, Placement, ProcessRow, Rule, RuleSet, Status, SystemInfo, Topology } from './types'
+import type { AppSettings, BackgroundRow, Device, EngineEvent, Placement, ProcessRow, Rule, RuleSet, Status, SystemInfo, Topology } from './types'
 
 const now = Date.now()
 const wave = (n: number, base: number, amp: number, seed: number) =>
@@ -342,6 +342,24 @@ const events: EngineEvent[] = [
 
 const json = <T>(v: T): T => structuredClone(v)
 
+const devices: Device[] = [
+  { id: 'disk:0', kind: 'disk', name: 'Northstar N4 Pro', index: 0, bus: 'NVMe', size: 2e12, volumes: ['C:\\'], hidden: false,
+    values: { read: 36e6, write: 8e6, active: 14 }, health: { temperature: 41, wearPercent: 3, sparePercent: 100, criticalWarning: 0, mediaErrors: '0', powerOnHours: '2841', unsafeShutdowns: '2', dataUnitsRead: '184000000', dataUnitsWritten: '96000000' } },
+  { id: 'disk:1', kind: 'disk', name: 'Harbor Archive S2', index: 1, bus: 'SATA', size: 4e12, volumes: ['E:\\'], hidden: false,
+    values: { read: 3.2e6, write: 1e6, active: 3 }, health: { temperature: 32 } },
+  { id: 'gpu:001:0', kind: 'gpu', name: 'Lumen Arc 24', dedicatedMemory: 24 * 1024 ** 3, sharedMemory: 32 * 1024 ** 3, hidden: false,
+    values: { load: 92.3, dedicatedUsed: 11.4 * 1024 ** 3, sharedUsed: 240e6 }, health: { temperature: 68, fanRpm: 1420, powerPercent: 72, engineClockMhz: 2415 } },
+  { id: 'gpu:002:0', kind: 'gpu', name: 'Lumen Integrated Graphics', dedicatedMemory: 512 * 1024 ** 2, sharedMemory: 32 * 1024 ** 3, hidden: false,
+    values: { load: 6.2, dedicatedUsed: 124e6, sharedUsed: 310e6 }, health: { temperature: 44, engineClockMhz: 600 } },
+  { id: 'net:001', kind: 'network', name: 'Harbor 2.5G Controller', alias: 'Ethernet', type: 'Ethernet', connected: true, receiveLinkSpeed: 2.5e9, sendLinkSpeed: 2.5e9, hidden: false,
+    values: { read: 10.8e6, write: 1.3e6 }, health: {} },
+  { id: 'net:002', kind: 'network', name: 'Northstar Wireless 7', alias: 'Wi-Fi', type: 'Wi-Fi', connected: true, receiveLinkSpeed: 1.2e9, sendLinkSpeed: 1.2e9, hidden: false,
+    values: { read: 860e3, write: 210e3 }, health: {} },
+].map((d, i) => ({ ...d, values: { ...d.values, sampledAt: now }, history: {
+  time: system.historyTime, primary: wave(HIST, d.values.load ?? d.values.read ?? 0, d.kind === 'gpu' ? 3 : (d.values.read ?? 0) * 0.4, i + 1),
+  secondary: wave(HIST, d.values.write ?? 0, (d.values.write ?? 0) * 0.3, i + 3),
+} })) as Device[]
+
 export async function demoRequest(method: string, path: string, body?: unknown): Promise<unknown> {
   const p = path.split('?')[0]
   if (method !== 'GET') {
@@ -357,6 +375,10 @@ export async function demoRequest(method: string, path: string, body?: unknown):
       return json(status)
     case '/system':
       return json(system)
+    case '/devices': {
+      const ids = new URLSearchParams(path.split('?')[1]).get('history')?.split(',') ?? []
+      return { inventoryAt: now, sampling: true, devices: json(devices).map(d => ({ ...d, history: ids.includes('*') || ids.includes(d.id) ? d.history : undefined })) }
+    }
     case '/topology':
       return json(topology)
     case '/processes':

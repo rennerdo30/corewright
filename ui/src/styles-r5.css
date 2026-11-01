@@ -8,6 +8,22 @@
   --role-lasso: #6b7280;
   --role-example: #6b7280;
 }
+
+/* Device details use the same cards, type ramp and native controls as Overview. */
+.device-selector { width: 100%; min-width: 0; font-size: 12px; padding: 3px 7px; margin: 5px 0; }
+.metric:has(.device-selector) .metric-sub { margin-top: 0; }
+.device-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr)); gap: 12px; }
+.device-heading { display: flex; align-items: flex-start; gap: 12px; min-width: 0; }
+.device-heading .glyph { font-size: 24px; color: var(--accent); padding-top: 3px; }
+.device-heading h4 { margin: 0; font-size: 15px; font-weight: 600; overflow-wrap: anywhere; }
+.device-heading p { margin: 4px 0 0; overflow-wrap: anywhere; }
+.device-live { display: flex; align-items: baseline; gap: 9px; margin: 14px 0 8px; }
+.device-live strong { font-size: 22px; font-weight: 600; }
+.device-details { display: grid; grid-template-columns: 1fr 1fr; gap: 9px 18px; margin: 14px 0 0; }
+.device-details > div { min-width: 0; }
+.device-details dt { font-size: 12px; color: var(--secondary-text); }
+.device-details dd { margin: 2px 0 0; font-size: 13px; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+.device-filter { display: flex; align-items: center; gap: 7px; font-size: 13px; }
 @media (prefers-color-scheme: dark) {
   :root {
     --role-rule: #6fcf97;

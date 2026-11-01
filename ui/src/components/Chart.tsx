@@ -96,7 +96,7 @@ export function niceCeil(v: number): number {
 
 interface SparkProps {
   time: number[]
-  values: number[]
+  values: (number | null)[]
   colorVar: string
   /** The top of the scale: the real maximum (100 %, total memory) or a rounded peak. */
   top: number
