@@ -15,6 +15,8 @@ internal static unsafe class Program
 {
     private const uint WM_TRAY = WM_APP + 1;
     private const uint WM_FOREGROUND = WM_APP + 2;
+    /// <summary>Posted by the window when its close button is set to exit Corewright.</summary>
+    private const uint WM_EXIT_ALL = WM_APP + 3;
     private const int CmdOpen = 1, CmdPause = 2, CmdResume = 3, CmdExit = 9;
     public const string DashboardExitEvent = @"Local\Corewright.Dashboard.Exit";
 
@@ -27,10 +29,13 @@ internal static unsafe class Program
     private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(2) };
 
     [STAThread]
-    private static int Main()
+    private static int Main(string[] args)
     {
         using var single = new Mutex(true, @"Local\Corewright.Tray", out bool created);
         if (!created) return 0;
+        // "--background": started by the window itself, which is already open.
+        bool background = args.Contains("--background", StringComparer.OrdinalIgnoreCase);
+        StartupPreferences.ApplyMachineDefault();
 
         // Menus follow the system theme (dark, rounded Windows 11 menus).
         try
@@ -60,6 +65,8 @@ internal static unsafe class Program
         nint hook = SetWinEventHook(EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND, 0, &OnWinEvent, 0, 0,
             WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS);
         ReportForeground(GetForegroundWindow());
+        // Settings > Window: "Open the window when Corewright starts" (off = start minimized in the tray).
+        if (!background && WindowPreferences.OpenOnStart) OpenDashboard();
 
         MSG msg;
         while (GetMessageW(&msg, 0, 0, 0) > 0)
@@ -90,6 +97,11 @@ internal static unsafe class Program
             uint ev = (uint)(l & 0xFFFF);
             if (ev is WM_LBUTTONDBLCLK or WM_LBUTTONUP) OpenDashboard();
             else if (ev is WM_RBUTTONUP or WM_CONTEXTMENU) ShowMenu();
+            return 0;
+        }
+        if (msg == WM_EXIT_ALL)
+        {
+            ExitAll(QueryStatus() is { Service: false });
             return 0;
         }
         if (msg == WM_FOREGROUND)

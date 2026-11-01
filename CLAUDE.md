@@ -144,7 +144,12 @@ Per-process `netSend`/`netReceive` (bytes/s) are requested with `/processes?incl
 
 ## Releases
 
-Any release, installer or publication needs the owner's yes. `scripts/publish.ps1` builds the UI and the NativeAOT binaries locally; it does not install or publish anything.
+**Standing approval (owner, 2026-11-02): "the release should auto publish, i dont need to say anything, you decide."** Corewright releases (tags, GitHub releases, the website) are published by the agents without asking each time; the agent decides when a state is ready (betas freely, stable releases only after the beta it comes from was tested). Required reviews and checks still apply. This replaces the shared "every release needs the owner's yes" rule for this repository only.
+
+- Versions come from `Directory.Build.props` (`<Version>`); a `v<version>` tag makes `.github/workflows/release.yml` build the setup and `SHA256SUMS.txt` and publish the release (pre-release for `-beta.N` tags).
+- First releases are betas (owner, 2026-11-02): 0.1.0-beta.1 = state at the installer merge, 0.1.0-beta.2 = networking.
+- Update channels (Settings → Updates): Stable (GitHub `releases/latest`) or Beta (newest published release, beta or stable). Until the user picks one, the channel follows the installed version, so a beta setup updates on Beta.
+- Website (`website/`, GitHub Pages, https://corewright.renner.dev, deployed by the manual "Website Pages" workflow): the download section shows the newest stable release, `/beta/` the newest beta, both read from the GitHub API in the browser. `scripts/publish.ps1` builds the UI and the NativeAOT binaries locally; it does not install or publish anything.
 
 ## Open items
 

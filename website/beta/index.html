@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Corewright beta</title>
+  <meta name="description" content="Download the newest Corewright beta: new features first, updates itself on the beta channel.">
+  <meta name="color-scheme" content="light dark">
+  <meta name="theme-color" content="#e8ebf1" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#12151d" media="(prefers-color-scheme: dark)">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self'; style-src 'self'; script-src 'self'; connect-src https://api.github.com; base-uri 'none'; form-action 'none'">
+  <link rel="canonical" href="https://corewright.renner.dev/beta/">
+  <link rel="icon" href="/favicon.ico" sizes="any">
+  <link rel="icon" href="../assets/corewright-mark.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="../style.css">
+  <script src="../releases.js" defer></script>
+</head>
+<body class="beta-page">
+  <a class="skip" href="#main">Skip to content</a>
+
+  <header class="top">
+    <a class="brand" href="../" aria-label="Corewright home">
+      <img src="../assets/corewright-mark.svg" width="28" height="28" alt="">
+      <span>Corewright</span>
+    </a>
+    <nav aria-label="Sections">
+      <a href="../#download">Download</a>
+      <a class="nav-gh" href="https://github.com/rennerdo30/corewright">GitHub</a>
+    </nav>
+  </header>
+
+  <main id="main">
+    <section class="band" aria-labelledby="beta-title">
+      <h2 id="beta-title">Corewright beta</h2>
+      <p class="intro">New features arrive here first. Betas are tested, but they can have rough edges; report what you find on GitHub and it gets fixed in the next one.</p>
+
+      <div data-release="beta" data-field="found" hidden>
+        <p>The newest beta is <strong data-release="beta" data-field="version"></strong>, released <span data-release="beta" data-field="date"></span>. Windows 10 and 11, x64.</p>
+        <p class="cta">
+          <a class="btn btn-primary" data-release="beta" data-field="download" href="https://github.com/rennerdo30/corewright/releases">Download the beta</a>
+          <a class="btn" data-release="beta" data-field="notes" href="https://github.com/rennerdo30/corewright/releases">What's new</a>
+        </p>
+      </div>
+      <div data-release="beta" data-field="missing">
+        <p>The first beta is on its way. Until it is published, all builds are on the releases page.</p>
+        <p class="cta"><a class="btn btn-primary" href="https://github.com/rennerdo30/corewright/releases">Releases on GitHub</a></p>
+      </div>
+
+      <div class="beta-facts">
+        <div>
+          <h3>Stays on the beta</h3>
+          <p>A beta install updates itself to newer betas, and to the next stable release when it is newer.</p>
+        </div>
+        <div>
+          <h3>Switch any time</h3>
+          <p>Settings, Updates, Update channel: pick Stable to get only finished releases from then on.</p>
+        </div>
+        <div>
+          <h3>Your rules stay</h3>
+          <p>Installing, updating and uninstalling never delete your rules, settings or what Corewright has learned.</p>
+        </div>
+        <div>
+          <h3>Checked downloads</h3>
+          <p>Every release has a SHA-256 checksum. The updater verifies it before anything runs.</p>
+        </div>
+      </div>
+
+      <p class="dl-sub">Prefer finished releases? <a href="../#download">Get the latest stable version</a>.</p>
+    </section>
+  </main>
+
+  <footer class="foot">
+    <p><img src="../assets/corewright-mark.svg" width="20" height="20" alt=""> Corewright, a project by <a href="https://github.com/rennerdo30">rennerdo30</a>.</p>
+    <p><a href="../privacy.html">Privacy</a> <a href="https://github.com/rennerdo30/corewright">GitHub</a> <a href="mailto:support@renner.dev">support@renner.dev</a></p>
+  </footer>
+</body>
+</html>

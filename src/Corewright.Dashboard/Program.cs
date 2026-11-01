@@ -25,6 +25,9 @@ internal static class Program
             return;
         }
         ApplicationConfiguration.Initialize();
+        // The window never runs without the tray (owner, 2026-11-02): start it when it is missing,
+        // whichever way the window was opened (Start menu, installer, updater, tray).
+        TrayGuard.Ensure();
         Application.Run(new MainForm());
     }
 }
@@ -68,13 +71,22 @@ internal sealed partial class MainForm : Form
         Load += async (_, _) => await InitAsync();
         Resize += async (_, _) =>
         {
+            // Settings > Window: "Minimize to the tray" hides the window instead of a taskbar button.
+            if (WindowState == FormWindowState.Minimized && Visible && WindowPreferences.MinimizeToTray) Hide();
             UpdateResizeBand();
             PostWindowState();
             await OnResizedAsync();
         };
         Activated += (_, _) => PostWindowState();
         Deactivate += (_, _) => PostWindowState();
-        FormClosing += (_, _) => SavePlacement();
+        FormClosing += (_, _) =>
+        {
+            SavePlacement();
+            // Settings > Window: the close button either leaves Corewright in the tray (default) or exits it.
+            // The exit event means the tray itself is closing us, so it needs no message back.
+            if (!WindowPreferences.CloseToTray && !_exit.WaitOne(0)) TrayGuard.ExitAll();
+        };
+        TrayGuard.Watch(this);
         FormClosed += (_, _) =>
         {
             SystemEvents.UserPreferenceChanged -= OnUserPreferenceChanged;
@@ -85,6 +97,7 @@ internal sealed partial class MainForm : Form
 
     private new void BringToFront()
     {
+        if (!Visible) Show(); // hidden by "minimize to tray"
         if (WindowState == FormWindowState.Minimized) WindowState = FormWindowState.Normal;
         Activate();
     }
@@ -187,12 +200,52 @@ internal sealed partial class MainForm : Form
 
     // ---- Theme -----------------------------------------------------------------------------------
 
-    private static bool IsDarkTheme() =>
+    private static readonly string ThemeFile = Path.Combine(AppPaths.UserDataDirectory, "dashboard-theme.json");
+
+    /// <summary>"system", "light" or "dark" (Settings → Appearance; owner, 2026-11-02).</summary>
+    private string _scheme = LoadScheme();
+
+    private static string LoadScheme()
+    {
+        try
+        {
+            if (File.Exists(ThemeFile) && JsonDocument.Parse(File.ReadAllText(ThemeFile)).RootElement.TryGetProperty("scheme", out var s)
+                && s.GetString() is "light" or "dark" or "system")
+                return s.GetString()!;
+        }
+        catch (Exception e) when (e is IOException or JsonException or UnauthorizedAccessException) { }
+        return "system";
+    }
+
+    private void SetScheme(string scheme)
+    {
+        if (scheme is not ("system" or "light" or "dark")) return;
+        _scheme = scheme;
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(ThemeFile)!);
+            File.WriteAllText(ThemeFile, JsonSerializer.Serialize(new Dictionary<string, string> { ["scheme"] = scheme }));
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
+        ApplyTheme();
+    }
+
+    private static bool IsSystemDark() =>
         Registry.GetValue(@"HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize", "AppsUseLightTheme", 1) is int v && v == 0;
+
+    private bool IsDarkTheme() => _scheme switch { "light" => false, "dark" => true, _ => IsSystemDark() };
 
     private void ApplyTheme()
     {
         bool dark = IsDarkTheme();
+        // The page follows the chosen scheme through prefers-color-scheme, so every stylesheet works unchanged.
+        if (_web.CoreWebView2 is { } wv)
+            wv.Profile.PreferredColorScheme = _scheme switch
+            {
+                "light" => CoreWebView2PreferredColorScheme.Light,
+                "dark" => CoreWebView2PreferredColorScheme.Dark,
+                _ => CoreWebView2PreferredColorScheme.Auto,
+            };
         var bg = dark ? Color.FromArgb(0x19, 0x19, 0x19) : Color.FromArgb(0xE9, 0xE9, 0xE9);
         BackColor = bg;
         _web.DefaultBackgroundColor = bg;
@@ -233,6 +286,7 @@ internal sealed partial class MainForm : Form
         core.Settings.AreDevToolsEnabled = false;
         core.Settings.AreDefaultContextMenusEnabled = false;
 #endif
+        ApplyTheme(); // the profile exists now: apply the saved light/dark choice before the first paint
         core.WebMessageReceived += OnWebMessage;
         core.NavigationCompleted += (_, _) => PostWindowState();
         core.AddWebResourceRequestedFilter($"https://{HostName}/*", CoreWebView2WebResourceContext.All);
@@ -243,6 +297,7 @@ internal sealed partial class MainForm : Form
         {
             ["token"] = ep?.Token ?? "",
             ["accent"] = AccentPalette(),
+            ["scheme"] = _scheme,
             ["host"] = "dashboard",
         };
         // Token and theme go to the page in memory only; nothing appears in a URL.
@@ -265,6 +320,15 @@ internal sealed partial class MainForm : Form
         string url = Environment.GetEnvironmentVariable("COREWRIGHT_UI_URL") is { Length: > 0 } dev ? dev : ep.Url + "/";
         core.Navigate(url);
     }
+
+    private void PostWindowPrefs() =>
+        _web.CoreWebView2?.PostWebMessageAsJson(JsonSerializer.Serialize(new Dictionary<string, object>
+        {
+            ["type"] = "window-prefs",
+            ["openOnStart"] = WindowPreferences.OpenOnStart,
+            ["closeToTray"] = WindowPreferences.CloseToTray,
+            ["minimizeToTray"] = WindowPreferences.MinimizeToTray,
+        }));
 
     private void PostWindowState()
     {
@@ -299,9 +363,29 @@ internal sealed partial class MainForm : Form
                 case "autostart-get":
                     PostAutostart();
                     break;
+                case "update-status":
+                case "update-check":
+                case "update-install":
+                case "update-channel":
+                    if (Uri.TryCreate(e.Source, UriKind.Absolute, out var source) && source.IsLoopback)
+                        _ = OnUpdateMessageAsync(type.GetString()!, root.TryGetProperty("automatic", out var automatic) && automatic.ValueKind == JsonValueKind.True,
+                            root.TryGetProperty("channel", out var channel) ? channel.GetString() : null);
+                    break;
                 case "autostart-set":
                     SetAutostart(root.TryGetProperty("enabled", out var en) && en.GetBoolean());
                     PostAutostart();
+                    break;
+                case "window-prefs-get":
+                    PostWindowPrefs();
+                    break;
+                case "window-prefs-set":
+                    if (root.TryGetProperty("openOnStart", out var oos)) WindowPreferences.OpenOnStart = oos.GetBoolean();
+                    if (root.TryGetProperty("closeToTray", out var ctt)) WindowPreferences.CloseToTray = ctt.GetBoolean();
+                    if (root.TryGetProperty("minimizeToTray", out var mtt)) WindowPreferences.MinimizeToTray = mtt.GetBoolean();
+                    PostWindowPrefs();
+                    break;
+                case "theme-set":
+                    if (root.TryGetProperty("scheme", out var sch) && sch.GetString() is { } scheme) SetScheme(scheme);
                     break;
                 case "reveal":
                     if (root.TryGetProperty("path", out var pathEl) && pathEl.GetString() is { } path && File.Exists(path))
@@ -432,6 +516,7 @@ internal sealed partial class MainForm : Form
         using var key = Registry.CurrentUser.CreateSubKey(RunKey);
         if (enabled) key.SetValue(RunValue, $"\"{tray}\"");
         else key.DeleteValue(RunValue, throwOnMissingValue: false);
+        StartupPreferences.RememberDecision();
     }
 
     private async Task OnResizedAsync()
