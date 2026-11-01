@@ -71,7 +71,9 @@ Var ManifestSize
 Var ServiceTouched
 Var DataPathUnsafe
 
-!macro FAIL text
+!macro FAIL text prefix
+  ; Restore before any modal dialog or instfiles failure page is displayed.
+  Call ${prefix}RestoreService
   DetailPrint "ERROR: ${text}"
   FileOpen $9 "$LogPath" a
   FileWrite $9 "ERROR: ${text}$\r$\n"
@@ -101,7 +103,7 @@ Function ${prefix}FindProcess
   StrCpy $ProcessFound 0
   System::Call 'kernel32::CreateToolhelp32Snapshot(i 2, i 0) p.r0'
   ${If} $0 == -1
-    !insertmacro FAIL "Cannot enumerate running applications."
+    !insertmacro FAIL "Cannot enumerate running applications." "${prefix}"
   ${EndIf}
   System::Alloc 556
   Pop $1
@@ -130,7 +132,7 @@ Function ${prefix}QueryService
   StrCpy $ServicePid 0
   System::Call 'advapi32::OpenSCManagerW(p 0, p 0, i 1) p.r0'
   ${If} $0 == 0
-    !insertmacro FAIL "Cannot open the Windows Service Control Manager."
+    !insertmacro FAIL "Cannot open the Windows Service Control Manager." "${prefix}"
   ${EndIf}
   System::Call 'advapi32::OpenServiceW(p r0, w "Corewright", i 4) p.r1 ?e'
   Pop $2
@@ -141,7 +143,7 @@ Function ${prefix}QueryService
       Return
     ${EndIf}
     ${If} $2 != 1060
-      !insertmacro FAIL "Cannot query the Corewright service (Windows error $2)."
+      !insertmacro FAIL "Cannot query the Corewright service (Windows error $2)." "${prefix}"
     ${EndIf}
     Return
   ${EndIf}
@@ -155,7 +157,7 @@ Function ${prefix}QueryService
   System::Call 'advapi32::CloseServiceHandle(p r1)'
   System::Call 'advapi32::CloseServiceHandle(p r0)'
   ${If} $3 == 0
-    !insertmacro FAIL "Cannot read the Corewright service state."
+    !insertmacro FAIL "Cannot read the Corewright service state." "${prefix}"
   ${EndIf}
 FunctionEnd
 
@@ -183,7 +185,7 @@ Function ${prefix}StopService
     Call ${prefix}Sc
     ${If} $ScResult != 0
     ${AndIf} $ScResult != 1062
-      !insertmacro FAIL "Could not stop Corewright (sc.exe: $ScResult). No files were removed."
+      !insertmacro FAIL "Could not stop Corewright (sc.exe: $ScResult). No files were removed." "${prefix}"
     ${EndIf}
   ${EndIf}
   StrCpy $Countdown 60
@@ -196,7 +198,7 @@ Function ${prefix}StopService
     Sleep 500
     IntOp $Countdown $Countdown - 1
   ${LoopWhile} $Countdown > 0
-  !insertmacro FAIL "Corewright did not stop within 30 seconds. No files were removed."
+  !insertmacro FAIL "Corewright did not stop within 30 seconds. No files were removed." "${prefix}"
 FunctionEnd
 
 Function ${prefix}PrepareFiles
@@ -213,7 +215,7 @@ Function ${prefix}PrepareFiles
     IfSilent console_abort
     MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION "A console-mode Corewright service is still running. Use the tray's Exit Corewright command (in every signed-in session), then choose Retry." /SD IDCANCEL IDRETRY retry_console
     console_abort:
-    !insertmacro FAIL "A Corewright console service is still running. Exit it before continuing."
+    !insertmacro FAIL "A Corewright console service is still running. Exit it before continuing." "${prefix}"
   ${EndIf}
   Call ${prefix}CloseApps
   StrCpy $Countdown 30
@@ -232,7 +234,7 @@ Function ${prefix}PrepareFiles
     IntOp $Countdown $Countdown - 1
   ${LoopWhile} $Countdown > 0
   MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION "Corewright is still running in this or another signed-in session. Exit its console service, tray and dashboard there, then Retry. The installed service has not been stopped." /SD IDCANCEL IDRETRY retry_console
-  !insertmacro FAIL "Corewright tray or dashboard is still running. The installed service was left running."
+  !insertmacro FAIL "Corewright tray or dashboard is still running. The installed service was left running." "${prefix}"
 FunctionEnd
 
 Function ${prefix}CheckFileLocks
@@ -241,43 +243,65 @@ Function ${prefix}CheckFileLocks
   Return
   locked:
   MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION "Corewright files are in use. Close the dashboard in every session, then Retry. The installed service has not been stopped." /SD IDCANCEL IDRETRY retry_locks
-  !insertmacro FAIL "Corewright files are still in use."
+  !insertmacro FAIL "Corewright files are still in use." "${prefix}"
 FunctionEnd
 
 Function ${prefix}RestoreService
-  ${If} $ServiceWasRunning == 1
-  ${AndIf} $ServiceTouched == 1
-  ${AndIf} $FilesReplaced != 1
-  ${AndIf} $DataPathUnsafe != 1
-    StrCpy $Countdown 60
-    ${Do}
-      Call ${prefix}QueryService
-      ${If} $ServiceState == 4
-        Return
-      ${EndIf}
-      ${If} $ServiceState == 1
-        ${ExitDo}
-      ${EndIf}
-      Sleep 500
-      IntOp $Countdown $Countdown - 1
-    ${LoopWhile} $Countdown > 0
-    StrCpy $ScCommand 'start Corewright'
-    Call ${prefix}Sc
-    ${If} $ScResult != 0
-    ${AndIf} $ScResult != 1056
-      DetailPrint "ERROR: Could not restore the previously running service ($ScResult)."
-    ${EndIf}
-    StrCpy $Countdown 60
-    ${Do}
-      Call ${prefix}QueryService
-      ${If} $ServiceState == 4
-        Return
-      ${EndIf}
-      Sleep 500
-      IntOp $Countdown $Countdown - 1
-    ${LoopWhile} $Countdown > 0
-    DetailPrint "ERROR: Restored service did not reach Running within 30 seconds."
+  ${If} $ServiceWasRunning != 1
+  ${OrIf} $ServiceTouched != 1
+  ${OrIf} $FilesReplaced == 1
+  ${OrIf} $DataPathUnsafe == 1
+    Return
   ${EndIf}
+  ; Deliberately independent of QueryService/FAIL: a restore failure must never
+  ; recurse into itself or block behind a modal dialog. Preserve failure registers.
+  Push $0
+  Push $1
+  Push $2
+  Push $3
+  Push $4
+  System::Call 'advapi32::OpenSCManagerW(p 0, p 0, i 1) p.r0'
+  ${If} $0 != 0
+    System::Call 'advapi32::OpenServiceW(p r0, w "Corewright", i 0x14) p.r1'
+    ${If} $1 != 0
+      System::Alloc 36
+      Pop $2
+      StrCpy $Countdown 60
+      ${Do}
+        System::Call 'advapi32::QueryServiceStatusEx(p r1, i 0, p r2, i 36, *i) i.r3'
+        ${If} $3 == 0
+          ${ExitDo}
+        ${EndIf}
+        System::Call '*$2(i, i.r4)'
+        ${If} $4 == 4
+          StrCpy $ServiceTouched 0 ; callback fallback is now a no-op
+          ${ExitDo}
+        ${EndIf}
+        ${If} $4 == 1
+          System::Call 'advapi32::StartServiceW(p r1, i 0, p 0) i.r3'
+          ${If} $3 == 0
+            ${ExitDo}
+          ${EndIf}
+        ${EndIf}
+        Sleep 500
+        IntOp $Countdown $Countdown - 1
+      ${LoopWhile} $Countdown > 0
+      System::Free $2
+      System::Call 'advapi32::CloseServiceHandle(p r1)'
+    ${EndIf}
+    System::Call 'advapi32::CloseServiceHandle(p r0)'
+  ${EndIf}
+  ${If} $ServiceTouched == 1
+    DetailPrint "ERROR: Immediate service restore failed or timed out; callback will retry."
+    FileOpen $9 "$LogPath" a
+    FileWrite $9 "ERROR: Immediate service restore failed or timed out.$\r$\n"
+    FileClose $9
+  ${EndIf}
+  Pop $4
+  Pop $3
+  Pop $2
+  Pop $1
+  Pop $0
 FunctionEnd
 !macroend
 !insertmacro COMMON_FUNCTIONS ""
@@ -394,12 +418,12 @@ Function un.ValidateManifest
   ClearErrors
   FileOpen $ManifestHandle "$INSTDIR\install-manifest.txt" r
   ${If} ${Errors}
-    !insertmacro FAIL "The installed file manifest cannot be read. No files were removed."
+    !insertmacro FAIL "The installed file manifest cannot be read. No files were removed." "un."
   ${EndIf}
   FileSeek $ManifestHandle 0 END $ManifestSize
   FileSeek $ManifestHandle 0 SET
   ${If} $ManifestSize == 0
-    !insertmacro FAIL "The installed file manifest is empty. No files were removed."
+    !insertmacro FAIL "The installed file manifest is empty. No files were removed." "un."
   ${EndIf}
   ${Do}
     ClearErrors
@@ -407,7 +431,7 @@ Function un.ValidateManifest
     ${If} ${Errors}
       FileSeek $ManifestHandle 0 CUR $1
       ${If} $1 != $ManifestSize
-        !insertmacro FAIL "The installed file manifest could not be read completely."
+        !insertmacro FAIL "The installed file manifest could not be read completely." "un."
       ${EndIf}
       ${ExitDo}
     ${EndIf}
@@ -416,22 +440,22 @@ Function un.ValidateManifest
     StrCpy $0 $0 "" 2
     ${If} $4 != "F|"
     ${AndIf} $4 != "D|"
-      !insertmacro FAIL "The installed file manifest has an invalid entry."
+      !insertmacro FAIL "The installed file manifest has an invalid entry." "un."
     ${EndIf}
     System::Call 'shlwapi::PathIsRelativeW(w r0) i.r2'
     ${If} $2 == 0
-      !insertmacro FAIL "The installed file manifest has an absolute path."
+      !insertmacro FAIL "The installed file manifest has an absolute path." "un."
     ${EndIf}
     System::Call 'shlwapi::StrPBrkW(w r0, w "*?:$\"<>|") p.r2'
     ${If} $2 != 0
-      !insertmacro FAIL "The installed file manifest contains invalid path characters."
+      !insertmacro FAIL "The installed file manifest contains invalid path characters." "un."
     ${EndIf}
     GetFullPathName $1 "$INSTDIR\$0"
     StrCpy $2 "$INSTDIR\"
     StrLen $3 $2
     StrCpy $3 $1 $3
     ${If} $3 != $2
-      !insertmacro FAIL "The installed file manifest contains an unsafe path."
+      !insertmacro FAIL "The installed file manifest contains an unsafe path." "un."
     ${EndIf}
   ${Loop}
   FileSeek $ManifestHandle 0 SET
@@ -456,19 +480,19 @@ Function un.RemovePayload
       ClearErrors
       Delete "$1"
       ${If} ${Errors}
-        !insertmacro FAIL "Could not remove $1. Close Corewright and retry uninstall."
+        !insertmacro FAIL "Could not remove $1. Close Corewright and retry uninstall." "un."
       ${EndIf}
     ${ElseIf} $4 == "D|"
       RMDir "$1" ; unknown user files keep their directories
     ${Else}
-      !insertmacro FAIL "The installed file manifest is invalid."
+      !insertmacro FAIL "The installed file manifest is invalid." "un."
     ${EndIf}
   ${Loop}
   FileClose $ManifestHandle
   ClearErrors
   Delete "$INSTDIR\install-manifest.txt"
   ${If} ${Errors}
-    !insertmacro FAIL "Could not remove the installed file manifest."
+    !insertmacro FAIL "Could not remove the installed file manifest." "un."
   ${EndIf}
 FunctionEnd
 
@@ -492,10 +516,10 @@ Section "Corewright"
   ${EndIf}
   ${If} $0 == 3
     StrCpy $DataPathUnsafe 1
-    !insertmacro FAIL "Machine data swap was interrupted. The service stays stopped; recover the preserved data before retrying."
+    !insertmacro FAIL "Machine data swap was interrupted. The service stays stopped; recover the preserved data before retrying." ""
   ${EndIf}
   ${If} $0 != 0
-    !insertmacro FAIL "Corewright data migration failed. Original data and any fresh copy were preserved."
+    !insertmacro FAIL "Corewright data migration failed. Original data and any fresh copy were preserved." ""
   ${EndIf}
   ; The service binary cannot be probed while the service runs. If another
   ; handle still locks it now, the failure callback restores the original service.
@@ -503,7 +527,7 @@ Section "Corewright"
     ClearErrors
     FileOpen $7 "$INSTDIR\Corewright.Service.exe" a
     ${If} ${Errors}
-      !insertmacro FAIL "The service executable is still locked. Restoring the running service."
+      !insertmacro FAIL "The service executable is still locked. Restoring the running service." ""
     ${EndIf}
     FileClose $7
   ${EndIf}
@@ -512,21 +536,21 @@ Section "Corewright"
   ClearErrors
   File /r "${SRC}\*.*"
   ${If} ${Errors}
-    !insertmacro FAIL "Could not copy Corewright files."
+    !insertmacro FAIL "Could not copy Corewright files." ""
   ${EndIf}
   ClearErrors
   WriteUninstaller "$INSTDIR\uninstall.exe"
   ${If} ${Errors}
-    !insertmacro FAIL "Could not write the uninstaller."
+    !insertmacro FAIL "Could not write the uninstaller." ""
   ${EndIf}
   FileOpen $8 "$INSTDIR\install-manifest.txt" a
   ${If} ${Errors}
-    !insertmacro FAIL "Could not write the installed file manifest."
+    !insertmacro FAIL "Could not write the installed file manifest." ""
   ${EndIf}
   !include "${SRC}\..\install-manifest.nsh"
   ${If} ${Errors}
     FileClose $8
-    !insertmacro FAIL "Could not save the installed file manifest."
+    !insertmacro FAIL "Could not save the installed file manifest." ""
   ${EndIf}
   FileClose $8
   ${If} $SameUser == 0
@@ -535,7 +559,7 @@ Section "Corewright"
     nsExec::ExecToLog /TIMEOUT=30000 '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\machine-state.ps1" -Action MigrateUser -DataDirectory "$DataDir" -SourceDirectory "$UserDataDir"'
     Pop $0
     ${If} $0 != 0
-      !insertmacro FAIL "Could not safely migrate your console data. Original data was kept."
+      !insertmacro FAIL "Could not safely migrate your console data. Original data was kept." ""
     ${EndIf}
   ${EndIf}
 
@@ -547,22 +571,22 @@ Section "Corewright"
   ${EndIf}
   Call Sc
   ${If} $ScResult != 0
-    !insertmacro FAIL "Could not register Corewright (sc.exe: $ScResult)."
+    !insertmacro FAIL "Could not register Corewright (sc.exe: $ScResult)." ""
   ${EndIf}
   StrCpy $ScCommand 'description Corewright "Corewright process rule engine. Stopping the service reverts its process changes."'
   Call Sc
   ${If} $ScResult != 0
-    !insertmacro FAIL "Could not set the service description (sc.exe: $ScResult)."
+    !insertmacro FAIL "Could not set the service description (sc.exe: $ScResult)." ""
   ${EndIf}
   StrCpy $ScCommand 'failure Corewright reset= 86400 actions= restart/5000/restart/15000/restart/60000'
   Call Sc
   ${If} $ScResult != 0
-    !insertmacro FAIL "Could not set service recovery (sc.exe: $ScResult)."
+    !insertmacro FAIL "Could not set service recovery (sc.exe: $ScResult)." ""
   ${EndIf}
   ClearErrors
   CreateShortcut "$SMPROGRAMS\Corewright.lnk" "$INSTDIR\Corewright.Dashboard.exe"
   ${If} ${Errors}
-    !insertmacro FAIL "Could not create the Corewright Start menu shortcut."
+    !insertmacro FAIL "Could not create the Corewright Start menu shortcut." ""
   ${EndIf}
   ; Never write HKCU from elevation. The user's tray applies a first-run default.
   ${IfNot} ${FileExists} "$DataDir\defaults.json"
@@ -575,7 +599,7 @@ Section "Corewright"
     ${EndIf}
     FileClose $7
     ${If} ${Errors}
-      !insertmacro FAIL "Could not save the first-run sign-in default."
+      !insertmacro FAIL "Could not save the first-run sign-in default." ""
     ${EndIf}
   ${EndIf}
   WriteRegStr HKLM "${UNINSTALL_KEY}" "DisplayName" "Corewright"
@@ -588,18 +612,18 @@ Section "Corewright"
   WriteRegDWORD HKLM "${UNINSTALL_KEY}" "NoModify" 1
   WriteRegDWORD HKLM "${UNINSTALL_KEY}" "NoRepair" 1
   ${If} ${Errors}
-    !insertmacro FAIL "Could not write Corewright registration."
+    !insertmacro FAIL "Could not write Corewright registration." ""
   ${EndIf}
   ${GetSize} "$INSTDIR" "/S=0K" $0 $1 $2
   WriteRegDWORD HKLM "${UNINSTALL_KEY}" "EstimatedSize" $0
   ${If} ${Errors}
-    !insertmacro FAIL "Could not record the Corewright installation size."
+    !insertmacro FAIL "Could not record the Corewright installation size." ""
   ${EndIf}
   StrCpy $ScCommand 'start Corewright'
   Call Sc
   ${If} $ScResult != 0
   ${AndIf} $ScResult != 1056
-    !insertmacro FAIL "Could not start Corewright (sc.exe: $ScResult)."
+    !insertmacro FAIL "Could not start Corewright (sc.exe: $ScResult)." ""
   ${EndIf}
   StrCpy $Countdown 60
   ${Do}
@@ -610,7 +634,7 @@ Section "Corewright"
     Sleep 500
     IntOp $Countdown $Countdown - 1
   ${LoopWhile} $Countdown > 0
-  !insertmacro FAIL "Corewright did not start within 30 seconds."
+  !insertmacro FAIL "Corewright did not start within 30 seconds." ""
 SectionEnd
 
 Section "Uninstall"
@@ -623,7 +647,7 @@ Section "Uninstall"
     Call un.Sc
     ${If} $ScResult != 0
     ${AndIf} $ScResult != 1060
-      !insertmacro FAIL "Could not delete the Corewright service (sc.exe: $ScResult)."
+      !insertmacro FAIL "Could not delete the Corewright service (sc.exe: $ScResult)." "un."
     ${EndIf}
     StrCpy $FilesReplaced 1
     StrCpy $Countdown 60
@@ -636,7 +660,7 @@ Section "Uninstall"
       IntOp $Countdown $Countdown - 1
     ${LoopWhile} $Countdown > 0
     ${If} $ServiceState != 0
-      !insertmacro FAIL "Corewright service deletion is pending. Close Services and retry uninstall."
+      !insertmacro FAIL "Corewright service deletion is pending. Close Services and retry uninstall." "un."
     ${EndIf}
   ${EndIf}
   StrCpy $FilesReplaced 1 ; deleted service cannot be restored by failure callback
@@ -645,7 +669,7 @@ Section "Uninstall"
   ${If} ${FileExists} "$INSTDIR\uninstall.exe"
     Delete "$INSTDIR\uninstall.exe"
     ${If} ${Errors}
-      !insertmacro FAIL "Could not remove the uninstaller."
+      !insertmacro FAIL "Could not remove the uninstaller." "un."
     ${EndIf}
   ${EndIf}
   RMDir "$INSTDIR"
@@ -653,7 +677,7 @@ Section "Uninstall"
   ${If} ${FileExists} "$SMPROGRAMS\Corewright.lnk"
     Delete "$SMPROGRAMS\Corewright.lnk"
     ${If} ${Errors}
-      !insertmacro FAIL "Could not remove the Corewright shortcut."
+      !insertmacro FAIL "Could not remove the Corewright shortcut." "un."
     ${EndIf}
   ${EndIf}
   ${If} $SameUser == 0
@@ -664,14 +688,14 @@ Section "Uninstall"
     ${EndIf}
     ${If} $0 != 0
     ${AndIf} $0 != 2
-      !insertmacro FAIL "Could not remove the Corewright sign-in entry (Windows error $0)."
+      !insertmacro FAIL "Could not remove the Corewright sign-in entry (Windows error $0)." "un."
     ${EndIf}
   ${EndIf}
   ClearErrors
   System::Call 'advapi32::RegDeleteKeyExW(p 0x80000002, w "${UNINSTALL_KEY}", i 0x100, i 0) i.r0'
   ${If} $0 != 0
   ${AndIf} $0 != 2
-    !insertmacro FAIL "Could not remove Corewright from Installed apps (Windows error $0)."
+    !insertmacro FAIL "Could not remove Corewright from Installed apps (Windows error $0)." "un."
   ${EndIf}
   ${If} $RemoveData == ${BST_CHECKED}
     ClearErrors
@@ -679,21 +703,21 @@ Section "Uninstall"
       RMDir /r "$DataDir"
     ${EndIf}
     ${If} ${Errors}
-      !insertmacro FAIL "Could not remove the requested machine rules and settings."
+      !insertmacro FAIL "Could not remove the requested machine rules and settings." "un."
     ${EndIf}
     ${If} $SameUser == 0
       ${If} ${FileExists} "$UserDataDir"
         RMDir /r "$UserDataDir"
       ${EndIf}
       ${If} ${Errors}
-        !insertmacro FAIL "Could not remove the requested user rules and settings."
+        !insertmacro FAIL "Could not remove the requested user rules and settings." "un."
       ${EndIf}
       ClearErrors
       ReadRegDWORD $0 HKCU "Software\Corewright" "AutostartDecided"
       ${IfNot} ${Errors}
         DeleteRegValue HKCU "Software\Corewright" "AutostartDecided"
         ${If} ${Errors}
-          !insertmacro FAIL "Could not remove the requested user sign-in preference."
+          !insertmacro FAIL "Could not remove the requested user sign-in preference." "un."
         ${EndIf}
       ${EndIf}
     ${EndIf}
