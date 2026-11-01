@@ -11,24 +11,75 @@ internal sealed unsafe partial class QosPolicies
 {
     private const string Class = "MSFT_NetQosPolicySettingData";
     private readonly Dictionary<string, (long Upload, long Dscp)> _owned = new(StringComparer.OrdinalIgnoreCase);
-    public void Cleanup() { using var wmi = new Wmi(); wmi.DeleteMatching(); }
+    private readonly HashSet<string> _journal = new(StringComparer.Ordinal);
+    private readonly string _journalPath, _prefix;
+    public static bool HasJournal(string directory) => File.Exists(Path.Combine(directory, "network-qos.journal"));
+    public QosPolicies(string directory)
+    {
+        _journalPath = Path.Combine(directory, "network-qos.journal");
+        _prefix = "Corewright-" + Hash(Path.GetFullPath(directory).TrimEnd(Path.DirectorySeparatorChar)) + "-";
+        if (!File.Exists(_journalPath)) return;
+        foreach (string name in File.ReadAllLines(_journalPath))
+        {
+            if (!name.StartsWith(_prefix, StringComparison.Ordinal) || name.Length != _prefix.Length + 32 ||
+                name.AsSpan(_prefix.Length).ContainsAnyExcept("0123456789ABCDEF"))
+                throw new IOException("Invalid QoS cleanup journal; preserving it for recovery");
+            _journal.Add(name);
+        }
+    }
+    private static string Hash(string value) => Convert.ToHexString(SHA256.HashData(Encoding.Unicode.GetBytes(value.ToUpperInvariant())))[..32];
+    private void SaveJournal()
+    {
+        if (_journal.Count == 0) { File.Delete(_journalPath); return; }
+        string temp = _journalPath + ".tmp";
+        using (var file = new FileStream(temp, FileMode.Create, FileAccess.Write, FileShare.None))
+        {
+            using (var writer = new StreamWriter(file, Encoding.UTF8, leaveOpen: true))
+            { foreach (string name in _journal) writer.WriteLine(name); writer.Flush(); }
+            file.Flush(flushToDisk: true);
+        }
+        File.Move(temp, _journalPath, overwrite: true);
+    }
+    public void Cleanup()
+    {
+        if (_journal.Count == 0) return; // No COM/WMI initialization on a clean start.
+        using var wmi = new Wmi();
+        Exception? failure = null;
+        foreach (string name in _journal.ToArray())
+        {
+            try
+            {
+                using var policy = wmi.Find(name);
+                if (policy is not null) wmi.Delete(policy);
+                _journal.Remove(name);
+                try { SaveJournal(); } catch { _journal.Add(name); throw; }
+            }
+            catch (Exception e) { failure ??= e; }
+        }
+        if (failure is not null) throw failure;
+        _owned.Clear();
+    }
     public void RemoveOwned()
     {
-        Exception? failure = null;
-        foreach (string path in _owned.Keys.ToArray()) try { Set(path, 0, -1); } catch (Exception e) { failure ??= e; }
-        if (failure is not null) throw failure;
+        Cleanup();
     }
     public void Set(string path, long upload, long dscp)
     {
-        if (!_owned.TryGetValue(path, out var old)) old = (0, -1);
-        if (old == (upload, dscp)) return;
-        string name = "Corewright-" + Convert.ToHexString(SHA256.HashData(Encoding.Unicode.GetBytes(path.ToUpperInvariant())))[..32];
+        bool confirmed = _owned.TryGetValue(path, out var old);
+        string name = _prefix + Hash(path);
+        if (confirmed && old == (upload, dscp)) return;
+        if (!confirmed && !_journal.Contains(name) && upload == 0 && dscp < 0) return;
+        // Durable intent precedes PutInstance: even an ambiguous WMI timeout remains recoverable.
+        if (upload > 0 || dscp >= 0) { _journal.Add(name); SaveJournal(); }
+        _owned.Remove(path); // A WMI timeout makes the previous cache uncertain, even on an update.
         using var wmi = new Wmi();
         // One combined policy: Windows chooses a policy rather than merging independent throttle/DSCP policies.
         using var policy = wmi.Find(name);
         if (upload == 0 && dscp < 0)
         {
             if (policy is not null) wmi.Delete(policy);
+            _journal.Remove(name);
+            try { SaveJournal(); } catch { _journal.Add(name); throw; }
             _owned.Remove(path);
             return;
         }
@@ -107,18 +158,6 @@ internal sealed unsafe partial class QosPolicies
         { Check(Services.Api.ExecQuery("WQL", query, 0x30, Context.Pointer, out nint items)); return new(items); }
         public void Delete(Com<IWbemObject> obj)
         { Check(Services.Api.DeleteInstance(Read(obj, "__RELPATH"), 0, Context.Pointer, 0)); }
-        public void DeleteMatching()
-        {
-            using var items = Query("SELECT * FROM " + Class + " WHERE Name LIKE 'Corewright-%'");
-            while (true)
-            {
-                int hr = items.Api.Next(2000, 1, out nint obj, out uint count); Check(hr);
-                if (count == 0) { if (hr == 0x40004) throw new TimeoutException("QoS enumeration timed out"); return; }
-                using var policy = new Com<IWbemObject>(obj);
-                // Do not touch persistent policies: every operation uses the same explicit ActiveStore context.
-                if (Read(policy, "Name").StartsWith("Corewright-", StringComparison.Ordinal)) Delete(policy);
-            }
-        }
         public void Dispose() { Context.Dispose(); Services.Dispose(); if (_uninitialize) CoUninitialize(); }
     }
     private static Com<T> Create<T>(Guid clsid, Guid iid) where T : class

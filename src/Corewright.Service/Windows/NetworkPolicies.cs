@@ -10,7 +10,8 @@ internal sealed class NetworkPolicies : IDisposable
     private readonly Dictionary<ProcessKey, Claim> _claims = [];
     private readonly Dictionary<string, (bool Blocked, long Upload, long Priority)> _effective = new(StringComparer.OrdinalIgnoreCase);
     private readonly NetworkBlocker _blocker = new();
-    private readonly QosPolicies _qos = new();
+    private QosPolicies? _qos;
+    public NetworkOwnership Ownership { get; } = new();
     private IEngineEventSink? _events;
     private string? _qosStartupError;
     public static bool IsSlot(Slot slot) => slot is Slot.NetworkBlocked or Slot.UploadLimit or Slot.NetworkPriority;
@@ -18,8 +19,12 @@ internal sealed class NetworkPolicies : IDisposable
     public void Start(IEngineEventSink events)
     {
         _events = events;
-        if (!Environment.IsPrivilegedProcess) return;
-        try { _qos.Cleanup(); }
+        if (!Environment.IsPrivilegedProcess || !QosPolicies.HasJournal(NetworkOwnership.StateDirectory)) return;
+        try
+        {
+            if (!Ownership.TryAcquire(out var error)) throw new InvalidOperationException(error);
+            (_qos ??= new(NetworkOwnership.StateDirectory)).Cleanup();
+        }
         catch (Exception e) { _qosStartupError = "QoS startup cleanup failed: " + e.Message; Report(_qosStartupError); }
     }
     public bool Has(ProcessKey key) => _claims.ContainsKey(key);
@@ -40,6 +45,7 @@ internal sealed class NetworkPolicies : IDisposable
     public bool Write(ProcessKey key, string? path, Slot slot, long value, out string? error)
     {
         error = null;
+        if (value != Original(slot) && !Ownership.TryAcquire(out error)) return false;
         if (slot != Slot.NetworkBlocked && _qosStartupError is not null) { error = _qosStartupError; return false; }
         if (!_claims.TryGetValue(key, out var claim))
         {
@@ -56,7 +62,7 @@ internal sealed class NetworkPolicies : IDisposable
         {
             var effective = Compute(claim.Path);
             if (slot == Slot.NetworkBlocked) _blocker.Set(claim.Path, effective.Blocked);
-            else _qos.Set(claim.Path, effective.Upload, effective.Priority);
+            else (_qos ??= new(NetworkOwnership.StateDirectory)).Set(claim.Path, effective.Upload, effective.Priority);
             _effective[claim.Path] = effective;
             return true;
         }
@@ -73,7 +79,7 @@ internal sealed class NetworkPolicies : IDisposable
         var effective = Compute(c.Path);
         try { _blocker.Set(c.Path, effective.Blocked); }
         catch (Exception e) { Report("block release failed: " + e.Message); }
-        try { _qos.Set(c.Path, effective.Upload, effective.Priority); }
+        try { _qos?.Set(c.Path, effective.Upload, effective.Priority); }
         catch (Exception e) { Report("QoS release failed: " + e.Message); }
         if (effective == (false, 0L, -1L)) _effective.Remove(c.Path); else _effective[c.Path] = effective;
     }
@@ -81,7 +87,8 @@ internal sealed class NetworkPolicies : IDisposable
     public void Dispose()
     {
         _blocker.Dispose();
-        try { _qos.RemoveOwned(); } catch (Exception e) { Report("QoS shutdown cleanup failed: " + e.Message); }
+        try { _qos?.RemoveOwned(); } catch (Exception e) { Report("QoS shutdown cleanup failed: " + e.Message); }
+        Ownership.Dispose();
         _claims.Clear();
         _effective.Clear();
     }
