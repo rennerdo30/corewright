@@ -125,3 +125,9 @@
 /* Title bar: a larger icon and name (owner, 2026-11-02). */
 .titlebar-brand { gap: 10px; padding-left: 14px; font-size: 14px; font-weight: 600; }
 .titlebar-brand svg, .titlebar-brand img { width: 20px; height: 20px; }
+
+/* Game colour is fixed, never the accent: a pink or purple accent made the game look like the load bars (owner, 2026-11-02). */
+:root { --role-game: #d13f5c; --load: color-mix(in srgb, var(--text) 30%, transparent); }
+@media (prefers-color-scheme: dark) { :root { --role-game: #ff6b81; --load: color-mix(in srgb, var(--text) 34%, transparent); } }
+.lane-fill { background: var(--load); }
+.ap-notgame { padding: 0 10px; min-height: 26px; font-size: 13px; margin: 0 4px; vertical-align: 1px; }

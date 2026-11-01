@@ -5,7 +5,10 @@ namespace Corewright.Core.Autopilot;
 /// <summary>App settings (settings.json in the data folder). Rules live separately in rules.json.</summary>
 public sealed class AppSettings
 {
-    public int Version { get; set; } = 1;
+    /// <summary>2: background placement on by default. 3: screen tools added to "never games" (owner, 2026-11-02).</summary>
+    public const int CurrentVersion = 3;
+
+    public int Version { get; set; } = CurrentVersion;
     public AutopilotSettings Autopilot { get; set; } = new();
 }
 
@@ -55,12 +58,12 @@ public sealed class BuildToolsSettings
 }
 /// <summary>
 /// Long-term background classification (PM-12): processes observed for a long time that are (almost) never in the
-/// foreground are placed away from the strongest cores. Careful by design: off by default, services excluded,
-/// classification needs hours of observation, and every decision is visible and reversible.
+/// foreground are placed away from the strongest cores. On by default (owner, 2026-11-02); careful by design: services
+/// excluded, classification needs an hour of observation, and every decision is visible and reversible.
 /// </summary>
 public sealed class BackgroundSettings
 {
-    public bool Enabled { get; set; }
+    public bool Enabled { get; set; } = true;
 
     /// <summary>Cumulative observed runtime before a process can be classified.</summary>
     public double MinObservedMinutes { get; set; } = 60;
@@ -110,6 +113,20 @@ public sealed class GameModeSettings
         "vlc.exe", "mpv.exe", "mpc-hc64.exe", "PotPlayerMini64.exe", "explorer.exe", "Code.exe",
         "devenv.exe", "rider64.exe", "Unity.exe", "UnrealEditor.exe", "blender.exe", "obs64.exe",
         "Corewright.Dashboard.exe", "msedgewebview2.exe", "ApplicationFrameHost.exe",
+        .. ScreenTools,
+    ];
+
+    /// <summary>
+    /// Screenshot, overlay and shell tools that cover the whole screen with Direct3D for a moment (owner report,
+    /// 2026-11-02: ShareX region capture was detected as a game). Added to existing settings by the version 3 migration.
+    /// </summary>
+    public static readonly string[] ScreenTools =
+    [
+        "ShareX.exe", "Greenshot.exe", "SnippingTool.exe", "ScreenClippingHost.exe", "Lightshot.exe", "flameshot.exe",
+        "ScreenToGif.exe", "Snagit32.exe", "SnagitCapture.exe", "SnagitEditor.exe", "ZoomIt.exe", "ZoomIt64.exe", "Magnify.exe",
+        "PowerToys.ColorPickerUI.exe", "PowerToys.MeasureToolUI.exe", "PowerToys.PowerOCR.exe", "PowerToys.PowerLauncher.exe",
+        "PowerToys.CropAndLock.exe", "LockApp.exe", "SearchHost.exe", "StartMenuExperienceHost.exe", "ShellExperienceHost.exe",
+        "TextInputHost.exe", "GameBar.exe", "XboxGameBarWidgets.exe", "NVIDIA Overlay.exe", "RadeonSoftware.exe",
     ];
 
     /// <summary>Kept responsive while gaming (voice, streaming); never moved or lowered by Autopilot.</summary>

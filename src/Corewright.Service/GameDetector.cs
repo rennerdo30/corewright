@@ -23,8 +23,17 @@ internal sealed unsafe partial class GameDetector
 
     private static readonly string[] GraphicsModules = ["d3d9.dll", "d3d11.dll", "d3d12.dll", "vulkan-1.dll"];
 
+    /// <summary>
+    /// Full screen alone is weak evidence: screenshot tools (ShareX region capture), overlays and launchers cover the
+    /// screen with Direct3D for a few seconds. Such a process must stay full screen in front this long to count.
+    /// </summary>
+    private const long FullscreenSustainMs = 10_000;
+
     private int _lastForeground;
     private bool _lastFullscreen;
+    private ProcessKey? _candidate;
+    private long _candidateSinceMs;
+    private string? _candidateReason;
 
     public ProcessKey? Game { get; private set; }
     public string? GameName { get; private set; }
@@ -46,16 +55,43 @@ internal sealed unsafe partial class GameDetector
             Clear(sink, "game exited");
             changed = true;
         }
+        else if (Game is not null && settings.NotGames.Contains(GameName ?? "", StringComparer.OrdinalIgnoreCase))
+        {
+            Clear(sink, "marked as not a game");
+            changed = true;
+        }
 
-        if (foregroundPid == _lastForeground && fullscreen == _lastFullscreen) return changed;
+        if (foregroundPid == _lastForeground && fullscreen == _lastFullscreen)
+        {
+            // Unchanged foreground: only a pending full-screen candidate needs the clock (no module scan, no handle).
+            if (_candidate is { } c && Environment.TickCount64 - _candidateSinceMs >= FullscreenSustainMs && sampler.TryGet(foregroundPid, out var cp) && cp.Key == c)
+            {
+                _candidate = null;
+                return Detect(cp, _candidateReason!, sink) || changed;
+            }
+            return changed;
+        }
         _lastForeground = foregroundPid;
         _lastFullscreen = fullscreen;
+        _candidate = null;
 
         if (!sampler.TryGet(foregroundPid, out var p) || p.IsProtected || p.SessionId == 0) return changed;
         if (Game is { } current && current == p.Key) return changed;
 
-        string? reason = Classify(p, fullscreen, settings);
+        string? reason = Classify(p, fullscreen, settings, out bool weak);
         if (reason is null) return changed;
+        if (weak)
+        {
+            _candidate = p.Key;
+            _candidateSinceMs = Environment.TickCount64;
+            _candidateReason = reason;
+            return changed;
+        }
+        return Detect(p, reason, sink) || changed;
+    }
+
+    private bool Detect(ProcessInfo p, string reason, IEngineEventSink sink)
+    {
 
         Game = p.Key;
         GameName = p.Name;
@@ -72,8 +108,9 @@ internal sealed unsafe partial class GameDetector
         Reason = null;
     }
 
-    private static string? Classify(ProcessInfo p, bool fullscreen, GameModeSettings s)
+    private static string? Classify(ProcessInfo p, bool fullscreen, GameModeSettings s, out bool weak)
     {
+        weak = false;
         if (s.NotGames.Contains(p.Name, StringComparer.OrdinalIgnoreCase)) return null;
         if (s.Games.Contains(p.Name, StringComparer.OrdinalIgnoreCase)) return "on your games list";
 
@@ -81,7 +118,11 @@ internal sealed unsafe partial class GameDetector
         foreach (var marker in LibraryMarkers)
             if (path.Contains(marker, StringComparison.Ordinal)) return $"installed in a game library ({marker.Trim('\\')})";
 
-        if (fullscreen && UsesGraphicsApi(p.Key.Pid) is { } api) return $"full screen with {api}";
+        if (fullscreen && UsesGraphicsApi(p.Key.Pid) is { } api)
+        {
+            weak = true;
+            return $"full screen with {api}";
+        }
         return null;
     }
 

@@ -112,6 +112,19 @@ export function Autopilot() {
                 <>
                   Playing <strong>{game.name}</strong>
                   {gameCcd !== undefined ? <> on CCD {gameCcd}</> : null}.{' '}
+                  <button
+                    className="btn subtle ap-notgame"
+                    title={`Detected because: ${game.reason ?? 'game'}. Adds ${game.name} to "Never games".`}
+                    onClick={() =>
+                      update((x) => {
+                        const gm = x.autopilot.gameMode
+                        gm.games = gm.games.filter((n) => n.toLowerCase() !== game.name.toLowerCase())
+                        if (!gm.notGames.some((n) => n.toLowerCase() === game.name.toLowerCase())) gm.notGames.push(game.name)
+                      })
+                    }
+                  >
+                    Not a game
+                  </button>{' '}
                 </>
               ) : (
                 <>No game running. </>
