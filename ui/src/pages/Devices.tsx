@@ -14,7 +14,7 @@ export function deviceSeries(d?: Device) {
   const h = d?.history
   return { time: h?.time ?? [], values: h?.primary.map((v, i) => d?.kind === 'gpu' ? v : v == null || h.secondary[i] == null ? null : v + h.secondary[i]!) ?? [] }
 }
-export const deviceLabel = (d: Device) => d.kind === 'disk' ? `Disk ${d.index} · ${d.name}` : d.alias || d.name
+export const deviceLabel = (d: Device) => d.kind === 'disk' ? `Disk ${d.index} · ${d.name}` : d.kind === 'gpu' ? `GPU ${d.index ?? d.id.split(':')[1]} · ${d.name}` : d.alias || d.name
 const lifetime = (units?: string) => units == null ? unavailable : `${(Number(BigInt(units) * 512000n) / 1e12).toFixed(2)} TB`
 
 export function Devices() {

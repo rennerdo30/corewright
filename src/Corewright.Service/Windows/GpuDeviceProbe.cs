@@ -21,7 +21,7 @@ internal static unsafe partial class GpuDeviceProbe
                     var getDesc = (delegate* unmanaged[Stdcall]<nint, void*, int>)(*(nint**)adapter)[10];
                     if (getDesc(adapter, desc) < 0 || (*(uint*)(desc + 304) & 2) != 0) continue;
                     ulong luid = *(ulong*)(desc + 296);
-                    list.Add(new(new(GpuMonitor.Id(luid), "gpu", new string((char*)desc), DedicatedMemory: *(long*)(desc + 272), SharedMemory: *(long*)(desc + 288))) { Luid = luid });
+                    list.Add(new(new(GpuMonitor.Id(luid), "gpu", new string((char*)desc), Index: (int)i, DedicatedMemory: *(long*)(desc + 272), SharedMemory: *(long*)(desc + 288))) { Luid = luid });
                 }
                 finally { Release(adapter); }
             }

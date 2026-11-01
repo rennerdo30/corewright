@@ -41,6 +41,7 @@ internal static unsafe partial class DiskDeviceProbe
                     finally { Native.CloseHandle(h); }
                 }
                 ReadVolumes(result);
+                result.Sort(static (a, b) => Nullable.Compare(a.Info.Index, b.Info.Index));
                 return result;
             }
         }

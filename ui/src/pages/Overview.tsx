@@ -75,13 +75,13 @@ export function Overview({ onOpen }: { onOpen: (p: Page) => void }) {
         >
           <Spark time={s.historyTime} values={s.historyMemory} colorVar="--chart-2" top={100} topLabel={bytes(s.memoryTotal, 0)} midLabel={bytes(s.memoryTotal / 2, 0)} format={(v) => bytes((v / 100) * s.memoryTotal)} />
         </Metric>
-        <Metric title="Disk" selector={selector('disk', 'disks')} value={individual('disk') ? display(total(disk), rate) : rate(s.ioBytesPerSec)} sub={individual('disk') ? disk ? `${disk.bus} · ${disk.volumes?.join(', ') || unavailable}` : unavailable : 'read and write, all processes'} peak={`peak ${rate(peakIo)} in 5 min`}>
+        <Metric title="Disk" selector={selector('disk', 'disks')} value={individual('disk') ? display(total(disk), rate) : rate(s.ioBytesPerSec)} sub={individual('disk') ? disk ? `${disk.bus} · ${disk.volumes?.join(', ') || unavailable}` : unavailable : 'read and write, all processes'} peak={individual('disk') && !io.values.some(v => v != null) ? unavailable : `peak ${rate(peakIo)} in 5 min`}>
           <Spark {...io} colorVar="--chart-3" top={ioTop} topLabel={rate(ioTop)} midLabel={rate(ioTop / 2)} format={rate} />
         </Metric>
-        <Metric title="GPU" selector={selector('gpu', 'GPUs')} value={individual('gpu') ? display(gpu?.values.load, percent) : percent(s.gpu)} sub={individual('gpu') ? `${display(gpu?.values.dedicatedUsed, bytes)} video memory in use` : s.gpuMemory ? `${bytes(s.gpuMemory)} video memory in use` : 'no data yet'} peak={`peak ${pct(peakGpu)} in 5 min`}>
+        <Metric title="GPU" selector={selector('gpu', 'GPUs')} value={individual('gpu') ? display(gpu?.values.load, percent) : percent(s.gpu)} sub={individual('gpu') ? `${display(gpu?.values.dedicatedUsed, bytes)} video memory in use` : s.gpuMemory ? `${bytes(s.gpuMemory)} video memory in use` : 'no data yet'} peak={individual('gpu') && !graphics.values.some(v => v != null) ? unavailable : `peak ${pct(peakGpu)} in 5 min`}>
           <Spark {...graphics} colorVar="--chart-4" top={100} topLabel="100 %" midLabel="50 %" format={pct} />
         </Metric>
-        <Metric title="Network" selector={selector('network', 'adapters')} value={individual('network') ? display(total(adapter), bits) : bits(s.netReceive + s.netSend)} sub={individual('network') ? `\u2193 ${display(adapter?.values.read, bits)}   \u2191 ${display(adapter?.values.write, bits)}` : `\u2193 ${bits(s.netReceive)}   \u2191 ${bits(s.netSend)}`} peak={`peak ${bits(peakNet)} in 5 min`}>
+        <Metric title="Network" selector={selector('network', 'adapters')} value={individual('network') ? display(total(adapter), bits) : bits(s.netReceive + s.netSend)} sub={individual('network') ? `\u2193 ${display(adapter?.values.read, bits)}   \u2191 ${display(adapter?.values.write, bits)}` : `\u2193 ${bits(s.netReceive)}   \u2191 ${bits(s.netSend)}`} peak={individual('network') && !network.values.some(v => v != null) ? unavailable : `peak ${bits(peakNet)} in 5 min`}>
           <Spark {...network} colorVar="--chart-5" top={netTop} topLabel={bits(netTop)} midLabel={bits(netTop / 2)} format={bits} />
         </Metric>
       </div>

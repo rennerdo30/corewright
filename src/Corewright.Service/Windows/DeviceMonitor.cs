@@ -161,6 +161,9 @@ internal sealed unsafe class DeviceMonitor : IDisposable
         if (active && !_sampling)
             foreach (var s in _disks.Concat(_gpus).Concat(_network.Values)) s.Clear(); // only on activation
         _sampling = active;
+        if (active)
+            foreach (var s in _network.Values)
+            { s.Info.Values.Read = s.Info.Values.Write = null; s.Info.Values.SampledAt = null; s.Info.Connected = false; }
     }
     public void Sample(GpuMonitor? gpu, long now)
     {
@@ -178,7 +181,7 @@ internal sealed unsafe class DeviceMonitor : IDisposable
         long time = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         foreach (var s in _disks) { DiskDeviceProbe.Sample(s, now, time); s.Record(time); }
         foreach (var s in _gpus) { GpuDeviceProbe.Sample(s, gpu, time); s.Record(time); }
-        foreach (var s in _network.Values) s.Record(time);
+        foreach (var s in _network.Values) { if (s.Info.Values.SampledAt is null) s.Baseline = false; s.Record(time); }
     }
     public DevicesDto Snapshot(string? history, bool includeHidden)
     {
