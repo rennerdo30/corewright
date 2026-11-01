@@ -216,9 +216,9 @@ internal sealed class NetworkPolicies : IDisposable
         }
         catch (Exception e)
         {
-            bool reported = _qosStartupError is not null;
-            foreach (var state in _effective.Values) reported |= (state.Reported & Qos) != 0;
-            if (!reported) Report("QoS shutdown cleanup pending in journal: " + e.Message);
+            // Shutdown reports once even when the failure was reported before: the process may have exited and the
+            // journal entry is the only trace left (re-check 2026-11-02).
+            Report("QoS shutdown cleanup pending in journal; it is retried at the next start: " + e.Message);
         }
     }
 }

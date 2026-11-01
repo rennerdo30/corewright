@@ -49,6 +49,9 @@ public sealed class RuleEngine(IActuator actuator, IEngineEventSink sink, Func<l
 
     private readonly Dictionary<ProcessKey, ProcState> _states = [];
     private readonly List<ProcessKey> _gone = [];
+    /// <summary>Processes without engine state that were already checked for inherited values (paused / no rules).</summary>
+    private readonly HashSet<ProcessKey> _inheritSeen = [];
+    private readonly List<ProcessKey> _inheritGone = [];
     private CompiledRuleSet _set = CompiledRuleSet.Empty;
     private int _version;
     private long _tick;
@@ -87,12 +90,18 @@ public sealed class RuleEngine(IActuator actuator, IEngineEventSink sink, Func<l
                 if (p.IsProtected) continue;
                 if (!_states.TryGetValue(p.Key, out var st))
                 {
-                    if (Paused || !haveRules) continue;
+                    if (Paused || !haveRules)
+                    {
+                        // No state is created now, but a child of a process the engine still holds modified (a restore
+                        // is pending) inherited that value: put it back, once per process.
+                        if (p.Parent is { } pk && _states.ContainsKey(pk) && _inheritSeen.Add(p.Key)) UndoInherited(p, 0);
+                        continue;
+                    }
                     st = new ProcState(p.Key, p.Name);
                     _states.Add(p.Key, st);
                 }
                 st.Seen = _tick;
-                if (Paused || st.Releasing)
+                if (Paused)
                 {
                     for (int s = 0; s < Slots.Count; s++)
                         if (st.Owned[s]) Revert(st, s);
@@ -106,6 +115,14 @@ public sealed class RuleEngine(IActuator actuator, IEngineEventSink sink, Func<l
             }
         }
 
+        if (_inheritSeen.Count > 0)
+        {
+            foreach (var key in _inheritSeen)
+                if (!_states.ContainsKey(key) && !IsListed(processes, key)) _inheritGone.Add(key);
+            foreach (var key in _inheritGone) _inheritSeen.Remove(key);
+            _inheritGone.Clear();
+        }
+
         foreach (var (key, st) in _states)
             if (st.Seen != _tick) _gone.Add(key);
         foreach (var key in _gone)
@@ -114,6 +131,13 @@ public sealed class RuleEngine(IActuator actuator, IEngineEventSink sink, Func<l
             _states.Remove(key);
         }
         _gone.Clear();
+    }
+
+    private static bool IsListed(IReadOnlyList<ProcessInfo> processes, ProcessKey key)
+    {
+        for (int i = 0; i < processes.Count; i++)
+            if (processes[i].Key == key) return true;
+        return false;
     }
 
     /// <summary>Reverts every slot the engine applied and stops applying until <see cref="Resume"/>.</summary>
@@ -138,7 +162,6 @@ public sealed class RuleEngine(IActuator actuator, IEngineEventSink sink, Func<l
     {
         foreach (var st in _states.Values)
         {
-            st.Releasing = true;
             for (int s = 0; s < Slots.Count; s++)
                 if (st.Owned[s]) Revert(st, s);
             if (!HasOwned(st))
@@ -190,6 +213,16 @@ public sealed class RuleEngine(IActuator actuator, IEngineEventSink sink, Func<l
         if (!_states.TryGetValue(key, out var st)) return list;
         for (int s = 0; s < Slots.Count; s++)
             if (st.Failed[s]) list.Add(((Slot)s, st.FailedValue[s]));
+        return list;
+    }
+
+    /// <summary>Slots whose write is postponed (network cleanup backoff): requested but not confirmed in Windows yet.</summary>
+    public List<Slot> GetPending(ProcessKey key)
+    {
+        var list = new List<Slot>();
+        if (!_states.TryGetValue(key, out var st)) return list;
+        for (int s = 0; s < Slots.Count; s++)
+            if ((st.Pending & (1 << s)) != 0 && !(st.IsApplied[s] && (st.RevertFailed & (1 << s)) != 0)) list.Add((Slot)s);
         return list;
     }
 
@@ -273,7 +306,7 @@ public sealed class RuleEngine(IActuator actuator, IEngineEventSink sink, Func<l
         if (!st.InheritChecked)
         {
             st.InheritChecked = true;
-            UndoInherited(p, st, claimed);
+            UndoInherited(p, claimed);
         }
 
         for (int s = 0; s < Slots.Count; s++)
@@ -291,7 +324,7 @@ public sealed class RuleEngine(IActuator actuator, IEngineEventSink sink, Func<l
     /// nothing would ever put it back (2026-11-02: agent shells confined to two threads). So a child that no rule
     /// claims for that setting gets the parent's original value back, once, when it first appears.
     /// </summary>
-    private void UndoInherited(ProcessInfo p, ProcState st, int claimed)
+    private void UndoInherited(ProcessInfo p, int claimed)
     {
         if (p.Parent is not { } parentKey || !_states.TryGetValue(parentKey, out var parent)) return;
         ReadOnlySpan<Slot> inherited = [Slot.Affinity, Slot.CpuPriority];
@@ -299,9 +332,14 @@ public sealed class RuleEngine(IActuator actuator, IEngineEventSink sink, Func<l
         {
             int s = (int)slot;
             if ((claimed & (1 << s)) != 0 || !parent.IsApplied[s]) continue;
-            if (p.Key.CreateTime <= parent.AppliedAt[s]) continue; // started before the change: not inherited from us
-            if (slot == Slot.CpuPriority && !Slots.IsInheritedPriority(parent.Applied[s])) continue;
-            if (!actuator.TryRead(p.Key, slot, out long current, out _) || current != parent.Applied[s]) continue;
+            // The parent has been modified without interruption since ModifiedSince; a child started before that
+            // got the parent's own value, not ours.
+            if (p.Key.CreateTime <= parent.ModifiedSince[s]) continue;
+            // The value the child could have inherited: the current one, or the previous one if the engine moved it
+            // after the child started (the placer moves affinity).
+            long inheritedValue = p.Key.CreateTime < parent.ChangedAt[s] ? parent.PreviousApplied[s] : parent.Applied[s];
+            if (slot == Slot.CpuPriority && !Slots.IsInheritedPriority(inheritedValue)) continue;
+            if (!actuator.TryRead(p.Key, slot, out long current, out _) || current != inheritedValue) continue;
             if (actuator.TryWrite(p.Key, slot, parent.Original[s], out _))
                 sink.Emit(new EngineEvent(EngineEventKind.Reverted, p.Key.Pid, p.Name, parent.AppliedRule[s]?.Name, Slots.Name(slot),
                     Slots.FormatValue(slot, parent.Original[s]), $"inherited from {parent.Name}; put back"));
@@ -405,11 +443,15 @@ public sealed class RuleEngine(IActuator actuator, IEngineEventSink sink, Func<l
         }
         else if (result.Status == WriteStatus.Succeeded)
         {
+            long nowFt = DateTime.UtcNow.ToFileTimeUtc();
+            // Inheritance bookkeeping: the modification interval starts when the slot first leaves its original and
+            // only ends with a confirmed restore; a reapply of the same value after a failed restore keeps it.
+            if (!st.IsApplied[s]) { st.ModifiedSince[s] = nowFt; st.PreviousApplied[s] = value; st.ChangedAt[s] = nowFt; }
+            else if (st.Applied[s] != value) { st.PreviousApplied[s] = st.Applied[s]; st.ChangedAt[s] = nowFt; }
             st.Owned[s] = true;
             st.IsApplied[s] = true;
             st.Applied[s] = value;
             st.AppliedRule[s] = rule;
-            st.AppliedAt[s] = DateTime.UtcNow.ToFileTimeUtc();
             st.Failed[s] = false;
             st.Pending &= ~(1 << s);
             // Reapply does not complete an unresolved restore. Keep its deadline and once-only report.
@@ -477,7 +519,6 @@ public sealed class RuleEngine(IActuator actuator, IEngineEventSink sink, Func<l
         public int DriftCount;
         public int RevertFailed;
         public int Pending;
-        public bool Releasing;
 
         // Per rule (resized when the rule set changes).
         public byte[] StaticCache = [];
@@ -492,8 +533,11 @@ public sealed class RuleEngine(IActuator actuator, IEngineEventSink sink, Func<l
         public readonly long[] RestoreRetry = new long[Slots.Count];
         public readonly long[] Applied = new long[Slots.Count];
         public readonly long[] Original = new long[Slots.Count];
-        /// <summary>FILETIME (UTC) of the engine's last write per slot: children created after it inherited the value.</summary>
-        public readonly long[] AppliedAt = new long[Slots.Count];
+        /// <summary>FILETIME (UTC) when the slot left its original value; children created after it may have inherited ours.</summary>
+        public readonly long[] ModifiedSince = new long[Slots.Count];
+        /// <summary>FILETIME (UTC) of the last change of the applied value, and the value before it.</summary>
+        public readonly long[] ChangedAt = new long[Slots.Count];
+        public readonly long[] PreviousApplied = new long[Slots.Count];
         /// <summary>Inheritance from a changed parent was checked (once per process).</summary>
         public bool InheritChecked;
         public readonly CompiledRule?[] AppliedRule = new CompiledRule?[Slots.Count];

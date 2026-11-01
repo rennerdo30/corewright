@@ -504,6 +504,15 @@ internal sealed class Monitor : BackgroundService
             // A root Corewright cannot change (not elevated, protected) is refused: the tool keeps its own controls.
             foreach (var r in roots)
             {
+                var pending = Engine.GetPending(r);
+                if (pending.Count > 0)
+                {
+                    _groups.Remove(id);
+                    RebuildRules();
+                    Tick();
+                    return (503, new GroupErrorDto("pending",
+                        $"{string.Join(", ", pending.Select(Slots.Name))} on pid {r.Pid} is not in place yet (an earlier network change is still being cleaned up); try again in a minute."));
+                }
                 var failed = Engine.GetFailed(r);
                 if (failed.Count > 0)
                 {
