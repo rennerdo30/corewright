@@ -614,6 +614,18 @@ Section "Corewright"
   ${If} $ScResult != 0
     !insertmacro FAIL "Could not set service recovery (sc.exe: $ScResult)." ""
   ${EndIf}
+  ; Defense in depth (owner, 2026-11-02: "the api must only be used on pc"): the service already listens on
+  ; 127.0.0.1 and rejects non-loopback Host headers. This inbound block rule for the service program stops every
+  ; connection from another machine even if the bind address is ever changed. Loopback (127.0.0.1, ::1) is excluded
+  ; from the remote ranges; Windows Firewall also never filters loopback. Block rules win over allow rules.
+  nsExec::ExecToLog /TIMEOUT=15000 '"$SYSDIR\netsh.exe" advfirewall firewall delete rule name="Corewright: block network access to the service"'
+  Pop $0
+  nsExec::ExecToLog /TIMEOUT=15000 '"$SYSDIR\netsh.exe" advfirewall firewall add rule name="Corewright: block network access to the service" dir=in action=block program="$INSTDIR\Corewright.Service.exe" enable=yes profile=any remoteip=0.0.0.0-126.255.255.255,128.0.0.0-255.255.255.255,::2-ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff description="The Corewright API is for this PC only. Added by Corewright setup, removed by uninstall."'
+  Pop $0
+  ${If} $0 != 0
+    ; Windows Firewall may be off (another firewall product): the API still listens on 127.0.0.1 only.
+    DetailPrint "Warning: could not add the Corewright firewall rule (netsh exit $0). The API still accepts local connections only."
+  ${EndIf}
   ClearErrors
   CreateShortcut "$SMPROGRAMS\Corewright.lnk" "$INSTDIR\Corewright.Dashboard.exe"
   ${If} ${Errors}
@@ -680,6 +692,9 @@ Section "Uninstall"
     ${AndIf} $ScResult != 1060
       !insertmacro FAIL "Could not delete the Corewright service (sc.exe: $ScResult)." "un."
     ${EndIf}
+    ; The firewall rule belongs to the service; an already-missing rule is fine.
+    nsExec::ExecToLog /TIMEOUT=15000 '"$SYSDIR\netsh.exe" advfirewall firewall delete rule name="Corewright: block network access to the service"'
+    Pop $0
     StrCpy $FilesReplaced 1
     StrCpy $Countdown 60
     ${Do}
