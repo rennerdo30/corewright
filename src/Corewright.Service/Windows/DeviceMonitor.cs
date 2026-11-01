@@ -147,15 +147,19 @@ internal sealed unsafe class DeviceMonitor : IDisposable
         long now = Environment.TickCount64;
         int generation = Volatile.Read(ref _inventoryGeneration);
         if (generation == _refreshedGeneration || now < _inventoryRetryMs) return false;
-        var disks = DiskDeviceProbe.Inventory(clientActive);
+        var disks = DiskDeviceProbe.Inventory(clientActive, out bool disksComplete);
         if (!clientActive()) return false;
         var gpus = GpuDeviceProbe.Inventory(clientActive);
         if (!clientActive()) return false;
+        // A disk that could not be read this time is not gone: keep the ones we knew until a complete pass.
+        if (disks is not null && !disksComplete)
+            foreach (var known in _disks)
+                if (!disks.Exists(d => d.Info.Id == known.Info.Id)) disks.Add(known);
         _disks = Reconcile(_disks, disks);
         _gpus = Reconcile(_gpus, gpus);
         _inventoryAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-        if (disks is not null && gpus is not null) { _refreshedGeneration = generation; _inventoryRetryMs = 0; }
-        else _inventoryRetryMs = now + 60_000; // Only failed enumerations retry, while demanded.
+        if (disks is not null && disksComplete && gpus is not null) { _refreshedGeneration = generation; _inventoryRetryMs = 0; }
+        else _inventoryRetryMs = now + 60_000; // Failed or partial enumerations retry, while demanded.
         return true;
     }
     private static List<State> Reconcile(List<State> old, List<State>? found)
@@ -226,17 +230,20 @@ internal sealed unsafe class DeviceMonitor : IDisposable
         long time = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         foreach (var s in _network.Values) { if (s.Info.Values.SampledAt is null) s.Baseline = false; s.Record(time); }
     }
-    internal void SampleProbes(GpuMonitor? gpu, bool active, long now, Func<bool> clientActive)
+    /// <returns>True when nothing is left open after an idle pass (the worker may stop asking for cleanup).</returns>
+    internal bool SampleProbes(GpuMonitor? gpu, bool active, long now, Func<bool> clientActive)
     {
         if (!active)
         {
-            if (_lastActive != 0 && now - _lastActive > 60_000)
+            if (_lastActive == 0) return true; // already closed
+            if (now - _lastActive > 60_000)
             {
                 foreach (var s in _disks) s.Close();
                 foreach (var s in _gpus) s.Close();
                 _lastActive = 0;
+                return true;
             }
-            return;
+            return false; // closes on a later pass; cleanup stays requested
         }
         int activation = Volatile.Read(ref _activation);
         if (_probeActivation != activation)
@@ -249,11 +256,12 @@ internal sealed unsafe class DeviceMonitor : IDisposable
         long time = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         foreach (var s in _disks)
         {
-            if (!clientActive()) return;
+            if (!clientActive()) return false;
             DiskDeviceProbe.Sample(s, now, time, clientActive);
             if (s.NeedsInventoryRefresh) { s.NeedsInventoryRefresh = false; MarkInventoryDirty(); }
         }
-        foreach (var s in _gpus) { if (!clientActive()) return; GpuDeviceProbe.Sample(s, gpu, time); }
+        foreach (var s in _gpus) { if (!clientActive()) return false; GpuDeviceProbe.Sample(s, gpu, time); }
+        return false;
     }
     private long _publishedInventoryAt;
     internal void Publish(GpuMonitor? gpu, bool active)

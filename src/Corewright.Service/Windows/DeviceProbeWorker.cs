@@ -45,6 +45,7 @@ internal sealed class DeviceProbeWorker : IDisposable
             {
                 _wake.WaitOne();
                 lock (_gate) { if (_stopping) return; }
+                bool cleaned = false;
                 try
                 {
                     bool active = ClientActive();
@@ -55,7 +56,7 @@ internal sealed class DeviceProbeWorker : IDisposable
                     }
                     active = ClientActive();
                     if (!active) { _gpu?.Dispose(); _gpu = null; }
-                    _devices.SampleProbes(_gpu, active, Environment.TickCount64, _clientActive);
+                    cleaned = _devices.SampleProbes(_gpu, active, Environment.TickCount64, _clientActive);
                     lock (_sync)
                     {
                         // A slow pass must not publish a fresh-looking sample after client demand ended.
@@ -70,7 +71,8 @@ internal sealed class DeviceProbeWorker : IDisposable
                     {
                         _busy = false;
                         // Cleanup after a slow pass is still required; only a completed idle pass clears it.
-                        if (_gpu is null && Environment.TickCount64 - _lastRequest > 60_000) _cleanupNeeded = false;
+                        // One deadline: the probes say when they actually closed everything (review 2026-11-02).
+                        if (_gpu is null && cleaned) _cleanupNeeded = false;
                     }
                 }
             }

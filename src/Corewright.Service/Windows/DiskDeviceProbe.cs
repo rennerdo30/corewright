@@ -6,8 +6,11 @@ namespace Corewright.Service.Windows;
 internal static unsafe partial class DiskDeviceProbe
 {
     private const uint QueryProperty = 0x2D1400;
-    public static List<DeviceMonitor.State>? Inventory(Func<bool> clientActive)
+    /// <param name="complete">False when an interface could not be opened or read: the list is partial, so the caller
+    /// keeps disks it already knew and retries later instead of treating them as removed.</param>
+    public static List<DeviceMonitor.State>? Inventory(Func<bool> clientActive, out bool complete)
     {
+        complete = true;
         var guid = new Guid("53f56307-b6bf-11d0-94f2-00a0c91efb8b"); // GUID_DEVINTERFACE_DISK
         byte* buf = stackalloc byte[4096];
         for (int attempt = 0; attempt < 2; attempt++)
@@ -23,11 +26,11 @@ internal static unsafe partial class DiskDeviceProbe
                     if (!clientActive()) return null;
                     string path = new(p + off); off += path.Length + 1;
                     nint h = Open(path);
-                    if (h == -1) continue;
+                    if (h == -1) { complete = false; continue; }
                     try
                     {
                         if (!clientActive()) return null;
-                        if (!Io(h, 0x2D1080, null, 0, buf, 12, out uint got) || got < 12) continue;
+                        if (!Io(h, 0x2D1080, null, 0, buf, 12, out uint got) || got < 12) { complete = false; continue; }
                         int index = *(int*)(buf + 4);
                         string model = $"Physical disk {index}", bus = "Unknown";
                         long? size = null;
