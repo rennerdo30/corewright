@@ -193,7 +193,7 @@ internal sealed partial class MainForm : Form
     private void ApplyTheme()
     {
         bool dark = IsDarkTheme();
-        var bg = dark ? Color.FromArgb(0x20, 0x20, 0x20) : Color.FromArgb(0xF3, 0xF3, 0xF3);
+        var bg = dark ? Color.FromArgb(0x19, 0x19, 0x19) : Color.FromArgb(0xE9, 0xE9, 0xE9);
         BackColor = bg;
         _web.DefaultBackgroundColor = bg;
         void Frame()
@@ -252,7 +252,7 @@ internal sealed partial class MainForm : Form
         {
             bool dark = IsDarkTheme();
             core.NavigateToString(
-                $"<html><body style='margin:0;background:{(dark ? "#202020" : "#f3f3f3")};color:{(dark ? "#fff" : "#1a1a1a")};" +
+                $"<html><body style='margin:0;background:{(dark ? "#191919" : "#e9e9e9")};color:{(dark ? "#fff" : "#1a1a1a")};" +
                 "font:14px \"Segoe UI Variable Text\",\"Segoe UI\"'>" +
                 "<div style='app-region:drag;height:40px;display:flex;justify-content:flex-end'>" +
                 "<button onclick=\"chrome.webview.postMessage({type:'close'})\" style='app-region:no-drag;width:46px;border:0;" +
