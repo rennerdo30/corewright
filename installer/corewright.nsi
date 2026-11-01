@@ -50,7 +50,6 @@ UninstPage custom un.OptionsPage un.OptionsLeave
 
 Var Autostart
 Var Checkbox
-Var RemoveData
 Var DataDir
 Var UserDataDir
 Var ServiceState
@@ -373,7 +372,6 @@ Function .onInstSuccess
 FunctionEnd
 Function un.onInit
   !insertmacro INIT
-  StrCpy $RemoveData ${BST_UNCHECKED}
 FunctionEnd
 Function .onInstFailed
   Call RestoreService
@@ -399,17 +397,17 @@ FunctionEnd
 Function OptionsLeave
   ${NSD_GetState} $Checkbox $Autostart
 FunctionEnd
+; Uninstall never deletes rules, settings or statistics (owner rule: persistent
+; data is never lost). The page says where they stay so a user can remove them.
 Function un.OptionsPage
-  !insertmacro MUI_HEADER_TEXT "Rules and settings" "Your rules and settings are kept unless you choose to remove them."
+  !insertmacro MUI_HEADER_TEXT "Rules and settings" "Your rules and settings are kept."
   nsDialogs::Create 1018
   Pop $0
-  ${NSD_CreateCheckbox} 0 12u 100% 14u "Also remove my rules and settings"
-  Pop $Checkbox
-  ${NSD_SetState} $Checkbox $RemoveData
+  ${NSD_CreateLabel} 0 0 100% 60u "Corewright keeps your rules, settings and what it has learned, so a later install picks them up again:$\r$\n$\r$\n$DataDir$\r$\n$UserDataDir$\r$\n$\r$\nDelete these folders yourself if you no longer need them."
+  Pop $0
   nsDialogs::Show
 FunctionEnd
 Function un.OptionsLeave
-  ${NSD_GetState} $Checkbox $RemoveData
 FunctionEnd
 
 ; Install appends each version's exact payload. Retaining older entries means
@@ -510,16 +508,17 @@ Section "Corewright"
   StrCpy $DataPathUnsafe 1 ; timeout/crash cannot certify the path for service restart
   nsExec::ExecToLog /TIMEOUT=30000 '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\machine-state.ps1" -Action SecureData -DataDirectory "$DataDir"'
   Pop $0
+  ; Only exit 0 certifies freshly protected objects. Any failure, including a
+  ; rejected link or unsafe object in the existing tree, keeps the SYSTEM service
+  ; stopped: an intact original path is not proof that the path is safe.
   ${If} $0 == 0
-  ${OrIf} $0 == 1 ; helper certifies that the previous path is still intact
     StrCpy $DataPathUnsafe 0
   ${EndIf}
   ${If} $0 == 3
-    StrCpy $DataPathUnsafe 1
     !insertmacro FAIL "Machine data swap was interrupted. The service stays stopped; recover the preserved data before retrying." ""
   ${EndIf}
   ${If} $0 != 0
-    !insertmacro FAIL "Corewright data migration failed. Original data and any fresh copy were preserved." ""
+    !insertmacro FAIL "Corewright could not move its data into a protected folder, so the service stays stopped. Your data was not changed. See the installer log, then run setup again." ""
   ${EndIf}
   ; The service binary cannot be probed while the service runs. If another
   ; handle still locks it now, the failure callback restores the original service.
@@ -696,31 +695,6 @@ Section "Uninstall"
   ${If} $0 != 0
   ${AndIf} $0 != 2
     !insertmacro FAIL "Could not remove Corewright from Installed apps (Windows error $0)." "un."
-  ${EndIf}
-  ${If} $RemoveData == ${BST_CHECKED}
-    ClearErrors
-    ${If} ${FileExists} "$DataDir"
-      RMDir /r "$DataDir"
-    ${EndIf}
-    ${If} ${Errors}
-      !insertmacro FAIL "Could not remove the requested machine rules and settings." "un."
-    ${EndIf}
-    ${If} $SameUser == 0
-      ${If} ${FileExists} "$UserDataDir"
-        RMDir /r "$UserDataDir"
-      ${EndIf}
-      ${If} ${Errors}
-        !insertmacro FAIL "Could not remove the requested user rules and settings." "un."
-      ${EndIf}
-      ClearErrors
-      ReadRegDWORD $0 HKCU "Software\Corewright" "AutostartDecided"
-      ${IfNot} ${Errors}
-        DeleteRegValue HKCU "Software\Corewright" "AutostartDecided"
-        ${If} ${Errors}
-          !insertmacro FAIL "Could not remove the requested user sign-in preference." "un."
-        ${EndIf}
-      ${EndIf}
-    ${EndIf}
   ${EndIf}
   SetErrorLevel 0
 SectionEnd
