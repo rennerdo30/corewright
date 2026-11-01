@@ -239,7 +239,8 @@ public static class AutopilotRules
             // One rule per classified program; game mode (higher priority) still wins for its slots while gaming.
             foreach (var v in background)
             {
-                var when = Condition.All(Condition.Leaf("program", "eq", v.Program));
+                // Short-lived tools (grep, cut, a script's helpers) are not worth an affinity write each.
+                var when = Condition.All(Condition.Leaf("program", "eq", v.Program), Condition.Leaf("ageSeconds", "gt", "15"));
                 // A program only counts as background while no window of its app is in front. Services have none.
                 if (!v.Service) when.Children!.Add(Condition.Leaf("isForegroundApp", "isFalse", null));
                 rules.Add(new Rule

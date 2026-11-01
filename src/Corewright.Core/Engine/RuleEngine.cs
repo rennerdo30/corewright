@@ -221,12 +221,41 @@ public sealed class RuleEngine(IActuator actuator, IEngineEventSink sink)
             }
         }
 
+        if (!st.InheritChecked)
+        {
+            st.InheritChecked = true;
+            UndoInherited(p, st, claimed);
+        }
+
         for (int s = 0; s < Slots.Count; s++)
         {
             bool has = (claimed & (1 << s)) != 0;
             // Frozen: what Autopilot set on a process outside any group stays exactly as it is.
             if (!has && FreezeAutopilot && p.GroupId is null && st.IsApplied[s] && st.AppliedRule[s] is { IsAutopilot: true }) continue;
             Reconcile(p, st, s, has, want[s], has ? rules[wantRule[s]] : null);
+        }
+    }
+
+    /// <summary>
+    /// Windows gives a new process its parent's CPU cores, and an idle or below-normal priority class. When the engine
+    /// changed the parent, a child started afterwards would keep the engine's value without the engine owning it, and
+    /// nothing would ever put it back (2026-11-02: agent shells confined to two threads). So a child that no rule
+    /// claims for that setting gets the parent's original value back, once, when it first appears.
+    /// </summary>
+    private void UndoInherited(ProcessInfo p, ProcState st, int claimed)
+    {
+        if (p.Parent is not { } parentKey || !_states.TryGetValue(parentKey, out var parent)) return;
+        ReadOnlySpan<Slot> inherited = [Slot.Affinity, Slot.CpuPriority];
+        foreach (var slot in inherited)
+        {
+            int s = (int)slot;
+            if ((claimed & (1 << s)) != 0 || !parent.IsApplied[s]) continue;
+            if (p.Key.CreateTime <= parent.AppliedAt[s]) continue; // started before the change: not inherited from us
+            if (slot == Slot.CpuPriority && !Slots.IsInheritedPriority(parent.Applied[s])) continue;
+            if (!actuator.TryRead(p.Key, slot, out long current, out _) || current != parent.Applied[s]) continue;
+            if (actuator.TryWrite(p.Key, slot, parent.Original[s], out _))
+                sink.Emit(new EngineEvent(EngineEventKind.Reverted, p.Key.Pid, p.Name, parent.AppliedRule[s]?.Name, Slots.Name(slot),
+                    Slots.FormatValue(slot, parent.Original[s]), $"inherited from {parent.Name}; put back"));
         }
     }
 
@@ -322,6 +351,7 @@ public sealed class RuleEngine(IActuator actuator, IEngineEventSink sink)
             st.IsApplied[s] = true;
             st.Applied[s] = value;
             st.AppliedRule[s] = rule;
+            st.AppliedAt[s] = DateTime.UtcNow.ToFileTimeUtc();
             st.Failed[s] = false;
             sink.Emit(new EngineEvent(EngineEventKind.Applied, p.Key.Pid, p.Name, rule!.Name, Slots.Name(slot),
                 Slots.FormatValue(slot, value), null));
@@ -372,6 +402,10 @@ public sealed class RuleEngine(IActuator actuator, IEngineEventSink sink)
         public readonly bool[] IsApplied = new bool[Slots.Count];
         public readonly long[] Applied = new long[Slots.Count];
         public readonly long[] Original = new long[Slots.Count];
+        /// <summary>FILETIME (UTC) of the engine's last write per slot: children created after it inherited the value.</summary>
+        public readonly long[] AppliedAt = new long[Slots.Count];
+        /// <summary>Inheritance from a changed parent was checked (once per process).</summary>
+        public bool InheritChecked;
         public readonly CompiledRule?[] AppliedRule = new CompiledRule?[Slots.Count];
         public readonly bool[] Failed = new bool[Slots.Count];
         public readonly long[] FailedValue = new long[Slots.Count];

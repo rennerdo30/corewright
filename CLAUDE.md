@@ -73,6 +73,8 @@ Network (next phase): egress throttling and DSCP marking through QoS policies in
 - `sustainSeconds` (condition must hold this long before the rule activates) and `releaseSeconds` (must be false this long before it deactivates) prevent flapping.
 - Process identity is `(pid, creation time)`; every Win32 handle is checked against the creation time before writing, so PID reuse can never hit the wrong process.
 - A failed write (access denied, protected process) is reported once and not retried until the rules change or the process restarts.
+- **Inheritance (2026-11-02):** Windows gives a new process its parent's CPU cores and an idle/below-normal priority class. A child started after the engine changed its parent, and not claimed by a rule for that setting, gets the parent's original value back once when it first appears (event "inherited from …; put back"), so the engine's changes never leak into processes it does not own.
+- **Foreground data:** as a service, the foreground comes from the tray. Background classification learns only while the tray reports (it says pid 0 when it exits); without it every program would look "never in front". Background rules apply only to processes older than 15 s (`ageSeconds`).
 - Never touch critical processes (pid 0 and 4, `csrss`, `smss`, `wininit`, `winlogon`, `services`, `lsass`, `LsaIso`, `Registry`, `Memory Compression`, `Secure System`, `dwm`, `fontdrvhost`) or the service itself; the list lives in `ProtectedProcesses.cs`.
 - `rules.json` is user data: written atomically, the previous version kept as `rules.json.bak`, an unreadable file is never overwritten.
 

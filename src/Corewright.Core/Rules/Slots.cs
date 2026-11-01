@@ -48,6 +48,10 @@ public static class Slots
         _ => slot.ToString(),
     };
 
+    /// <summary>Windows passes only idle and below-normal priority classes on to child processes.</summary>
+    public static bool IsInheritedPriority(long level) =>
+        (CpuPriorityLevel)level is CpuPriorityLevel.Idle or CpuPriorityLevel.BelowNormal;
+
     public static string FormatValue(Slot slot, long value) => slot switch
     {
         Slot.CpuPriority => Camel(((CpuPriorityLevel)value).ToString()),

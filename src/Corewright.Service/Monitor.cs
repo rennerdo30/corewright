@@ -311,7 +311,9 @@ internal sealed class Monitor : BackgroundService
 
             // PM-12: long-term observation; a changed classification rebuilds the rule set (at most once a minute).
             _background ??= new BackgroundClassifier(DataDirectory);
-            if (_background.Observe(_sampler.Processes, _ctx.ForegroundPid, Topology.LogicalCount, _ctx.NowMs,
+            // As a service the foreground comes from the tray: known once it reported, unknown after it said goodbye (pid 0).
+            bool foregroundKnown = !IsWindowsService || (_reportedForegroundMs != 0 && _reportedForegroundPid > 0);
+            if (_background.Observe(_sampler.Processes, _ctx.ForegroundPid, foregroundKnown, Topology.LogicalCount, _ctx.NowMs,
                     Settings.Autopilot.Background, Settings.Autopilot.GameMode, Topology)
                 && Settings.Autopilot.Enabled && Settings.Autopilot.Background.Enabled)
             {
