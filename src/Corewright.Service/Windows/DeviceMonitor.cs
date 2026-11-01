@@ -51,6 +51,7 @@ internal sealed unsafe class DeviceMonitor : IDisposable
         public DeviceDto Info = info;
         public State? Published;
         public bool IdentityInvalidated;
+        public bool NeedsInventoryRefresh;
         public int ResetVersion;
         public string Path = "";
         public ulong Luid;
@@ -71,7 +72,7 @@ internal sealed unsafe class DeviceMonitor : IDisposable
         }
         public void Invalidate(long now)
         {
-            Close(); Clear(); IdentityInvalidated = true;
+            Close(); Clear(); IdentityInvalidated = NeedsInventoryRefresh = true;
             NextOpenAttemptMs = now + 60_000;
             var h = Info.Health;
             h.Temperature = h.FanRpm = h.PowerPercent = h.EngineClockMhz = null;
@@ -122,17 +123,29 @@ internal sealed unsafe class DeviceMonitor : IDisposable
     // Only Monitor.Sync accesses the published lists and their histories.
     private List<State> _diskCache = [], _gpuCache = [];
     private readonly Dictionary<ulong, State> _network = [];
-    private long _inventoryDue, _inventoryAt, _lastActive;
+    private long _inventoryRetryMs, _inventoryAt, _lastActive;
+    private int _inventoryGeneration = 1, _refreshedGeneration, _networkDirty = 1;
     private bool _sampling;
     private int _activation, _probeActivation;
     private DeviceProbeWorker? _worker;
+    private DeviceNotifications? _notifications;
     public GpuReadings Gpu { get; } = new();
-    public void Start(Lock sync, ILogger log) => _worker = new(this, sync, log);
+    public void Start(Lock sync, ILogger log)
+    {
+        _notifications = new(this, log); // Register before enumerating so no arrival is lost.
+        _worker = new(this, sync, log);
+    }
+    internal void MarkInventoryDirty()
+    {
+        Interlocked.Increment(ref _inventoryGeneration);
+        Interlocked.Exchange(ref _networkDirty, 1);
+    }
     public void Refresh() => _worker?.Request(true);
     internal void RefreshProbes(Func<bool> clientActive)
     {
         long now = Environment.TickCount64;
-        if (now < _inventoryDue) return;
+        int generation = Volatile.Read(ref _inventoryGeneration);
+        if (generation == _refreshedGeneration || now < _inventoryRetryMs) return;
         var disks = DiskDeviceProbe.Inventory(clientActive);
         if (!clientActive()) return;
         var gpus = GpuDeviceProbe.Inventory(clientActive);
@@ -140,7 +153,8 @@ internal sealed unsafe class DeviceMonitor : IDisposable
         _disks = Reconcile(_disks, disks);
         _gpus = Reconcile(_gpus, gpus);
         _inventoryAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-        _inventoryDue = now + 180_000;
+        if (disks is not null && gpus is not null) { _refreshedGeneration = generation; _inventoryRetryMs = 0; }
+        else _inventoryRetryMs = now + 60_000; // Only failed enumerations retry, while demanded.
     }
     private static List<State> Reconcile(List<State> old, List<State>? found)
     {
@@ -148,7 +162,7 @@ internal sealed unsafe class DeviceMonitor : IDisposable
         for (int i = 0; i < found.Count; i++)
         {
             // A physical index and model may be reused immediately by a different device.
-            var previous = old.Find(s => !s.IdentityInvalidated && s.Info.Id == found[i].Info.Id
+            var previous = old.Find(s => s.Info.Id == found[i].Info.Id
                 && s.Info.Name == found[i].Info.Name && string.Equals(s.Path, found[i].Path, StringComparison.OrdinalIgnoreCase));
             if (previous is null) continue;
             previous.Info = found[i].Info with { Values = previous.Info.Values, Health = previous.Info.Health };
@@ -192,6 +206,7 @@ internal sealed unsafe class DeviceMonitor : IDisposable
     }
     public void BeginSample(bool active)
     {
+        if (active && Interlocked.Exchange(ref _networkDirty, 0) != 0) NetworkInventoryDue = true;
         if (active && !_sampling)
         {
             Interlocked.Increment(ref _activation);
@@ -230,7 +245,12 @@ internal sealed unsafe class DeviceMonitor : IDisposable
         _probeActivation = activation;
         _lastActive = now;
         long time = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-        foreach (var s in _disks) { if (!clientActive()) return; DiskDeviceProbe.Sample(s, now, time, clientActive); }
+        foreach (var s in _disks)
+        {
+            if (!clientActive()) return;
+            DiskDeviceProbe.Sample(s, now, time, clientActive);
+            if (s.NeedsInventoryRefresh) { s.NeedsInventoryRefresh = false; MarkInventoryDirty(); }
+        }
         foreach (var s in _gpus) { if (!clientActive()) return; GpuDeviceProbe.Sample(s, gpu, time); }
     }
     private long _publishedInventoryAt;
@@ -281,5 +301,5 @@ internal sealed unsafe class DeviceMonitor : IDisposable
             .Where(s => includeHidden || !s.Info.Hidden).Select(s => s.Snapshot(ids.Contains("*") || ids.Contains(s.Info.Id)))]);
     }
     internal void CloseProbes() { foreach (var s in _disks) s.Close(); foreach (var s in _gpus) s.Close(); }
-    public void Dispose() => _worker?.Dispose();
+    public void Dispose() { _notifications?.Dispose(); _worker?.Dispose(); }
 }
