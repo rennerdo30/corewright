@@ -309,3 +309,14 @@ export interface RuleHit {
   set: Record<string, string>
   message?: string
 }
+
+/** One installed memory module (SMBIOS type 17). */
+export interface MemoryModule {
+  slot: string
+  sizeMb: number
+  type: string
+  ratedMts: number
+  configuredMts: number
+  manufacturer: string
+  part: string
+}

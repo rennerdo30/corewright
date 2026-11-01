@@ -64,6 +64,7 @@ public sealed record ImportResponseDto(bool Applied, string? Source, Rule[] Rule
 [JsonSerializable(typeof(DevicesDto))]
 [JsonSerializable(typeof(ProcessDto[]))]
 [JsonSerializable(typeof(TopologyDto))]
+[JsonSerializable(typeof(Corewright.Service.Windows.MemoryModuleDto[]))]
 [JsonSerializable(typeof(ExplainDto))]
 [JsonSerializable(typeof(RuleSet))]
 [JsonSerializable(typeof(RulesResultDto))]
@@ -128,6 +129,8 @@ internal static class Api
         });
 
         api.MapGet("/topology", IResult () => m.CpuLayout is { } layout ? TypedResults.Ok(layout) : TypedResults.NotFound());
+        // Installed memory modules (SMBIOS), read once.
+        api.MapGet("/memory", () => TypedResults.Ok(Corewright.Service.Windows.MemoryModules.Read()));
 
         api.MapGet("/devices", (string? history, bool? includeHidden) =>
         {

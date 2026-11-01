@@ -1,4 +1,4 @@
-import type { RuleHit, AppSettings, BackgroundRow, DevicesInfo, EngineEvent, Placement, Explain, ImportResponse, ProcessRow, RuleSet, RulesResult, Status, SystemInfo, Topology } from './types'
+import type { MemoryModule, RuleHit, AppSettings, BackgroundRow, DevicesInfo, EngineEvent, Placement, Explain, ImportResponse, ProcessRow, RuleSet, RulesResult, Status, SystemInfo, Topology } from './types'
 
 declare global {
   interface Window {
@@ -48,6 +48,7 @@ export const api = {
   devices: (history = '', includeHidden = false) => request<DevicesInfo>('GET', `/devices?history=${encodeURIComponent(history)}&includeHidden=${includeHidden}`),
   processes: (include?: string) => request<ProcessRow[]>('GET', `/processes${include ? `?include=${include}` : ''}`),
   topology: () => request<Topology>('GET', '/topology'),
+  memory: () => request<MemoryModule[]>('GET', '/memory'),
   settings: () => request<AppSettings>('GET', '/settings'),
   saveSettings: (s: AppSettings) => request<{ ok: boolean }>('PUT', '/settings', s),
   background: () => request<BackgroundRow[]>('GET', '/autopilot/background'),

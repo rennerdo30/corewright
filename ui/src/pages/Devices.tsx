@@ -1,11 +1,12 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { api } from '../api'
 import { Spark, niceCeil } from '../components/Chart'
 import { PageHeader, plural } from '../components/PageHeader'
 import { Toggle } from '../components/SettingsControls'
 import { bytes } from '../format'
 import { usePoll } from '../hooks'
-import type { Device } from '../types'
+import type { Device, MemoryModule, SystemInfo, Topology } from '../types'
+import type { Page } from '../App'
 
 export const unavailable = 'not available'
 export const rate = (n: number) => (n < 1024 ? `${Math.round(n)} B/s` : `${bytes(n)}/s`)
@@ -34,6 +35,15 @@ export const deviceLabel = (d: Device) =>
       : d.alias || d.name
 
 const KIND_TITLE = { disk: 'Disks', gpu: 'Graphics', network: 'Network adapters' } as const
+
+type Section = 'cpu' | 'memory' | 'disk' | 'gpu' | 'network'
+let pendingSection: Section | undefined
+
+/** Opens Devices at one section (Overview card titles). */
+export function openDeviceSection(section: Section, open: (p: Page) => void) {
+  pendingSection = section
+  open('devices')
+}
 const KIND_GLYPH = { disk: '', gpu: '', network: '' } as const
 const lifetime = (units?: string) => (units == null ? undefined : `${(Number(BigInt(units) * 512000n) / 1e12).toFixed(1)} TB`)
 
@@ -65,6 +75,25 @@ function verdict(d: Device): Verdict | undefined {
 export function Devices() {
   const [hidden, setHidden] = useState(false)
   const data = usePoll(() => api.devices('*', hidden), 1000)
+  const sys = usePoll(api.system, 1000)
+  const topo = usePoll(api.topology, 600_000)
+  const modules = usePoll(api.memory, 600_000)
+
+  // Arrived from an Overview card: scroll to its section once it exists.
+  useEffect(() => {
+    if (!pendingSection) return
+    const id = `dev-${pendingSection}`
+    let tries = 0
+    const timer = window.setInterval(() => {
+      const el = document.getElementById(id)
+      if (el || ++tries > 20) {
+        window.clearInterval(timer)
+        el?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+        pendingSection = undefined
+      }
+    }, 100)
+    return () => window.clearInterval(timer)
+  }, [])
   // Virtual adapters (VPN, Hyper-V, WSL switches) are hidden unless asked for: they rarely carry real traffic.
   const devices = (data.data?.devices ?? []).filter((d) => hidden || d.kind !== 'network' || d.type !== 'Virtual')
   const sampling = data.data?.sampling ?? false
@@ -102,11 +131,23 @@ export function Devices() {
         )}
       </PageHeader>
       {data.error && <div className="banner danger">{data.error}</div>}
+      {topo.data && sys.data && (
+        <section className="dev-section" id="dev-cpu">
+          <h3>Processor</h3>
+          <CpuCard topo={topo.data} sys={sys.data} />
+        </section>
+      )}
+      {sys.data && (
+        <section className="dev-section" id="dev-memory">
+          <h3>Memory</h3>
+          <MemoryCard sys={sys.data} modules={modules.data ?? []} />
+        </section>
+      )}
       {(['disk', 'gpu', 'network'] as const).map((kind) => {
         const list = devices.filter((d) => d.kind === kind)
         if (data.data && list.length === 0) return null
         return (
-          <section className="dev-section" key={kind}>
+          <section className="dev-section" key={kind} id={`dev-${kind}`}>
             <h3>{KIND_TITLE[kind]}</h3>
             <div className="dev-list">
               {list.map((d) => (
@@ -233,3 +274,144 @@ function DeviceCard({ d, sampling }: { d: Device; sampling: boolean }) {
   )
 }
 
+
+/** Model, layout and live load; the fastest cores by the CPPC ranking Windows uses (like Ryzen Master's star). */
+function CpuCard({ topo, sys }: { topo: Topology; sys: SystemInfo }) {
+  const cores = topo.ccds.flatMap((c) => c.cores.map((k) => ({ ...k, ccd: c.id })))
+  const ranked = topo.rankingAvailable ? [...cores].filter((k) => k.rank > 0).sort((a, b) => a.rank - b.rank) : []
+  const peak = Math.max(0, ...sys.historyCpu)
+  const facts = [
+    `${topo.physical} cores, ${topo.logical} threads`,
+    ...(topo.ccds.length > 1 ? [`${topo.ccds.length} CCDs`] : []),
+    ...(topo.hybrid ? ['performance and efficiency cores'] : []),
+  ]
+  return (
+    <article className="card dev-card kind-cpu">
+      <header className="dev-head">
+        <span className="dev-icon glyph">{'\uE950'}</span>
+        <div className="dev-title">
+          <h4>{topo.name}</h4>
+          <div className="dev-facts">
+            {facts.map((f) => (
+              <span key={f} className="chip-static">
+                {f}
+              </span>
+            ))}
+          </div>
+        </div>
+      </header>
+      <div className="dev-body">
+        <div className="dev-live">
+          <div className="dev-value">
+            <strong>{sys.cpu.toFixed(0)} %</strong>
+            <span className="secondary">load, peak {peak.toFixed(0)} % in 5 min</span>
+          </div>
+          <Spark time={sys.historyTime} values={sys.historyCpu} colorVar="--chart-1" top={100} topLabel="100 %" midLabel="50 %" format={(n) => `${n.toFixed(0)} %`} height={56} />
+        </div>
+        <dl className="dev-stats">
+          {topo.ccds.map((c) => {
+            const lps = c.cores.flatMap((k) => k.threads)
+            const load = lps.reduce((s, i) => s + (sys.threadUsage[i] ?? 0), 0) / Math.max(1, lps.length)
+            return (
+              <div key={c.id}>
+                <dt>
+                  CCD {c.id}, threads {Math.min(...lps)}-{Math.max(...lps)}
+                </dt>
+                <dd>
+                  {Math.round(c.l3Bytes / 1048576)} MB L3{c.vCache ? ', 3D V-Cache' : ''}, {load.toFixed(0)} % busy
+                </dd>
+              </div>
+            )
+          })}
+          {ranked.length > 0 && (
+            <div>
+              <dt>Fastest cores (CPPC)</dt>
+              <dd>{ranked.slice(0, 4).map((k) => `Core ${k.id}`).join(', ')}</dd>
+            </div>
+          )}
+        </dl>
+      </div>
+    </article>
+  )
+}
+
+/** Maker and rated speed from common part numbers, when the firmware does not name the maker. */
+function moduleMaker(m: MemoryModule): { maker: string; rated?: number } {
+  const part = m.part.toUpperCase()
+  const known = m.manufacturer && !/^unknown$/i.test(m.manufacturer) ? m.manufacturer : ''
+  let maker = known
+  let rated: number | undefined
+  let r: RegExpMatchArray | null
+  if ((r = part.match(/^F[345]-(\d{4})/))) { maker ||= 'G.Skill'; rated = Number(r[1]) }
+  else if ((r = part.match(/^CM[A-Z]\d+[A-Z]+\d?[A-Z]+\d?[A-Z](\d{4})/))) { maker ||= 'Corsair'; rated = Number(r[1]) }
+  else if ((r = part.match(/^KF(\d)(\d{2})/))) { maker ||= 'Kingston FURY'; rated = Number(r[2]) * 100 }
+  return { maker: maker || 'Unknown maker', rated }
+}
+
+function MemoryCard({ sys, modules }: { sys: SystemInfo; modules: MemoryModule[] }) {
+  const usedShare = sys.memoryTotal ? sys.memoryUsed / sys.memoryTotal : 0
+  const installed = modules.reduce((s, m) => s + m.sizeMb, 0)
+  const first = modules[0]
+  const info = first ? moduleMaker(first) : undefined
+  const running = first?.configuredMts || first?.ratedMts
+  const slow = info?.rated && running && running < info.rated
+  const facts = [
+    installed ? `${(installed / 1024).toFixed(0)} GB installed` : '',
+    first ? `${modules.length} × ${(first.sizeMb / 1024).toFixed(0)} GB` : '',
+    first?.type ?? '',
+    running ? `${running} MT/s` : '',
+  ].filter(Boolean)
+  return (
+    <article className="card dev-card kind-memory">
+      <header className="dev-head">
+        <span className="dev-icon glyph">{'\uE964'}</span>
+        <div className="dev-title">
+          <h4>{info && first ? `${info.maker} ${first.part}` : 'Memory'}</h4>
+          <div className="dev-facts">
+            {facts.map((f) => (
+              <span key={f} className="chip-static">
+                {f}
+              </span>
+            ))}
+          </div>
+        </div>
+        {slow && (
+          <span className="dev-verdict tone-caution" title="Turn on EXPO or XMP in the BIOS to run the kit at its rated speed.">
+            Running below rated speed
+          </span>
+        )}
+      </header>
+      <div className="dev-body">
+        <div className="dev-live">
+          <div className="dev-value">
+            <strong>{bytes(sys.memoryUsed)}</strong>
+            <span className="secondary">
+              in use of {bytes(sys.memoryTotal, 0)}, {Math.round(usedShare * 100)} %
+            </span>
+          </div>
+          <Spark time={sys.historyTime} values={sys.historyMemory} colorVar="--chart-2" top={100} topLabel={bytes(sys.memoryTotal, 0)} midLabel={bytes(sys.memoryTotal / 2, 0)} format={(v) => bytes((v / 100) * sys.memoryTotal)} height={56} />
+        </div>
+        <dl className="dev-stats">
+          <div>
+            <dt>Free</dt>
+            <dd>{bytes(sys.memoryTotal - sys.memoryUsed)}</dd>
+          </div>
+          {modules.map((m) => (
+            <div key={m.slot + m.part}>
+              <dt>{m.slot || 'Module'}</dt>
+              <dd>
+                {(m.sizeMb / 1024).toFixed(0)} GB {m.type}, {m.configuredMts || m.ratedMts} MT/s
+              </dd>
+            </div>
+          ))}
+          {slow && info?.rated && (
+            <div className="tone-caution">
+              <dt>Rated speed</dt>
+              <dd>{info.rated} MT/s (EXPO / XMP off)</dd>
+            </div>
+          )}
+        </dl>
+      </div>
+    </article>
+  )
+}

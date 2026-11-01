@@ -382,6 +382,11 @@ export async function demoRequest(method: string, path: string, body?: unknown):
       const ids = new URLSearchParams(path.split('?')[1]).get('history')?.split(',') ?? []
       return { inventoryAt: now, sampling: true, devices: json(devices).map(d => ({ ...d, history: ids.includes('*') || ids.includes(d.id) ? d.history : undefined })) }
     }
+    case '/memory':
+      return [
+        { slot: 'DIMM A2', sizeMb: 32768, type: 'DDR5', ratedMts: 4800, configuredMts: 6000, manufacturer: 'Northstar', part: 'NS5-6000C30-32G' },
+        { slot: 'DIMM B2', sizeMb: 32768, type: 'DDR5', ratedMts: 4800, configuredMts: 6000, manufacturer: 'Northstar', part: 'NS5-6000C30-32G' },
+      ]
     case '/topology':
       return json(topology)
     case '/processes':

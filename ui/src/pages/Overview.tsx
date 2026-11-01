@@ -8,7 +8,7 @@ import { bytes, percent } from '../format'
 import { useDescriptions } from '../host'
 import { usePoll } from '../hooks'
 import type { Device } from '../types'
-import { deviceLabel, deviceSeries, display } from './Devices'
+import { deviceLabel, deviceSeries, display, openDeviceSection } from './Devices'
 
 const rate = (n: number) => (n < 1024 ? `${Math.round(n)} B/s` : `${bytes(n)}/s`)
 const bits = (n: number) => {
@@ -84,11 +84,12 @@ export function Overview({ onOpen }: { onOpen: (p: Page) => void }) {
         {managed ? <>Corewright manages {plural(managed, 'process', 'processes')} right now.</> : <>Corewright is not changing any process right now.</>}
       </PageHeader>
       <div className="metric-grid">
-        <Metric title="CPU" value={percent(s.cpu)} sub={topo.data?.name} peak={`peak ${pct(peakCpu)} in 5 min`}>
+        <Metric title="CPU" onDetails={() => openDeviceSection('cpu', onOpen)} value={percent(s.cpu)} sub={topo.data?.name} peak={`peak ${pct(peakCpu)} in 5 min`}>
           <Spark time={s.historyTime} values={s.historyCpu} colorVar="--chart-1" top={100} topLabel="100 %" midLabel="50 %" format={pct} />
         </Metric>
         <Metric
           title="Memory"
+          onDetails={() => openDeviceSection('memory', onOpen)}
           value={bytes(s.memoryUsed)}
           sub={`of ${bytes(s.memoryTotal, 0)}, ${Math.round((100 * s.memoryUsed) / s.memoryTotal)} % in use`}
           peak={`${bytes(s.memoryTotal - s.memoryUsed)} free`}
@@ -101,7 +102,7 @@ export function Overview({ onOpen }: { onOpen: (p: Page) => void }) {
           value={individual('disk') ? display(total(disk), rate) : rate(s.ioBytesPerSec)}
           sub={individual('disk') ? (disk ? [disk.bus, disk.volumes?.map((v) => v.replace(/\\$/, '')).join(' ')].filter(Boolean).join(', ') : 'device not found') : 'read and write, all disks'}
           peak={individual('disk') && !io.values.some((v) => v != null) ? '' : `peak ${rate(peakIo)} in 5 min`}
-          onDetails={() => onOpen('devices')}
+          onDetails={() => openDeviceSection('disk', onOpen)}
         >
           <Spark {...io} colorVar="--chart-3" top={ioTop} topLabel={rate(ioTop)} midLabel={rate(ioTop / 2)} format={rate} />
         </Metric>
@@ -112,7 +113,7 @@ export function Overview({ onOpen }: { onOpen: (p: Page) => void }) {
           valueLabel="load"
           sub={vram}
           peak={individual('gpu') && !graphics.values.some((v) => v != null) ? '' : `peak ${pct(peakGpu)} in 5 min`}
-          onDetails={() => onOpen('devices')}
+          onDetails={() => openDeviceSection('gpu', onOpen)}
         >
           <Spark {...graphics} colorVar="--chart-4" top={100} topLabel="100 %" midLabel="50 %" format={pct} />
         </Metric>
@@ -126,7 +127,7 @@ export function Overview({ onOpen }: { onOpen: (p: Page) => void }) {
               : `\u2193 ${bits(s.netReceive)}   \u2191 ${bits(s.netSend)}`
           }
           peak={individual('network') && !network.values.some((v) => v != null) ? '' : `peak ${bits(peakNet)} in 5 min`}
-          onDetails={() => onOpen('devices')}
+          onDetails={() => openDeviceSection('network', onOpen)}
         >
           <Spark {...network} colorVar="--chart-5" top={netTop} topLabel={bits(netTop)} midLabel={bits(netTop / 2)} format={bits} />
         </Metric>

@@ -17,9 +17,9 @@ export type Page = 'overview' | 'devices' | 'autopilot' | 'processes' | 'rules' 
 // Segoe Fluent Icons code points: Home, LightningBolt, BulletedList, Filter, History, Link.
 const NAV: { id: Page; label: string; glyph: string }[] = [
   { id: 'overview', label: 'Overview', glyph: '\uE80F' },
-  { id: 'devices', label: 'Devices', glyph: '\uE950' },
   { id: 'autopilot', label: 'Autopilot', glyph: '\uE945' },
   { id: 'processes', label: 'Processes', glyph: '\uE8FD' },
+  { id: 'devices', label: 'Devices', glyph: '\uE950' },
   { id: 'rules', label: 'Rules', glyph: '\uE71C' },
   { id: 'activity', label: 'Activity', glyph: '\uE81C' },
   { id: 'integrations', label: 'Integrations', glyph: '\uE71B' },
