@@ -187,12 +187,52 @@ internal sealed partial class MainForm : Form
 
     // ---- Theme -----------------------------------------------------------------------------------
 
-    private static bool IsDarkTheme() =>
+    private static readonly string ThemeFile = Path.Combine(AppPaths.UserDataDirectory, "dashboard-theme.json");
+
+    /// <summary>"system", "light" or "dark" (Settings → Appearance; owner, 2026-11-02).</summary>
+    private string _scheme = LoadScheme();
+
+    private static string LoadScheme()
+    {
+        try
+        {
+            if (File.Exists(ThemeFile) && JsonDocument.Parse(File.ReadAllText(ThemeFile)).RootElement.TryGetProperty("scheme", out var s)
+                && s.GetString() is "light" or "dark" or "system")
+                return s.GetString()!;
+        }
+        catch (Exception e) when (e is IOException or JsonException or UnauthorizedAccessException) { }
+        return "system";
+    }
+
+    private void SetScheme(string scheme)
+    {
+        if (scheme is not ("system" or "light" or "dark")) return;
+        _scheme = scheme;
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(ThemeFile)!);
+            File.WriteAllText(ThemeFile, JsonSerializer.Serialize(new Dictionary<string, string> { ["scheme"] = scheme }));
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
+        ApplyTheme();
+    }
+
+    private static bool IsSystemDark() =>
         Registry.GetValue(@"HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize", "AppsUseLightTheme", 1) is int v && v == 0;
+
+    private bool IsDarkTheme() => _scheme switch { "light" => false, "dark" => true, _ => IsSystemDark() };
 
     private void ApplyTheme()
     {
         bool dark = IsDarkTheme();
+        // The page follows the chosen scheme through prefers-color-scheme, so every stylesheet works unchanged.
+        if (_web.CoreWebView2 is { } wv)
+            wv.Profile.PreferredColorScheme = _scheme switch
+            {
+                "light" => CoreWebView2PreferredColorScheme.Light,
+                "dark" => CoreWebView2PreferredColorScheme.Dark,
+                _ => CoreWebView2PreferredColorScheme.Auto,
+            };
         var bg = dark ? Color.FromArgb(0x19, 0x19, 0x19) : Color.FromArgb(0xE9, 0xE9, 0xE9);
         BackColor = bg;
         _web.DefaultBackgroundColor = bg;
@@ -233,6 +273,7 @@ internal sealed partial class MainForm : Form
         core.Settings.AreDevToolsEnabled = false;
         core.Settings.AreDefaultContextMenusEnabled = false;
 #endif
+        ApplyTheme(); // the profile exists now: apply the saved light/dark choice before the first paint
         core.WebMessageReceived += OnWebMessage;
         core.NavigationCompleted += (_, _) => PostWindowState();
         core.AddWebResourceRequestedFilter($"https://{HostName}/*", CoreWebView2WebResourceContext.All);
@@ -243,6 +284,7 @@ internal sealed partial class MainForm : Form
         {
             ["token"] = ep?.Token ?? "",
             ["accent"] = AccentPalette(),
+            ["scheme"] = _scheme,
             ["host"] = "dashboard",
         };
         // Token and theme go to the page in memory only; nothing appears in a URL.
@@ -302,6 +344,9 @@ internal sealed partial class MainForm : Form
                 case "autostart-set":
                     SetAutostart(root.TryGetProperty("enabled", out var en) && en.GetBoolean());
                     PostAutostart();
+                    break;
+                case "theme-set":
+                    if (root.TryGetProperty("scheme", out var sch) && sch.GetString() is { } scheme) SetScheme(scheme);
                     break;
                 case "reveal":
                     if (root.TryGetProperty("path", out var pathEl) && pathEl.GetString() is { } path && File.Exists(path))

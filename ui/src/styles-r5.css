@@ -137,3 +137,16 @@
 .ap-scroll { max-height: 340px; overflow: auto; }
 .ap-scroll .ap-table th { position: sticky; top: 0; z-index: 1; background: var(--layer); }
 .decision.crit { color: var(--caution); }
+
+/* Settings → Appearance */
+.accent-row { flex-wrap: wrap; row-gap: 10px; }
+.swatches { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.swatch { position: relative; width: 30px; height: 30px; border-radius: 6px; border: 1px solid var(--stroke-control); background: var(--sw, var(--control));
+  cursor: default; padding: 0; display: inline-flex; align-items: center; justify-content: center; color: #fff; }
+.swatch:hover { transform: scale(1.06); }
+.swatch:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
+.swatch.on { box-shadow: 0 0 0 2px var(--layer), 0 0 0 4px var(--text); }
+.swatch .glyph { font-size: 13px; text-shadow: 0 0 2px rgba(0, 0, 0, 0.6); }
+.swatch.custom { background: var(--sw, conic-gradient(#d13438, #ca5010, #c19c00, #107c10, #038387, #0078d4, #8764b8, #e3008c, #d13438)); overflow: hidden; }
+.swatch.custom input { position: absolute; inset: 0; opacity: 0; cursor: default; }
+@media (prefers-reduced-motion: reduce) { .swatch:hover { transform: none; } }

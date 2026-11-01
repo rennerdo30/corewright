@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { PRESETS, getAppearance, setAppearance, windowsAccent, type Scheme } from '../appearance'
 import { api } from '../api'
 import { PageHeader } from '../components/PageHeader'
 import { Card, Toggle } from '../components/SettingsControls'
@@ -19,6 +20,11 @@ export function Settings() {
       <section className="section">
         <h3>Startup</h3>
         <Autostart />
+      </section>
+
+      <section className="section">
+        <h3>Appearance</h3>
+        <AppearanceCards />
       </section>
 
       <section className="section">
@@ -59,5 +65,64 @@ function Autostart() {
     >
       <Toggle value={!!state?.enabled} disabled={!state?.available} onChange={(v) => post({ type: 'autostart-set', enabled: v })} />
     </Card>
+  )
+}
+
+/** Theme and accent colour, applied at once and remembered for this user. */
+function AppearanceCards() {
+  const [a, setA] = useState(getAppearance)
+  const change = (next: Partial<typeof a>) => {
+    const v = { ...a, ...next }
+    setA(v)
+    setAppearance(v)
+  }
+  const win = windowsAccent()
+  const custom = a.accent !== 'windows' && !PRESETS.some((p) => p.color === a.accent)
+  return (
+    <div className="card-group">
+      <Card glyph={'\uE790'} title="Theme" desc={isHost ? 'Light, dark, or the same as Windows.' : 'In a browser the page follows the browser theme.'}>
+        <div className="seg">
+          {(['system', 'light', 'dark'] as Scheme[]).map((s) => (
+            <button key={s} className={a.scheme === s ? 'on' : ''} onClick={() => change({ scheme: s })}>
+              {s === 'system' ? 'Windows' : s === 'light' ? 'Light' : 'Dark'}
+            </button>
+          ))}
+        </div>
+      </Card>
+      <div className="setting-row accent-row">
+        <span className="setting-icon glyph">{'\uE771'}</span>
+        <div className="setting-text">
+          <div className="setting-title">Accent colour</div>
+          <div className="setting-desc">Buttons, switches, selection and charts. Autopilot's colours stay the same so they always mean the same thing.</div>
+        </div>
+        <div className="swatches" role="radiogroup" aria-label="Accent colour">
+          <button
+            role="radio"
+            aria-checked={a.accent === 'windows'}
+            className={`swatch windows ${a.accent === 'windows' ? 'on' : ''}`}
+            style={{ '--sw': win ?? 'var(--accent)' } as React.CSSProperties}
+            title="Windows accent colour"
+            onClick={() => change({ accent: 'windows' })}
+          >
+            <span className="glyph">{''}</span>
+          </button>
+          {PRESETS.map((p) => (
+            <button
+              key={p.color}
+              role="radio"
+              aria-checked={a.accent === p.color}
+              className={`swatch ${a.accent === p.color ? 'on' : ''}`}
+              style={{ '--sw': p.color } as React.CSSProperties}
+              title={p.name}
+              onClick={() => change({ accent: p.color })}
+            />
+          ))}
+          <label className={`swatch custom ${custom ? 'on' : ''}`} title="Custom colour" style={custom ? ({ '--sw': a.accent } as React.CSSProperties) : undefined}>
+            <span className="glyph">{'\uE790'}</span>
+            <input type="color" value={a.accent === 'windows' ? (win ?? '#0078d4') : a.accent} onChange={(e) => change({ accent: e.target.value })} aria-label="Custom accent colour" />
+          </label>
+        </div>
+      </div>
+    </div>
   )
 }

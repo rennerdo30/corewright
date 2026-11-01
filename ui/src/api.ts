@@ -2,7 +2,7 @@ import type { AppSettings, BackgroundRow, EngineEvent, Placement, Explain, Impor
 
 declare global {
   interface Window {
-    __COREWRIGHT__?: { token?: string; accent?: string[]; host?: string }
+    __COREWRIGHT__?: { token?: string; accent?: string[]; host?: string; scheme?: string }
     chrome?: {
       webview?: {
         postMessage: (message: unknown) => void
