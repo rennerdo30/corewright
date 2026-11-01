@@ -152,25 +152,6 @@ export function Autopilot() {
         </section>
       )}
 
-      <section className="ap-tables card">
-        <div className="ap-tabs">
-          <div className="seg">
-            <button className={tab === 'placements' ? 'on' : ''} onClick={() => setTab('placements')}>
-              Where things run
-            </button>
-            <button className={tab === 'learned' ? 'on' : ''} onClick={() => setTab('learned')}>
-              What Corewright has learned
-            </button>
-          </div>
-          <span className="secondary tiny">
-            {tab === 'placements'
-              ? 'Placed once on the CCD where they fit best, then kept there so their caches stay warm.'
-              : 'Hours of observation per program. Decisions update once a minute; statistics are kept for 30 days.'}
-          </span>
-        </div>
-        {tab === 'placements' ? <Placements rows={placements.data ?? []} procs={procs.data ?? []} /> : <Learned />}
-      </section>
-
       <section className="ap-groups">
         <h3>What Autopilot does</h3>
         <div className={a.enabled ? '' : 'groups-off'}>
@@ -276,6 +257,26 @@ export function Autopilot() {
           </Group>
         </div>
       </section>
+      <section className="ap-tables card">
+        {/* Lists scroll inside the card so the settings stay one short scroll away (owner, 2026-11-02). */}
+        <div className="ap-tabs">
+          <div className="seg">
+            <button className={tab === 'placements' ? 'on' : ''} onClick={() => setTab('placements')}>
+              Where things run{placements.data?.length ? <span className="seg-count">{placements.data.length}</span> : null}
+            </button>
+            <button className={tab === 'learned' ? 'on' : ''} onClick={() => setTab('learned')}>
+              What Corewright has learned
+            </button>
+          </div>
+          <span className="secondary tiny">
+            {tab === 'placements'
+              ? 'Placed once on the CCD where they fit best, then kept there so their caches stay warm.'
+              : 'Hours of observation per program. Decisions update once a minute; statistics are kept for 30 days.'}
+          </span>
+        </div>
+        <div className="ap-scroll">{tab === 'placements' ? <Placements rows={placements.data ?? []} procs={procs.data ?? []} /> : <Learned />}</div>
+      </section>
+
     </div>
   )
 }

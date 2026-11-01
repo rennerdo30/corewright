@@ -23,6 +23,8 @@ export class ApiError extends Error {
 }
 
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+  // Screenshot mode (VITE_DEMO=1): made-up data, no service. A compile-time constant, so normal builds drop demo.ts.
+  if (import.meta.env.VITE_DEMO === '1') return (await import('./demo')).demoRequest(method, path, body) as Promise<T>
   const headers: Record<string, string> = {}
   const token = window.__COREWRIGHT__?.token
   if (token) headers.Authorization = `Bearer ${token}`

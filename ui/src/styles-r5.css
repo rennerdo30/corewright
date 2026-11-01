@@ -131,3 +131,8 @@
 @media (prefers-color-scheme: dark) { :root { --role-game: #ff6b81; --load: color-mix(in srgb, var(--text) 34%, transparent); } }
 .lane-fill { background: var(--load); }
 .ap-notgame { padding: 0 10px; min-height: 26px; font-size: 13px; margin: 0 4px; vertical-align: 1px; }
+
+/* Autopilot: settings right under the map, live lists capped and scrolling inside their card. */
+.ap-groups h3 { margin-top: 4px; }
+.ap-scroll { max-height: 340px; overflow: auto; }
+.ap-scroll .ap-table th { position: sticky; top: 0; z-index: 1; background: var(--layer); }
