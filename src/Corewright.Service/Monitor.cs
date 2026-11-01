@@ -1,0 +1,199 @@
+using Corewright.Core.Engine;
+using Corewright.Core.Rules;
+using Corewright.Service.Windows;
+
+namespace Corewright.Service;
+
+public sealed class ServiceOptions
+{
+    public int Port { get; set; } = 47830;
+    public int ActiveIntervalMs { get; set; } = 1000;
+    public int IdleIntervalMs { get; set; } = 2000;
+    public string? DataDirectory { get; set; }
+}
+
+/// <summary>
+/// The single loop of the service: sample, evaluate, record history, sleep. Every other component reads
+/// state under <see cref="Sync"/>. The interval is short only while an API client is active.
+/// </summary>
+internal sealed class Monitor : BackgroundService
+{
+    public const int HistoryCapacity = 300;
+
+    private readonly ProcessSampler _sampler = new();
+    private readonly WindowsActuator _actuator = new();
+    private readonly SemaphoreSlim _wake = new(0);
+    private readonly ServiceOptions _options;
+    private readonly RuleStore _store;
+    private readonly ILogger<Monitor> _log;
+    private readonly EvalContext _ctx = new();
+    private readonly Dictionary<string, string> _facts = new(StringComparer.OrdinalIgnoreCase);
+    private long _lastClientMs;
+    private int _reportedForegroundPid;
+    private long _reportedForegroundMs;
+
+    // History ring.
+    private readonly long[] _hTime = new long[HistoryCapacity];
+    private readonly float[] _hCpu = new float[HistoryCapacity];
+    private readonly float[] _hMem = new float[HistoryCapacity];
+    private readonly float[] _hIo = new float[HistoryCapacity];
+    private int _hCount, _hNext;
+
+    public Monitor(ServiceOptions options, RuleStore store, EventBuffer events, ILogger<Monitor> log)
+    {
+        _options = options;
+        _store = store;
+        _log = log;
+        Events = events;
+        Engine = new RuleEngine(_actuator, events);
+        _ctx.Facts = _facts;
+        ProcessInfo.CommandLineReader = SystemProbe.ReadCommandLine;
+        SystemProbe.EnablePrivileges();
+        Topology = SystemProbe.ReadTopology();
+        RuleSet = store.Load();
+        var errors = new List<RuleError>();
+        Engine.SetRules(RuleCompiler.Compile(RuleSet, Topology, errors));
+        foreach (var e in errors.Where(e => RuleSet.Rules.Any(r => r.Id == e.RuleId && r.Enabled)))
+            log.LogWarning("rule {Rule}: {Message}", e.RuleName, e.Message);
+    }
+
+    public Lock Sync { get; } = new();
+    public RuleEngine Engine { get; }
+    public EventBuffer Events { get; }
+    public SystemTopology Topology { get; }
+    public RuleSet RuleSet { get; private set; }
+    public ProcessSampler Sampler => _sampler;
+    public EvalContext Context => _ctx;
+    public IReadOnlyDictionary<string, string> Facts => _facts;
+    public bool IsWindowsService { get; init; }
+    public int IntervalMs => IsClientActive ? _options.ActiveIntervalMs : _options.IdleIntervalMs;
+
+    private bool IsClientActive => Environment.TickCount64 - Interlocked.Read(ref _lastClientMs) < 5000;
+
+    /// <summary>Called for every API request: keeps the fast interval while someone is watching.</summary>
+    public void TouchClient()
+    {
+        bool wasIdle = !IsClientActive;
+        Interlocked.Exchange(ref _lastClientMs, Environment.TickCount64);
+        if (wasIdle) Wake();
+    }
+
+    public void Wake()
+    {
+        if (_wake.CurrentCount == 0) _wake.Release();
+    }
+
+    public List<RuleError> ReplaceRules(RuleSet set)
+    {
+        var errors = new List<RuleError>();
+        var compiled = RuleCompiler.Compile(set, Topology, errors);
+        if (errors.Count > 0) return errors;
+        lock (Sync)
+        {
+            _store.Save(set);
+            RuleSet = set;
+            Engine.SetRules(compiled);
+        }
+        Wake();
+        return errors;
+    }
+
+    public void SetFact(string key, string? value)
+    {
+        lock (Sync)
+        {
+            if (value is null) _facts.Remove(key);
+            else _facts[key] = value;
+        }
+        Wake();
+    }
+
+    public void ReportForeground(int pid)
+    {
+        lock (Sync)
+        {
+            _reportedForegroundPid = pid;
+            _reportedForegroundMs = Environment.TickCount64;
+        }
+        Wake();
+    }
+
+    public (long[] Time, float[] Cpu, float[] Mem, float[] Io) History()
+    {
+        lock (Sync)
+        {
+            var t = new long[_hCount];
+            var c = new float[_hCount];
+            var m = new float[_hCount];
+            var io = new float[_hCount];
+            int start = (_hNext - _hCount + HistoryCapacity) % HistoryCapacity;
+            for (int i = 0; i < _hCount; i++)
+            {
+                int j = (start + i) % HistoryCapacity;
+                t[i] = _hTime[j];
+                c[i] = _hCpu[j];
+                m[i] = _hMem[j];
+                io[i] = _hIo[j];
+            }
+            return (t, c, m, io);
+        }
+    }
+
+    protected override async Task ExecuteAsync(CancellationToken ct)
+    {
+        _log.LogInformation("Corewright monitor started ({Mode}, {Count} logical processors, hybrid: {Hybrid})",
+            IsWindowsService ? "service" : "console", Topology.LogicalCount, Topology.IsHybrid);
+        try
+        {
+            while (!ct.IsCancellationRequested)
+            {
+                Tick();
+                try { await _wake.WaitAsync(IntervalMs, ct); }
+                catch (OperationCanceledException) { break; }
+            }
+        }
+        finally
+        {
+            lock (Sync) Engine.RevertAll();
+            _actuator.Dispose();
+            _sampler.Dispose();
+            _log.LogInformation("Corewright monitor stopped; all changes reverted");
+        }
+    }
+
+    private void Tick()
+    {
+        lock (Sync)
+        {
+            _sampler.Sample();
+            _ctx.NowMs = Environment.TickCount64;
+
+            // A service in session 0 cannot see the desktop; the tray reports the foreground process.
+            // In console mode the service can read it itself unless the tray reported recently.
+            if (!IsWindowsService && _ctx.NowMs - _reportedForegroundMs > 10_000)
+                _ctx.ForegroundPid = SystemProbe.ForegroundPid();
+            else
+                _ctx.ForegroundPid = _reportedForegroundPid;
+
+            Engine.Evaluate(_sampler.Processes, _ctx);
+
+            _hTime[_hNext] = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            _hCpu[_hNext] = (float)_sampler.SystemCpuPercent;
+            _hMem[_hNext] = _sampler.MemoryTotal == 0 ? 0 : (float)(100.0 * _sampler.MemoryUsed / _sampler.MemoryTotal);
+            _hIo[_hNext] = (float)_sampler.TotalIoBytesPerSec;
+            _hNext = (_hNext + 1) % HistoryCapacity;
+            if (_hCount < HistoryCapacity) _hCount++;
+        }
+    }
+
+    public void Pause()
+    {
+        lock (Sync) Engine.Pause();
+    }
+
+    public void Resume()
+    {
+        lock (Sync) Engine.Resume();
+        Wake();
+    }
+}

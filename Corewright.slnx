@@ -1,0 +1,8 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Corewright.Core/Corewright.Core.csproj" />
+    <Project Path="src/Corewright.Service/Corewright.Service.csproj" />
+    <Project Path="src/Corewright.Tray/Corewright.Tray.csproj" />
+    <Project Path="src/Corewright.Dashboard/Corewright.Dashboard.csproj" />
+  </Folder>
+</Solution>

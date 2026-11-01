@@ -1,0 +1,10 @@
+artifacts/
+bin/
+obj/
+*.user
+.vs/
+.idea/
+node_modules/
+ui/dist/
+src/Corewright.Service/wwwroot/
+*.tsbuildinfo
