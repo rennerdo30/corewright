@@ -65,7 +65,7 @@ jobs:
             artifacts/installer/SHA256SUMS.txt
           if-no-files-found: error
 
-  draft-release:
+  release:
     needs: build
     runs-on: windows-latest
     timeout-minutes: 5
@@ -76,7 +76,7 @@ jobs:
         with:
           name: installer
           path: dist
-      - name: Create a draft; only the owner publishes
+      - name: Publish the release (owner standing approval, 2026-11-02)
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
@@ -84,7 +84,7 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           $assets = (Get-ChildItem dist -File).FullName
-          $flags = @('--draft', '--verify-tag', '--generate-notes')
+          $flags = @('--verify-tag', '--generate-notes')
           if ($env:RELEASE_TAG.Contains('-')) { $flags += @('--prerelease', '--latest=false') }
           gh release create $env:RELEASE_TAG @assets @flags --repo $env:GH_REPO --title "Corewright $env:RELEASE_TAG"
-          if ($LASTEXITCODE) { throw 'Draft release creation failed; no published release was changed.' }
+          if ($LASTEXITCODE) { throw 'Release creation failed; no published release was changed.' }

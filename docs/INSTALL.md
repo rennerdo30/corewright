@@ -96,7 +96,7 @@ For development, `build.bat` detects an installed service, packages the current
 source, and runs setup silently with one UAC prompt. It updates the installed
 copy instead of starting a console service. `start.bat` then starts the installed
 tray; without an installed service, both scripts keep their console workflow.
-See [RELEASING.md](RELEASING.md) for version tags, CI drafts and owner publication.
+See [RELEASING.md](RELEASING.md) for version tags, update channels and automatic publication.
 
 ## Uninstall
 
