@@ -37,6 +37,14 @@ internal sealed class Monitor : BackgroundService
     private readonly NetworkSampler _network = new();
     public DeviceMonitor Devices { get; } = new();
     private readonly CoreUsageSampler _cores = new();
+    private ProcessNetworkMonitor? _processNetwork;
+    private long _networkLastUse = long.MinValue / 2;
+    private bool _networkFailed;
+    private bool _networkDemand, _networkFieldsActive, _networkStopReported;
+    private int _networkVersion = -1;
+    private long _networkStopRetry;
+    public string? NetworkError { get; private set; }
+    public void TouchNetwork() => Interlocked.Exchange(ref _networkLastUse, Environment.TickCount64);
 
     private readonly long[] _hTime = new long[HistoryCapacity];
     private readonly float[] _hGpu = new float[HistoryCapacity];
@@ -55,6 +63,7 @@ internal sealed class Monitor : BackgroundService
         Devices.Start(Sync, log);
         Events = events;
         Engine = new RuleEngine(_actuator, events);
+        _actuator.Network.Start(events);
         // Events carry the rule name; the per-rule history is kept by id (names can repeat across a rename).
         events.RuleIdOf = name =>
         {
@@ -141,6 +150,7 @@ internal sealed class Monitor : BackgroundService
     public TopologyDto? CpuLayout { get; }
     public ProcessDetailsCache Details { get; } = new();
     public NetworkSampler Network => _network;
+    public NetworkPolicies NetworkPolicies => _actuator.Network;
     public CoreUsageSampler Cores => _cores;
     public GpuReadings Gpu => Devices.Gpu;
     public RuleSet RuleSet { get; private set; }
@@ -274,13 +284,19 @@ internal sealed class Monitor : BackgroundService
             _stopping = true;
             lock (Sync)
             {
-                Engine.RevertAll();
+                Engine.RevertAll(stopping: true, onUnrestored: e =>
+                    _log.LogWarning("Unrestored process {Pid} ({Process}), {Slot}, original {Value}: {Message}",
+                        e.Pid, e.Process, e.Slot, e.Value, e.Message));
                 _background?.Save();
             }
             _actuator.Dispose();
             Devices.Dispose();
+            _processNetwork?.Dispose();
+            if ((_processNetwork is null || _processNetwork.Stopped) && _actuator.Network.SessionStopped)
+                _actuator.Network.Ownership.Dispose();
+            else _log.LogWarning("Network session cleanup failed; machine lease retained until process exit: {Error}", _processNetwork?.Error);
             _sampler.Dispose();
-            _log.LogInformation("Corewright monitor stopped; all changes reverted");
+            _log.LogInformation("Corewright monitor stopped; cleanup failures, if any, are reported above");
         }
     }
 
@@ -290,6 +306,39 @@ internal sealed class Monitor : BackgroundService
         {
             _sampler.Sample();
             _ctx.NowMs = Environment.TickCount64;
+            _actuator.Network.RetryPending(_ctx.NowMs);
+            bool ruleDemand = !Engine.Paused && Engine.Rules.NeedsNetwork;
+            bool needNetwork = ruleDemand || (IsClientActive && _ctx.NowMs - Interlocked.Read(ref _networkLastUse) < 5000);
+            if ((needNetwork && !_networkDemand) || _networkVersion != Engine.Version) _networkFailed = false;
+            _networkDemand = needNetwork; _networkVersion = Engine.Version;
+            if (_processNetwork is { Available: false } failed)
+            {
+                if (!_networkFailed) NetworkFailure(failed.Error);
+                if (_ctx.NowMs >= _networkStopRetry) StopProcessNetwork();
+            }
+            if (needNetwork && _processNetwork is null && !_networkFailed)
+            {
+                _processNetwork = new ProcessNetworkMonitor(_actuator.Network.Ownership);
+                NetworkError = _processNetwork.Error;
+                if (!_processNetwork.Available)
+                {
+                    NetworkFailure(NetworkError);
+                    StopProcessNetwork();
+                }
+            }
+            if (_processNetwork is { Available: true } && !ruleDemand && _ctx.NowMs - Interlocked.Read(ref _networkLastUse) > 60_000)
+                StopProcessNetwork();
+            if (_processNetwork is { Available: true } active)
+            {
+                active.Sample(_sampler.Processes);
+                _networkFieldsActive = true;
+            }
+            else if (_networkFieldsActive)
+            {
+                for (int i = 0; i < _sampler.Processes.Count; i++)
+                { var p = _sampler.Processes[i]; p.NetAvailable = false; p.NetSend = p.NetReceive = 0; }
+                _networkFieldsActive = false;
+            }
 
             // A service in session 0 cannot see the desktop; the tray reports the foreground process.
             // In console mode the service can read it itself unless the tray reported recently.
@@ -353,6 +402,26 @@ internal sealed class Monitor : BackgroundService
             _hNext = (_hNext + 1) % HistoryCapacity;
             if (_hCount < HistoryCapacity) _hCount++;
         }
+    }
+
+    private void NetworkFailure(string? error)
+    {
+        NetworkError = error ?? "network ETW unavailable";
+        _networkFailed = true;
+        Events.Emit(new(EngineEventKind.Failed, 0, "", null, "network", null, NetworkError));
+    }
+
+    private void StopProcessNetwork()
+    {
+        if (_processNetwork is null) return;
+        _processNetwork.Dispose();
+        if (_processNetwork.Stopped)
+        { _processNetwork = null; _networkStopRetry = 0; _networkStopReported = false; return; }
+        NetworkError = _processNetwork.Error;
+        _networkFailed = true; // Do not report this stop failure again as a consumer failure next tick.
+        if (!_networkStopReported) Events.Emit(new(EngineEventKind.Failed, 0, "", null, "network", null, NetworkError));
+        _networkStopReported = true;
+        _networkStopRetry = Environment.TickCount64 + 60_000;
     }
 
     private void RebuildRules()
@@ -435,6 +504,15 @@ internal sealed class Monitor : BackgroundService
             // A root Corewright cannot change (not elevated, protected) is refused: the tool keeps its own controls.
             foreach (var r in roots)
             {
+                var pending = Engine.GetPending(r);
+                if (pending.Count > 0)
+                {
+                    _groups.Remove(id);
+                    RebuildRules();
+                    Tick();
+                    return (503, new GroupErrorDto("pending",
+                        $"{string.Join(", ", pending.Select(Slots.Name))} on pid {r.Pid} is not in place yet (an earlier network change is still being cleaned up); try again in a minute."));
+                }
                 var failed = Engine.GetFailed(r);
                 if (failed.Count > 0)
                 {
@@ -460,7 +538,8 @@ internal sealed class Monitor : BackgroundService
         (a is null && b is null) || (a is not null && b is not null &&
         a.CpuPriority == b.CpuPriority && a.IoPriority == b.IoPriority && a.GpuPriority == b.GpuPriority &&
         a.MemoryPriority == b.MemoryPriority && a.EfficiencyMode == b.EfficiencyMode && a.MemoryLimitMb == b.MemoryLimitMb &&
-        a.WorkingSetLimitMb == b.WorkingSetLimitMb && a.Affinity == b.Affinity);
+        a.WorkingSetLimitMb == b.WorkingSetLimitMb && a.Affinity == b.Affinity &&
+        a.NetworkBlocked == b.NetworkBlocked && a.UploadLimitMbps == b.UploadLimitMbps && a.NetworkPriority == b.NetworkPriority);
 
     public (int Status, object Body) GetGroup(string id)
     {

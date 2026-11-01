@@ -1,5 +1,6 @@
 import type { ProcessRow, Rule, RuleActions, Topology } from '../types'
 import type { MenuEntry } from './ContextMenu'
+import { NET_PRIORITIES } from '../networkPriority'
 
 interface Handlers {
   setAlways: (patch: Partial<Record<keyof RuleActions, unknown>>) => void
@@ -85,6 +86,40 @@ export function buildProcessMenu(p: ProcessRow, quick: Rule | undefined, topo: T
     },
     {
       type: 'item',
+      label: 'Network',
+      glyph: '\uE968',
+      disabled: locked,
+      submenu: [
+        { type: 'item', label: 'Block network', checked: a.networkBlocked === true, onClick: () => h.setAlways({ networkBlocked: true }) },
+        {
+          type: 'item',
+          label: 'Upload limit',
+          submenu: levels(
+            a.uploadLimitMbps == null ? null : String(a.uploadLimitMbps),
+            [['0', 'No limit'], ...[1, 5, 10, 25, 50, 100].map((n): [string, string] => [String(n), `${n} Mbps`])],
+            (v) => h.setAlways({ uploadLimitMbps: v === null ? null : Number(v) }),
+          ),
+        },
+        {
+          type: 'item',
+          label: 'Priority',
+          submenu: levels(
+            a.networkPriority == null ? null : String(a.networkPriority),
+            NET_PRIORITIES.map((x): [string, string] => [String(x.dscp), x.label]),
+            (v) => h.setAlways({ networkPriority: v === null ? null : Number(v) }),
+          ),
+        },
+        { type: 'sep' },
+        {
+          type: 'item',
+          label: 'Not set',
+          checked: a.networkBlocked == null && a.uploadLimitMbps == null && a.networkPriority == null,
+          onClick: () => h.setAlways({ networkBlocked: null, uploadLimitMbps: null, networkPriority: null }),
+        },
+      ],
+    },
+    {
+      type: 'item',
       label: 'Memory cap',
       glyph: '\uE8B1',
       disabled: locked,
@@ -103,6 +138,7 @@ export function buildProcessMenu(p: ProcessRow, quick: Rule | undefined, topo: T
         h.setAlways({
           cpuPriority: null, ioPriority: null, gpuPriority: null, memoryPriority: null,
           affinity: null, efficiencyMode: null, memoryLimitMb: null, workingSetLimitMb: null,
+          networkBlocked: null, uploadLimitMbps: null, networkPriority: null,
         }),
     },
     {

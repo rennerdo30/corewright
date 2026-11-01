@@ -11,6 +11,9 @@ public enum Slot
     EfficiencyMode,
     MemoryLimit,
     WorkingSetLimit,
+    NetworkBlocked,
+    UploadLimit,
+    NetworkPriority,
 }
 
 public enum CpuPriorityLevel { Idle, BelowNormal, Normal, AboveNormal, High, Realtime }
@@ -32,7 +35,7 @@ public static class EfficiencyValue
 
 public static class Slots
 {
-    public const int Count = 8;
+    public const int Count = 11;
     public const int AllMask = (1 << Count) - 1;
 
     public static string Name(Slot slot) => slot switch
@@ -45,6 +48,9 @@ public static class Slots
         Slot.EfficiencyMode => "efficiencyMode",
         Slot.MemoryLimit => "memoryLimitMb",
         Slot.WorkingSetLimit => "workingSetLimitMb",
+        Slot.NetworkBlocked => "networkBlocked",
+        Slot.UploadLimit => "uploadLimitMbps",
+        Slot.NetworkPriority => "networkPriority",
         _ => slot.ToString(),
     };
 
@@ -61,6 +67,9 @@ public static class Slots
         Slot.MemoryPriority => Camel(((MemoryPriorityLevel)value).ToString()),
         Slot.EfficiencyMode => value switch { EfficiencyValue.On => "on", EfficiencyValue.Off => "off", _ => "auto" },
         Slot.MemoryLimit or Slot.WorkingSetLimit => value == 0 ? "none" : $"{value} MB",
+        Slot.NetworkBlocked => value == 0 ? "allowed" : "blocked",
+        Slot.UploadLimit => value == 0 ? "none" : $"{value / 1_000_000.0:0.######} Mbps",
+        Slot.NetworkPriority => value < 0 ? "default" : $"DSCP {value}",
         _ => value.ToString(),
     };
 

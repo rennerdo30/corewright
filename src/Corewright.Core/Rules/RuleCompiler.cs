@@ -25,6 +25,7 @@ public sealed class CompiledRule
 
     /// <summary>False when the condition only reads lifetime-static fields; then it is evaluated once per process.</summary>
     public bool IsDynamic { get; }
+    public bool UsesNetwork { get; internal set; }
 
     /// <summary>Rules that apply to grouped processes: a group's own settings and rules that name group or groupId.</summary>
     public bool GroupAware { get; internal set; }
@@ -44,7 +45,8 @@ public sealed class CompiledRuleSet
 {
     public static readonly CompiledRuleSet Empty = new([]);
 
-    internal CompiledRuleSet(CompiledRule[] rules) => Rules = rules;
+    internal CompiledRuleSet(CompiledRule[] rules) { Rules = rules; NeedsNetwork = rules.Any(r => r.UsesNetwork); }
+    public bool NeedsNetwork { get; }
 
     /// <summary>Enabled, valid rules ordered by priority (highest first, then file order).</summary>
     public CompiledRule[] Rules { get; }
@@ -57,7 +59,7 @@ public static class RuleCompiler
 
     public static readonly string[] StringFields = ["name", "path", "parentName", "commandLine"];
     public static readonly string[] StaticNumberFields = ["pid", "session"];
-    public static readonly string[] DynamicNumberFields = ["cpu", "workingSetMb", "privateMb", "ioMBps", "threads", "handles"];
+    public static readonly string[] DynamicNumberFields = ["cpu", "workingSetMb", "privateMb", "ioMBps", "netMBps", "threads", "handles"];
 
     /// <summary>Compiles all rules. Errors are collected for every rule, enabled or not; only enabled valid rules are returned.</summary>
     public static CompiledRuleSet Compile(RuleSet set, SystemTopology topo, List<RuleError> errors)
@@ -81,7 +83,12 @@ public static class RuleCompiler
             foreach (var m in messages) errors.Add(new RuleError(rule.Id, rule.Name, m));
             if (messages.Count > 0 || !rule.Enabled || match is null) continue;
 
-            var cr = new CompiledRule(rule, match, dynamic) { SlotMask = mask, GroupAware = rule.Id.StartsWith(GroupRulePrefix, StringComparison.Ordinal) || NamesGroup(rule.When) };
+            var cr = new CompiledRule(rule, match, dynamic)
+            {
+                SlotMask = mask,
+                UsesNetwork = UsesNetwork(rule.When),
+                GroupAware = rule.Id.StartsWith(GroupRulePrefix, StringComparison.Ordinal) || NamesGroup(rule.When),
+            };
             values.CopyTo(cr.Values, 0);
             compiled.Add((cr, i));
         }
@@ -93,6 +100,8 @@ public static class RuleCompiler
             .ToArray();
         return new CompiledRuleSet(ordered);
     }
+    private static bool UsesNetwork(Condition? c) => c is not null &&
+        (c.Field == "netMBps" || (c.Children?.Any(UsesNetwork) ?? false));
 
     private static int CompileActions(Rule rule, SystemTopology topo, long[] values, List<string> errors)
     {
@@ -138,6 +147,18 @@ public static class RuleCompiler
         {
             if (ws < 4) errors.Add("workingSetLimitMb must be at least 4");
             else Set(Slot.WorkingSetLimit, ws);
+        }
+        if (a.NetworkBlocked is bool block) Set(Slot.NetworkBlocked, block ? 1 : 0);
+        if (a.UploadLimitMbps is double mbps)
+        {
+            if (!double.IsFinite(mbps) || mbps < 0 || mbps >= long.MaxValue / 1_000_000.0 || (mbps > 0 && mbps < 0.000001))
+                errors.Add("uploadLimitMbps must be zero or a finite positive rate of at least 0.000001 Mbps");
+            else Set(Slot.UploadLimit, (long)(mbps * 1_000_000));
+        }
+        if (a.NetworkPriority is int dscp)
+        {
+            if (dscp is < 0 or > 63) errors.Add("networkPriority must be a DSCP number from 0 to 63");
+            else Set(Slot.NetworkPriority, dscp);
         }
         return mask;
     }
@@ -216,6 +237,9 @@ public static class RuleCompiler
             case "workingSetMb": return Num(p => p.WorkingSet / 1048576.0);
             case "privateMb": return Num(p => p.PrivateBytes / 1048576.0);
             case "ioMBps": return Num(p => p.IoBytesPerSec / 1048576.0);
+            case "netMBps":
+                var net = NumberPredicate(op, c.Value, errors);
+                return net is null ? null : (p, _) => p.NetAvailable && net((p.NetSend + p.NetReceive) / 1048576.0);
             case "threads": return Num(p => p.Threads);
             case "handles": return Num(p => p.Handles);
             case "isForeground":

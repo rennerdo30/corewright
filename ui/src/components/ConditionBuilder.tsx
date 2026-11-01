@@ -24,6 +24,7 @@ export const FIELDS: { group: string; items: { id: string; label: string; kind: 
       { id: 'privateMb', label: 'Private memory', kind: 'number', unit: 'MB' },
       { id: 'workingSetMb', label: 'Working set', kind: 'number', unit: 'MB' },
       { id: 'ioMBps', label: 'Disk I/O', kind: 'number', unit: 'MB/s' },
+      { id: 'netMBps', label: 'Network usage', kind: 'number', unit: 'MB/s' },
       { id: 'threads', label: 'Threads', kind: 'number' },
       { id: 'handles', label: 'Handles', kind: 'number' },
       { id: 'isForeground', label: 'In the foreground', kind: 'bool' },

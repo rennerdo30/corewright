@@ -48,7 +48,7 @@ Design rules that follow from this:
 
 Endpoints (all under `/api/v1`): `status`, `system` (with history), `processes`, `processes/{pid}/explain`, `rules` (GET/PUT, PUT validates and rejects on any error), `rules/validate`, `engine/pause`, `engine/resume`, `facts` and `facts/{key}` (connectors push context such as `obs.recording=true`; rules read it with the `fact` field), `session/foreground` (the tray reports the foreground process because a service in session 0 cannot see it), `events?after=<seq>`.
 
-**Process groups (PM-39, owner decision 2026-11-02: generic, "not an island solution for only one use-case").** `PUT/GET/DELETE /api/v1/groups/{id}`, `GET /api/v1/groups`: another tool registers exact process trees (`roots: [{pid, creationTime}]`, FILETIME UTC ticks, `includeDescendants`, `ttlSeconds` 5-3600, renewed by PUT with the same id) and optionally `actions` in the rule actions schema; affinity also takes `exclusive:N` (N whole cores reserved for the group, strongest first outside the game CCD, fixed for its life, never used by Autopilot placements). `freezeAutopilot` freezes Autopilot while the group lives (fact `autopilot.frozen`). Group settings compile to rule `group-<id>` at priority 100; grouped processes are left alone by Autopilot and by user rules unless they name `group`/`groupId`. PUT applies synchronously before answering. Errors carry a stable `error`: `root-not-found` 404, `placement-unavailable` 409, `engine-paused` / `cannot-control` / `stopping` 503 (the group is not kept), `invalid` 400, `unknown-group` 404. No tool-specific vocabulary in this API.
+**Process groups (PM-39, owner decision 2026-11-02: generic, "not an island solution for only one use-case").** `PUT/GET/DELETE /api/v1/groups/{id}`, `GET /api/v1/groups`: another tool registers exact process trees (`roots: [{pid, creationTime}]`, FILETIME UTC ticks, `includeDescendants`, `ttlSeconds` 5-3600, renewed by PUT with the same id) and optionally `actions` in the rule actions schema; affinity also takes `exclusive:N` (N whole cores reserved for the group, strongest first outside the game CCD, fixed for its life, never used by Autopilot placements). `freezeAutopilot` freezes Autopilot while the group lives (fact `autopilot.frozen`). Group settings compile to rule `group-<id>` at priority 100; grouped processes are left alone by Autopilot and by user rules unless they name `group`/`groupId`. PUT applies synchronously before answering. Errors carry a stable `error`: `root-not-found` 404, `placement-unavailable` 409, `engine-paused` / `cannot-control` / `pending` / `stopping` 503 (the group is not kept; `pending` = a requested network setting is still waiting for an earlier cleanup, retry in a minute), `invalid` 400, `unknown-group` 404. No tool-specific vocabulary in this API.
 
 ## Controlled resources
 
@@ -70,8 +70,13 @@ Storage health is queried at most once a minute while active. Missing fields mea
 | `efficiencyMode` | `SetProcessInformation(ProcessPowerThrottling)` | EcoQoS on or off; restore gives control back to Windows. |
 | `memoryLimitMb` | Job object `JOB_OBJECT_LIMIT_PROCESS_MEMORY` (owner requirement, 2026-11-02) | **Hard** commit cap: allocations above it fail and the app may crash. Child processes started later join the job and get the same per-process cap. A process cannot leave a job, so revert removes the limit and keeps the empty job. |
 | `workingSetLimitMb` | `SetProcessWorkingSetSizeEx` with `QUOTA_LIMITS_HARDWS_MAX_ENABLE` | Soft physical-RAM cap: Windows pages out instead of failing allocations. |
+| `networkBlocked` | Dynamic WFP session, ALE connect and receive/accept IPv4/IPv6 | Blocks uploads and downloads by exe path; existing connections may survive. Filters disappear on stop or crash. |
+| `uploadLimitMbps` | WMI COM `MSFT_NetQosPolicySettingData`, `ActiveStore` | Upload only; 0 = none. One combined throttle/DSCP policy per exe path. |
+| `networkPriority` | Same ActiveStore policy, `DSCPAction` | DSCP 0–63; router support required. Original = default (no Corewright policy). |
 
-Network (next phase): egress throttling and DSCP marking through QoS policies in the non-persistent `ActiveStore`, and per-app blocking through Windows Filtering Platform filters. Ingress shaping needs a kernel driver and is out of scope without the owner.
+Network enforcement needs administrator rights. Claims are per process identity; Windows applies them by executable path: any block, lowest nonzero upload cap, highest DSCP number. The last claim's release removes the policy/filter. Startup removes leftover `Corewright-*` ActiveStore policies after a crash; other policies are untouched. Download shaping needs a kernel driver and remains out of scope without the owner.
+
+Per-process `netSend`/`netReceive` (bytes/s) are requested with `/processes?include=net`. Direct kernel-network ETW runs for network clients (60 s grace) OR enabled compiled `netMBps` conditions (owner, 2026-11-02); rule demand is cached at compile time. Missing data disables the entire dependent rule, including negated conditions, and Explain reports why. ETW events aggregate into a preallocated PID dictionary without per-event allocations. Elevated ETW cost still needs owner measurement.
 
 ## Rule engine invariants
 
@@ -163,7 +168,7 @@ Network (next phase): egress throttling and DSCP marking through QoS policies in
 
 - ETW (`Microsoft-Windows-Kernel-Process`) for instant process start detection, consumed directly without TraceEvent to stay AOT-friendly.
 - CPU Sets for affinity on hybrid CPUs and machines with more than 64 logical processors.
-- Network slots (QoS policies, WFP blocking).
+- Network elevated acceptance: WFP/QoS/ETW behavior, crash cleanup and active ETW idle cost. Download shaping needs an owner decision about a kernel driver.
 - Per-process GPU usage as a rule field (`D3DKMTQueryStatistics`, not PDH).
 - Token file ACL in service mode: currently readable by all local users through the default `ProgramData` inheritance; tighten to per-user tokens before a public release.
 - Logo: `design/corewright-logo.svg` (owner pick "C-frame", 2026-11-02); app and tray use the tile-less mark in `assets/`.

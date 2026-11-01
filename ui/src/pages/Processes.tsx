@@ -41,6 +41,7 @@ function load<T>(key: string, fallback: T): T {
 function cellValue(c: ColumnDef, l: Line): number | string | boolean | undefined {
   if (l.items.length === 1) return c.value(l.p)
   const values = l.items.map(c.value)
+  if (c.id === 'network' && values.some((v) => typeof v === 'string')) return values.find((v) => typeof v === 'string')
   if (c.agg === 'sum') return values.reduce<number>((s, v) => s + (typeof v === 'number' ? v : 0), 0)
   if (c.agg === 'max') return values.reduce<number>((s, v) => Math.max(s, typeof v === 'number' ? v : 0), 0)
   const first = values[0]
@@ -48,7 +49,13 @@ function cellValue(c: ColumnDef, l: Line): number | string | boolean | undefined
 }
 
 export function Processes({ onCreateRule }: { onCreateRule: (r: Rule) => void }) {
-  const [visible, setVisible] = useState<string[]>(() => load(VISIBLE_KEY, DEFAULT_VISIBLE))
+  const [visible, setVisible] = useState<string[]>(() => {
+    const saved = load(VISIBLE_KEY, DEFAULT_VISIBLE)
+    if (localStorage.getItem('corewright.networkColumns.v1')) return saved
+    const next = [...new Set([...saved, 'networkblocked', 'uploadlimit', 'netpriority'])]
+    localStorage.setItem(VISIBLE_KEY, JSON.stringify(next)); localStorage.setItem('corewright.networkColumns.v1', '1')
+    return next
+  })
   const [widths, setWidths] = useState<Record<string, number>>(() => load(WIDTHS_KEY, {}))
   const columns = COLUMNS.filter((c) => c.id === 'name' || visible.includes(c.id))
   // Only ask the service for what visible columns need (handle reads cost CPU).
@@ -527,6 +534,7 @@ function RuleEvaluation({ rules }: { rules?: ExplainRule[] }) {
             <li key={r.ruleId}>
               <span className="dot" />
               {r.ruleName}
+              {r.unavailable && <span className="secondary tiny"> — {r.unavailable}</span>}
             </li>
           ))}
         </ul>

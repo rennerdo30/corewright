@@ -52,6 +52,8 @@ public sealed class ProcessInfo(ProcessKey key, string name)
     public long WorkingSet;
     public long PrivateBytes;
     public double IoBytesPerSec;
+    public double NetSend, NetReceive;
+    public bool NetAvailable;
     public int Threads;
     public int Handles;
     public int BasePriority;

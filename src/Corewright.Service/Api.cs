@@ -27,7 +27,8 @@ public sealed record ProcessExtDto(
     long? ReadOperations, long? WriteOperations, long? OtherOperations, long? ReadBytes, long? WriteBytes, long? OtherBytes,
     int? BasePriority, double? Gpu,
     string? Affinity, string? IoPriority, string? GpuPriority, string? MemoryPriority, string? EfficiencyMode, long? WorkingSetLimitMb, long? MemoryLimitMb,
-    int? GdiObjects, int? UserObjects, string? User, bool? Elevated, int? Bits, string? CommandLine);
+    int? GdiObjects, int? UserObjects, string? User, bool? Elevated, int? Bits, string? CommandLine,
+    double? NetSend, double? NetReceive, string? NetworkError, bool? NetworkBlocked, double? UploadLimitMbps, long? NetworkPriority);
 
 public sealed record AppliedSlotDto(string Slot, string Value, string RuleId, string RuleName);
 
@@ -137,12 +138,14 @@ internal static class Api
             }
         });
 
-        // include = comma list of: ext (sampler details), gpu, settings, identity, cmdline, gui.
+        // include = comma list of: ext (sampler details), gpu, net, settings, identity, cmdline, gui.
         api.MapGet("/processes", (string? include) =>
         {
             var inc = (include ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
             var groups = DetailGroups.None;
+            bool net = inc.Contains("net");
+            if (net) m.TouchNetwork();
             if (inc.Contains("settings")) groups |= DetailGroups.Settings;
             if (inc.Contains("identity")) groups |= DetailGroups.Identity;
             if (inc.Contains("cmdline")) groups |= DetailGroups.CommandLine;
@@ -160,7 +163,7 @@ internal static class Api
                 var list = m.Sampler.Processes;
                 var result = new ProcessDto[list.Count];
                 for (int i = 0; i < list.Count; i++)
-                    result[i] = ToDto(m, list[i], ext, inc.Contains("ext"), inc.Contains("gpu"), groups);
+                    result[i] = ToDto(m, list[i], ext, inc.Contains("ext"), inc.Contains("gpu"), groups, net);
                 return TypedResults.Ok(result);
             }
         });
@@ -297,7 +300,7 @@ internal static class Api
     }
 
     private static ProcessDto ToDto(Monitor m, ProcessInfo p, bool ext = false, bool sampler = false, bool gpu = false,
-        DetailGroups groups = DetailGroups.None)
+        DetailGroups groups = DetailGroups.None, bool net = false)
     {
         AppliedSlotDto[]? applied = null;
         if (m.Engine.HasApplied(p.Key))
@@ -307,10 +310,10 @@ internal static class Api
         int? parent = p.Parent is { } pk && m.Sampler.IsAlive(pk) ? pk.Pid : null;
         return new ProcessDto(p.Key.Pid, parent, p.Name, p.Path, Math.Round(p.CpuPercent, 2), p.WorkingSet, p.PrivateBytes,
             Math.Round(p.IoBytesPerSec), p.Threads, p.Handles, Slots.FormatBasePriority(p.BasePriority), p.SessionId,
-            p.IsProtected, p.Key.Pid == m.Context.ForegroundPid, applied, ext ? Ext(m, p, sampler, gpu, groups) : null);
+            p.IsProtected, p.Key.Pid == m.Context.ForegroundPid, applied, ext ? Ext(m, p, sampler, gpu, groups, net) : null);
     }
 
-    private static ProcessExtDto Ext(Monitor m, ProcessInfo p, bool sampler, bool gpu, DetailGroups groups)
+    private static ProcessExtDto Ext(Monitor m, ProcessInfo p, bool sampler, bool gpu, DetailGroups groups, bool net)
     {
         var d = groups == DetailGroups.None ? null : m.Details.Get(p.Key);
         bool settings = groups.HasFlag(DetailGroups.Settings);
@@ -326,6 +329,7 @@ internal static class Api
                 if (a.Slot == Slot.MemoryLimit) memLimit = a.Value;
         }
         long? Ms(long t) => sampler ? t / 10_000 : null;
+        var network = settings ? m.NetworkPolicies.Effective(p.Path) : default;
         long? S(long v) => sampler ? v : null;
         return new ProcessExtDto(
             sampler && p.Key.CreateTime > 0 ? (p.Key.CreateTime - 116444736000000000L) / 10_000 : null,
@@ -338,7 +342,10 @@ internal static class Api
             gpu ? Math.Round(m.Gpu?.ByProcess.GetValueOrDefault(p.Key.Pid) ?? 0, 1) : null,
             affinity, Fmt(Slot.IoPriority, d?.IoPriority), Fmt(Slot.GpuPriority, d?.GpuPriority), Fmt(Slot.MemoryPriority, d?.MemoryPriority),
             Fmt(Slot.EfficiencyMode, d?.Efficiency), settings ? d?.WorkingSetLimitMb : null, memLimit,
-            d?.GdiObjects, d?.UserObjects, d?.UserName, d?.Elevated, d?.Bits, d?.CommandLine);
+            d?.GdiObjects, d?.UserObjects, d?.UserName, d?.Elevated, d?.Bits, d?.CommandLine,
+            net && p.NetAvailable ? p.NetSend : null, net && p.NetAvailable ? p.NetReceive : null,
+            net ? m.NetworkError ?? (p.NetAvailable ? null : "starting network monitor") : null,
+            settings ? network.Blocked : null, settings ? network.Upload : null, settings ? network.Priority : null);
     }
 
     private static RuleErrorDto ToDto(RuleError e) => new(e.RuleId, e.RuleName, e.Message);

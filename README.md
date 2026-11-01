@@ -29,6 +29,7 @@ And it stays out of the way: the service idles at **0.01 % CPU and about 17 MB o
 | | |
 |---|---|
 | **Every setting, one engine** | CPU priority, CPU cores (affinity), I/O priority, GPU priority, memory priority, efficiency mode (EcoQoS), a hard memory cap (job object) and a soft RAM cap. |
+| **Network controls** | Per-executable blocking (upload and download), upload Mbps caps, DSCP priority and per-process network rates. Requires administrator rights. Existing connections may survive blocking; DSCP needs router support; download rate limits need a kernel driver and are out of scope. Network-usage rules keep ETW monitoring active while enabled. |
 | **Rules that explain themselves** | A rule builder in plain language, sustain and release timing against flapping, and an "Explain" view per process: which rule set what, and which rules were overruled. |
 | **Autopilot** | Game mode: detects games (game libraries, full screen with Direct3D or Vulkan, your own list), gives them priority and the right CCD, moves busy background work off it and keeps voice chat responsive. Balancing: ProBalance-style restraint of background CPU hogs. All of it is just low-priority rules, so your rules always win. |
 | **Knows your CPU** | CCDs, 3D V-Cache, physical cores and SMT threads, and the fastest cores by the CPPC ranking (the same ★ and • Ryzen Master shows). Rules can target `ccd0`, `vcache-ccd`, `best-cores:4`. |

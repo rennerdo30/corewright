@@ -3,6 +3,7 @@ import { levelLabel } from '../host'
 import type { Condition, Rule, RuleActions, RuleError } from '../types'
 import { ConditionGroup, describeCondition } from './ConditionBuilder'
 import { ContextMenu, type MenuEntry } from './ContextMenu'
+import { NET_PRIORITIES, netPriorityLabel } from '../networkPriority'
 import { RuleHistory } from './RuleHistory'
 
 type ActionKey = keyof RuleActions
@@ -12,12 +13,15 @@ interface ActionDef {
   title: string
   description: string
   glyph: string
-  kind: 'levels' | 'toggle' | 'cores' | 'mb'
+  kind: 'levels' | 'toggle' | 'cores' | 'mb' | 'mbps' | 'dscp'
   levels?: string[]
   initial: RuleActions[ActionKey]
 }
 
 export const ACTIONS: ActionDef[] = [
+  { key: 'networkBlocked', title: 'Block network', description: 'Cuts the program off from the network, both ways. Connections that are already open can stay up until they close.', glyph: '\uE701', kind: 'toggle', initial: true },
+  { key: 'uploadLimitMbps', title: 'Upload limit', description: 'Caps how fast the program sends data. Windows can limit uploads per program, not downloads. 0 means no limit.', glyph: '\uE898', kind: 'mbps', initial: 10 },
+  { key: 'networkPriority', title: 'Network priority', description: 'Marks the program\'s traffic so the network can put it first or last. Only has an effect where your router honours these marks; most home routers ignore them.', glyph: '\uE968', kind: 'dscp', initial: 34 },
   { key: 'cpuPriority', title: 'CPU priority', description: 'How much CPU time the process gets when the CPU is busy.', glyph: '\uE9D9', kind: 'levels', levels: ['idle', 'belowNormal', 'normal', 'aboveNormal', 'high', 'realtime'], initial: 'belowNormal' },
   { key: 'ioPriority', title: 'Disk priority', description: 'Who goes first when several processes read or write.', glyph: '\uEDA2', kind: 'levels', levels: ['veryLow', 'low', 'normal', 'high'], initial: 'low' },
   { key: 'gpuPriority', title: 'GPU priority', description: 'Scheduling priority on the graphics card.', glyph: '\uE7F4', kind: 'levels', levels: ['idle', 'belowNormal', 'normal', 'aboveNormal', 'high', 'realtime'], initial: 'aboveNormal' },
@@ -38,7 +42,10 @@ const CORE_PRESETS: [string, string][] = [
 export function summarizeActions(a: RuleActions): string {
   const parts = ACTIONS.filter((d) => a[d.key] != null).map((d) => {
     const v = a[d.key]
-    if (d.kind === 'toggle') return v ? 'efficiency mode on' : 'efficiency mode off'
+    if (d.key === 'networkBlocked') return v ? 'network blocked' : 'network allowed'
+    if (d.kind === 'toggle') return `${d.title.toLowerCase()} ${v ? 'on' : 'off'}`
+    if (d.kind === 'mbps') return v === 0 ? 'no upload limit' : `upload at most ${v} Mbps`
+    if (d.kind === 'dscp') return `network priority ${netPriorityLabel(v as number).toLowerCase()}`
     if (d.kind === 'mb') return `${d.title.toLowerCase().replace(/ \(.*\)/, '')} ${formatMb(v as number)}`
     if (d.kind === 'cores') return `cores ${v}`
     return `${d.title.replace(' priority', '').toLowerCase()} ${levelLabel(v as string).toLowerCase()}`
@@ -257,6 +264,20 @@ function Unit({ unit, children }: { unit: string; children: React.ReactNode }) {
 }
 
 function ActionControl({ def, value, allowRealtime, onChange }: { def: ActionDef; value: unknown; allowRealtime: boolean; onChange: (v: unknown) => void }) {
+  if (def.kind === 'mbps') return <Unit unit="Mbps"><input type="number" min={0} step={0.1} className="num-input wide" value={(value as number) ?? ''} onChange={(e) => onChange(e.target.value === '' ? null : Number(e.target.value))} /></Unit>
+  if (def.kind === 'dscp') {
+    const known = NET_PRIORITIES.some((p) => p.dscp === value)
+    return (
+      <div className="seg levels" title="Sent as a DSCP mark: Low CS1 (8), Normal 0, High AF41 (34), Highest EF (46)">
+        {NET_PRIORITIES.map((p) => (
+          <button key={p.dscp} className={value === p.dscp ? 'on' : ''} onClick={() => onChange(p.dscp)}>
+            {p.label}
+          </button>
+        ))}
+        {!known && value != null && <button className="on">{netPriorityLabel(value as number)}</button>}
+      </div>
+    )
+  }
   if (def.kind === 'levels') {
     const levels = def.levels!.filter((l) => l !== 'realtime' || allowRealtime || value === 'realtime')
     return (

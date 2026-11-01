@@ -17,10 +17,12 @@ internal sealed unsafe class WindowsActuator : IActuator, IDisposable
 
     // Job objects for memory caps; kept open while the process lives so the limit can be changed or removed.
     private readonly Dictionary<ProcessKey, nint> _jobs = [];
+    public NetworkPolicies Network { get; } = new();
 
     public bool TryRead(in ProcessKey key, Slot slot, out long value, out string? error)
     {
         value = 0;
+        if (NetworkPolicies.IsSlot(slot)) { value = NetworkPolicies.Original(slot); error = null; return true; }
         if (slot == Slot.MemoryLimit)
         {
             // Without our job the process has no cap from us; "0" restores to "no cap".
@@ -98,6 +100,29 @@ internal sealed unsafe class WindowsActuator : IActuator, IDisposable
     }
 
     public bool TryWrite(in ProcessKey key, Slot slot, long value, out string? error)
+        => Write(key, slot, value, out error).Status == WriteStatus.Succeeded;
+
+    public WriteResult Write(in ProcessKey key, Slot slot, long value, out string? error)
+    {
+        if (NetworkPolicies.IsSlot(slot))
+        {
+            if (value == NetworkPolicies.Original(slot) && Network.Has(key)) return Network.Write(key, null, slot, value, out error);
+            if (!Environment.IsPrivilegedProcess && value != NetworkPolicies.Original(slot))
+                return Network.Write(key, null, slot, value, out error);
+            nint process = Open(key, Query, out error);
+            if (process == 0) return new(WriteStatus.Failed);
+            try
+            {
+                char* path = stackalloc char[32768]; uint length = 32768;
+                if (!Native.QueryFullProcessImageNameW(process, 0, path, ref length)) { Win32Fail(out error); return new(WriteStatus.Failed); }
+                return Network.Write(key, new string(path, 0, (int)length), slot, value, out error);
+            }
+            finally { Native.CloseHandle(process); }
+        }
+        return new(WriteNative(key, slot, value, out error) ? WriteStatus.Succeeded : WriteStatus.Failed);
+    }
+
+    private bool WriteNative(in ProcessKey key, Slot slot, long value, out string? error)
     {
         uint access = slot switch
         {
@@ -197,11 +222,13 @@ internal sealed unsafe class WindowsActuator : IActuator, IDisposable
 
     public void Forget(in ProcessKey key)
     {
+        Network.Forget(key);
         if (_jobs.Remove(key, out nint job)) Native.CloseHandle(job);
     }
 
     public void Dispose()
     {
+        Network.Dispose();
         foreach (var job in _jobs.Values) Native.CloseHandle(job);
         _jobs.Clear();
     }
