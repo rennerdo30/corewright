@@ -236,15 +236,18 @@ export function Autopilot() {
             title="Background placement"
             enabled={bg.enabled}
             onToggle={(v) => update((x) => (x.autopilot.background.enabled = v))}
-            summary={`Programs that run for over ${bg.minObservedMinutes} min without ever being in front move off your ${bg.keepBestCoresFree} strongest cores. Services are never touched.`}
+            summary={`Learns what each program really is (python.exe runs many things), how much it works and how hard it bursts, and whether its app is ever in front. Clear background work moves off your ${bg.keepBestCoresFree} strongest cores${bg.includeServices ? ', services included' : ''}.`}
           >
+            <Row title="Include services" desc="Windows Update, indexing, backup and database services are judged like programs. Audio, input, display drivers and the network core are always left alone.">
+              <Toggle value={bg.includeServices} onChange={(v) => update((x) => (x.autopilot.background.includeServices = v))} />
+            </Row>
             <Row title="Observe at least" desc="Runtime a program needs before Corewright decides anything about it.">
               <NumberBox value={bg.minObservedMinutes} min={5} step={5} unit="min" onChange={(v) => update((x) => (x.autopilot.background.minObservedMinutes = v))} />
             </Row>
-            <Row title="Foreground share" desc="Programs in front more often than this are interactive and left alone.">
+            <Row title="Foreground share" desc="Programs whose app is in front more often than this are interactive. Anything in front in the last 30 minutes is too.">
               <NumberBox value={bg.maxForegroundPercent} min={0} step={0.5} unit="%" onChange={(v) => update((x) => (x.autopilot.background.maxForegroundPercent = v))} />
             </Row>
-            <Row title="Single-core load" desc="Average load up to this many cores counts as single-threaded.">
+            <Row title="Single-core load" desc="Programs whose bursts (95th percentile) stay below this many cores only get placed; busier ones also get lower priority.">
               <NumberBox value={bg.singleCoreLoad} min={0.5} step={0.1} unit="cores" onChange={(v) => update((x) => (x.autopilot.background.singleCoreLoad = v))} />
             </Row>
             <Row title="Keep the strongest cores free" desc="Fastest cores (CPPC ranking) that no background program may use. Hatched on the map.">
@@ -367,7 +370,7 @@ function Placements({ rows, procs }: { rows: { pid: number; name: string; cores:
 
 function Learned() {
   const rows = usePoll(api.background, 15_000)
-  const list = (rows.data ?? []).filter((r) => r.verdict !== 'Idle').slice(0, 60)
+  const list = (rows.data ?? []).filter((r) => !r.verdict.startsWith('Idle')).slice(0, 80)
   if (list.length === 0) return <div className="ap-empty">Nothing learned yet. Corewright watches every program for an hour before it decides anything.</div>
   return (
     <table className="ap-table">
@@ -377,17 +380,22 @@ function Learned() {
           <th className="num">Watched</th>
           <th className="num">In front</th>
           <th className="num">Avg cores</th>
+          <th className="num">Bursts to</th>
           <th>Decision</th>
         </tr>
       </thead>
       <tbody>
         {list.map((r) => (
-          <tr key={r.name} title={r.reason}>
-            <td>{r.name}</td>
+          <tr key={r.program} title={`${r.reason}\n${r.program}`}>
+            <td>
+              {r.name}
+              {r.service && <span className="tag">service</span>}
+            </td>
             <td className="num secondary">{r.observedMinutes >= 120 ? `${(r.observedMinutes / 60).toFixed(1)} h` : `${Math.round(r.observedMinutes)} min`}</td>
             <td className="num secondary">{r.foregroundPercent} %</td>
             <td className="num">{r.averageCores}</td>
-            <td className={r.verdict.startsWith('Background') ? 'decision on' : 'decision'}>{r.verdict}</td>
+            <td className="num">{r.p95Cores}</td>
+            <td className={r.verdict.startsWith('Background') ? 'decision on' : r.verdict.startsWith('Left alone') ? 'decision crit' : 'decision'}>{r.verdict}</td>
           </tr>
         ))}
       </tbody>

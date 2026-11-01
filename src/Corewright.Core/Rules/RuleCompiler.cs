@@ -192,6 +192,14 @@ public static class RuleCompiler
             case "commandLine": return Str(p => p.CommandLine);
             case "pid": return Num(p => p.Key.Pid);
             case "session": return Num(p => p.SessionId);
+            case "program": return Str(p => p.Program ?? p.Name);
+            case "latencyCritical":
+                return op switch
+                {
+                    "isTrue" => static (p, _) => p.LatencyCritical,
+                    "isFalse" => static (p, _) => !p.LatencyCritical,
+                    _ => Error($"operator '{op}' does not apply to latencyCritical (use isTrue or isFalse)"),
+                };
         }
 
         dynamic = true;
@@ -209,6 +217,14 @@ public static class RuleCompiler
                     "isTrue" => static (p, x) => p.Key.Pid == x.ForegroundPid,
                     "isFalse" => static (p, x) => p.Key.Pid != x.ForegroundPid,
                     _ => Error($"operator '{op}' does not apply to isForeground (use isTrue or isFalse)"),
+                };
+            case "isForegroundApp":
+                // The window you use and every process of the same app (Electron helpers, browser tabs, a terminal's children).
+                return op switch
+                {
+                    "isTrue" => static (p, x) => p.Key.Pid == x.ForegroundPid || (x.ForegroundRoot.Pid != 0 && p.AppRoot == x.ForegroundRoot),
+                    "isFalse" => static (p, x) => p.Key.Pid != x.ForegroundPid && (x.ForegroundRoot.Pid == 0 || p.AppRoot != x.ForegroundRoot),
+                    _ => Error($"operator '{op}' does not apply to isForegroundApp (use isTrue or isFalse)"),
                 };
             case "isGame":
                 return op switch

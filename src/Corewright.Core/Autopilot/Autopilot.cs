@@ -68,6 +68,12 @@ public sealed class BackgroundSettings
     /// <summary>Cumulative observed runtime before a process can be classified.</summary>
     public double MinObservedMinutes { get; set; } = 60;
 
+    /// <summary>
+    /// Services are judged like programs (owner, 2026-11-02: "generally saying services are left alone is wrong");
+    /// latency-critical ones (audio, input, drivers, network core) are always left alone.
+    /// </summary>
+    public bool IncludeServices { get; set; } = true;
+
     /// <summary>Above this share of its runtime in the foreground it is interactive, never background.</summary>
     public double MaxForegroundPercent { get; set; } = 1;
 
@@ -84,7 +90,8 @@ public sealed class BackgroundSettings
 }
 
 /// <summary>A classification decision, produced by the service's observer and turned into rules here.</summary>
-public sealed record BackgroundVerdict(string Name, string Kind, string? Affinity, string Reason);
+/// <param name="Program">Identity key (rule field "program"); <param name="Display">what the user sees.</param></param>
+public sealed record BackgroundVerdict(string Program, string Display, string Kind, bool Service, string Reason);
 
 public sealed class GameModeSettings
 {
@@ -209,8 +216,9 @@ public static class AutopilotRules
                 var when = Condition.All(
                     Condition.Leaf("fact", "isTrue", null, "game.active"),
                     Condition.Leaf("isGame", "isFalse", null),
-                    Condition.Leaf("isForeground", "isFalse", null),
-                    Condition.Leaf("session", "gt", "0"),
+                    // The whole app in front is left alone, and services are included except latency-critical ones (owner, 2026-11-02).
+                    Condition.Leaf("isForegroundApp", "isFalse", null),
+                    Condition.Leaf("latencyCritical", "isFalse", null),
                     Condition.Leaf("cpu", "gt", "0.3"));
                 if (keep.Count > 0) when.Children!.Add(Not(Condition.Leaf("name", "in", string.Join(", ", keep))));
                 rules.Add(new Rule
@@ -231,15 +239,15 @@ public static class AutopilotRules
             // One rule per classified program; game mode (higher priority) still wins for its slots while gaming.
             foreach (var v in background)
             {
+                var when = Condition.All(Condition.Leaf("program", "eq", v.Program));
+                // A program only counts as background while no window of its app is in front. Services have none.
+                if (!v.Service) when.Children!.Add(Condition.Leaf("isForegroundApp", "isFalse", null));
                 rules.Add(new Rule
                 {
-                    Id = IdPrefix + "background-" + Slug(v.Name),
-                    Name = $"Autopilot: background {v.Name}",
+                    Id = IdPrefix + "background-" + Slug(v.Display) + "-" + Fnv(v.Program),
+                    Name = $"Autopilot: background {v.Display}",
                     Priority = 5,
-                    When = Condition.All(
-                        Condition.Leaf("name", "eq", v.Name),
-                        Condition.Leaf("isForeground", "isFalse", null),
-                        Condition.Leaf("session", "gt", "0")),
+                    When = when,
                     // Placement is dynamic and sticky (AffinityPlacer): sized to the program's real demand, never on the
                     // strongest cores, never on the game's CCD while a game runs.
                     Actions = v.Kind == "single"
@@ -265,9 +273,9 @@ public static class AutopilotRules
         {
             var b = s.Balance;
             var when = Condition.All(
-                Condition.Leaf("isForeground", "isFalse", null),
+                Condition.Leaf("isForegroundApp", "isFalse", null),
                 Condition.Leaf("isGame", "isFalse", null),
-                Condition.Leaf("session", "gt", "0"),
+                Condition.Leaf("latencyCritical", "isFalse", null),
                 Condition.Leaf("cpu", "gt", b.CpuPercent.ToString(System.Globalization.CultureInfo.InvariantCulture)));
             var excluded = b.Exclusions.Concat(keep).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
             if (excluded.Count > 0) when.Children!.Add(Not(Condition.Leaf("name", "in", string.Join(", ", excluded))));
@@ -298,6 +306,14 @@ public static class AutopilotRules
             _ when placement.StartsWith("ccd", StringComparison.OrdinalIgnoreCase) && int.TryParse(placement[3..], out int n) && n < topo.CcdMasks.Length => n,
             _ => -1,
         };
+    }
+
+    /// <summary>Stable short hash (string.GetHashCode is randomized per process), so two programs with one display name get two ids.</summary>
+    private static string Fnv(string s)
+    {
+        uint h = 2166136261;
+        foreach (char c in s) { h ^= c; h *= 16777619; }
+        return h.ToString("x8", System.Globalization.CultureInfo.InvariantCulture);
     }
 
     private static string Slug(string name)

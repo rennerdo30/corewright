@@ -13,6 +13,8 @@ export const FIELDS: { group: string; items: { id: string; label: string; kind: 
       { id: 'commandLine', label: 'Command line', kind: 'text' },
       { id: 'pid', label: 'PID', kind: 'number' },
       { id: 'session', label: 'Session', kind: 'number' },
+      { id: 'program', label: 'Program (what it runs)', kind: 'text' },
+      { id: 'latencyCritical', label: 'Latency critical (audio, input, drivers)', kind: 'bool' },
     ],
   },
   {
@@ -25,6 +27,7 @@ export const FIELDS: { group: string; items: { id: string; label: string; kind: 
       { id: 'threads', label: 'Threads', kind: 'number' },
       { id: 'handles', label: 'Handles', kind: 'number' },
       { id: 'isForeground', label: 'In the foreground', kind: 'bool' },
+      { id: 'isForegroundApp', label: 'Part of the app in front', kind: 'bool' },
     ],
   },
   { group: 'Integrations', items: [{ id: 'fact', label: 'Fact from an app', kind: 'fact' }] },

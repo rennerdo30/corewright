@@ -20,6 +20,16 @@ public sealed class ProcessInfo(ProcessKey key, string name)
     public bool IsProtected;
 
     /// <summary>
+    /// What this process really is, set once by the Autopilot observer before the engine first sees it: the exe path,
+    /// or for generic hosts what they run ("python.exe (train.py)", "svchost.exe (wuauserv)"). Rule field "program".
+    /// </summary>
+    public string? Program;
+    /// <summary>The topmost ancestor below the shell (explorer, services, …): processes with the same root are one app.</summary>
+    public ProcessKey AppRoot;
+    /// <summary>Audio, input, display-driver and network-core processes: Autopilot never slows them down.</summary>
+    public bool LatencyCritical;
+
+    /// <summary>
     /// Reads a process command line; set by the host. Command lines are long and only static rules use them,
     /// and those are evaluated once per process, so the value is read on demand and never stored (memory constraint).
     /// </summary>
@@ -65,6 +75,9 @@ public sealed class EvalContext
 
     public IReadOnlyDictionary<string, string> Facts { get; set; } = NoFacts;
     public int ForegroundPid { get; set; }
+
+    /// <summary>App root of the foreground process: every process of that app counts as "in front" (rule field isForegroundApp).</summary>
+    public ProcessKey ForegroundRoot { get; set; }
 
     /// <summary>The detected game (Autopilot game mode); 0 when none. Every process with the same exe name counts.</summary>
     public int GamePid { get; set; }

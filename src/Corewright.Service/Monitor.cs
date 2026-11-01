@@ -296,6 +296,7 @@ internal sealed class Monitor : BackgroundService
                 else _log.LogWarning("background placement rules rejected: {Message}", errors[0].Message);
             }
 
+            _ctx.ForegroundRoot = _background.ForegroundRoot;
             Engine.Evaluate(_sampler.Processes, _ctx);
 
             // Cheap system counters always; the costly ones (GPU counters, per-thread load) only while someone watches.
