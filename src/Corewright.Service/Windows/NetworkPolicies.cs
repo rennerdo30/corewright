@@ -61,7 +61,11 @@ internal sealed class NetworkPolicies : IDisposable
             return true;
         }
         catch (Exception e) { Assign(old); error = e.Message; return false; }
-        finally { if (!claim.Block && claim.Upload == 0 && claim.Dscp < 0) _claims.Remove(key); }
+        finally
+        {
+            if (!claim.Block && claim.Upload == 0 && claim.Dscp < 0) _claims.Remove(key);
+            if (_effective.GetValueOrDefault(claim.Path, (false, 0L, -1L)) == (false, 0L, -1L)) _effective.Remove(claim.Path);
+        }
     }
     public void Forget(ProcessKey key)
     {
