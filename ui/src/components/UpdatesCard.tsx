@@ -12,6 +12,7 @@ interface UpdateStatus {
   phase: string
   message: string
   releaseUrl: string
+  channel: 'stable' | 'beta'
 }
 
 export function UpdatesCard() {
@@ -39,6 +40,19 @@ export function UpdatesCard() {
           <div className="setting-desc">Last checked: {status?.lastChecked ? new Date(status.lastChecked).toLocaleString() : 'Never'}</div>
         </div>
         <button className="btn" disabled={!isHost || !!status?.busy} onClick={() => post({ type: 'update-check' })}>Check now</button>
+      </div>
+      <div className="setting-row">
+        <div className="setting-text">
+          <div className="setting-title">Update channel</div>
+          <div className="setting-desc">Beta gets new features first and may have rough edges. Stable gets only finished releases. A beta install starts on Beta.</div>
+        </div>
+        <div className="seg">
+          {(['stable', 'beta'] as const).map((c) => (
+            <button key={c} className={status?.channel === c ? 'on' : ''} disabled={!isHost || !!status?.busy} onClick={() => post({ type: 'update-channel', channel: c })}>
+              {c === 'stable' ? 'Stable' : 'Beta'}
+            </button>
+          ))}
+        </div>
       </div>
       <div className="setting-row">
         <div className="setting-text" role="status" aria-live="polite">

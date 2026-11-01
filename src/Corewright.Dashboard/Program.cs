@@ -344,8 +344,10 @@ internal sealed partial class MainForm : Form
                 case "update-status":
                 case "update-check":
                 case "update-install":
+                case "update-channel":
                     if (Uri.TryCreate(e.Source, UriKind.Absolute, out var source) && source.IsLoopback)
-                        _ = OnUpdateMessageAsync(type.GetString()!, root.TryGetProperty("automatic", out var automatic) && automatic.ValueKind == JsonValueKind.True);
+                        _ = OnUpdateMessageAsync(type.GetString()!, root.TryGetProperty("automatic", out var automatic) && automatic.ValueKind == JsonValueKind.True,
+                            root.TryGetProperty("channel", out var channel) ? channel.GetString() : null);
                     break;
                 case "autostart-set":
                     SetAutostart(root.TryGetProperty("enabled", out var en) && en.GetBoolean());

@@ -4,8 +4,9 @@ $ErrorActionPreference = 'Stop'
 try {
     Add-Type -TypeDefinition $SecureFilesSource
     Add-Type -AssemblyName System.Net.Http
-    if ($UpdateVersion -cnotmatch '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:\+[0-9A-Za-z.-]+)?$') {
-        throw 'Only a stable Corewright version may be installed.'
+    # Stable or beta (pre-release) versions; the tag and asset names are built from this value only.
+    if ($UpdateVersion -cnotmatch '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-[0-9A-Za-z]+(?:\.[0-9A-Za-z]+)*)?$') {
+        throw 'Not a valid Corewright version.'
     }
     $parent = [Environment]::GetFolderPath('ProgramFiles')
     $ancestors = [SecureFiles+PinnedPath]::new($parent, $true, 0)

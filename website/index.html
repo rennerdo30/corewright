@@ -8,7 +8,7 @@
   <meta name="color-scheme" content="light dark">
   <meta name="theme-color" content="#e8ebf1" media="(prefers-color-scheme: light)">
   <meta name="theme-color" content="#12151d" media="(prefers-color-scheme: dark)">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self'; style-src 'self'; script-src 'self'; base-uri 'none'; form-action 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self'; style-src 'self'; script-src 'self'; connect-src https://api.github.com; base-uri 'none'; form-action 'none'">
   <link rel="canonical" href="https://corewright.renner.dev/">
   <link rel="icon" href="/favicon.ico" sizes="any">
   <link rel="icon" href="assets/corewright-mark.svg" type="image/svg+xml">
@@ -20,6 +20,7 @@
   <meta property="og:image" content="https://corewright.renner.dev/assets/autopilot.png">
   <link rel="stylesheet" href="style.css">
   <script src="site.js" defer></script>
+  <script src="releases.js" defer></script>
 </head>
 <body>
   <a class="skip" href="#main">Skip to content</a>
@@ -47,7 +48,7 @@
           <a class="btn btn-primary" href="#download">Get Corewright</a>
           <a class="btn" href="https://github.com/rennerdo30/corewright">View the source</a>
         </div>
-        <p class="status-note"><span class="pill">Pre-release 0.1</span> Free and open source. No installer yet; build it from source.</p>
+        <p class="status-note"><span class="pill">Beta 0.1</span> Free and open source. <a href="beta/">Get the beta</a> or build it from source.</p>
       </div>
 
       <figure class="package" aria-labelledby="die-caption">
@@ -212,21 +213,30 @@
 
     <section class="band download" id="download" aria-labelledby="download-title">
       <h2 id="download-title">Get Corewright</h2>
-      <p class="intro">Corewright is a pre-release, version 0.1. Rules, monitoring, Autopilot and the window work today. There is no installer or binary release yet; it is in progress, together with per-process network usage and CPU Sets for machines with more than 64 threads.</p>
+      <p class="intro">Corewright is in beta. Rules, monitoring, Autopilot, the window and the installer work today; networking (blocking, upload limits, priority) comes with the next beta. The installer sets up the Windows service and the tray icon, and Corewright updates itself from GitHub.</p>
       <div class="dl-grid">
         <div class="dl">
+          <h3>Latest version</h3>
+          <div data-release="stable" data-field="found" hidden>
+            <p>Corewright <strong data-release="stable" data-field="version"></strong>, released <span data-release="stable" data-field="date"></span>. Windows 10 and 11, x64.</p>
+            <p class="cta">
+              <a class="btn btn-primary" data-release="stable" data-field="download" href="https://github.com/rennerdo30/corewright/releases/latest">Download Corewright</a>
+              <a class="btn" data-release="stable" data-field="notes" href="https://github.com/rennerdo30/corewright/releases/latest">What's new</a>
+            </p>
+          </div>
+          <div data-release="stable" data-field="missing">
+            <p>There is no stable release yet. The beta is the newest build and installs the same way.</p>
+            <p class="cta"><a class="btn btn-primary" href="beta/">Get the beta</a></p>
+          </div>
+          <p class="dl-sub">Want new features first? <a href="beta/">Try the beta</a>. Every download comes with a SHA-256 checksum, and Corewright checks it before it installs an update.</p>
+        </div>
+        <div class="dl">
           <h3>Build from source</h3>
-          <p>Needs Windows 11 (Windows 10 works), the .NET 10 SDK, Node.js and the Visual Studio C++ build tools.</p>
+          <p>Needs the .NET 10 SDK, Node.js and the Visual Studio C++ build tools.</p>
           <pre><code>git clone https://github.com/rennerdo30/corewright
 cd corewright
 build.bat</code></pre>
-          <p><code>build.bat</code> builds everything and starts the service, the tray icon and the window. Tray icon, then Exit Corewright, stops it and reverts every change.</p>
-        </div>
-        <div class="dl">
-          <h3>Releases</h3>
-          <p>Installers will be published on GitHub as soon as the first release is ready.</p>
-          <p class="cta"><a class="btn btn-primary" href="https://github.com/rennerdo30/corewright/releases">Releases on GitHub</a></p>
-          <p class="cta"><a class="btn" href="https://github.com/rennerdo30/corewright">Source code</a></p>
+          <p class="cta"><a class="btn" href="https://github.com/rennerdo30/corewright">Source code</a> <a class="btn" href="https://github.com/rennerdo30/corewright/releases">All releases</a></p>
         </div>
       </div>
     </section>

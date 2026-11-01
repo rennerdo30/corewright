@@ -19,7 +19,7 @@ internal sealed partial class MainForm
         _ = OnUpdateMessageAsync("update-check", automatic: true);
     }
 
-    private async Task OnUpdateMessageAsync(string action, bool automatic)
+    private async Task OnUpdateMessageAsync(string action, bool automatic, string? channel = null)
     {
         if (_updater is null)
         {
@@ -30,7 +30,7 @@ internal sealed partial class MainForm
             });
             FormClosed += (_, _) => _updater.Dispose();
         }
-        await _updater.HandleAsync(action, automatic);
+        await _updater.HandleAsync(action, automatic, channel);
     }
 }
 
@@ -40,9 +40,12 @@ internal sealed class DashboardUpdater(Action<DashboardUpdater.Status> changed) 
     private const string Repo = "https://github.com/rennerdo30/corewright";
     private const string Downloads = Repo + "/releases/download/";
     private const string Api = "https://api.github.com/repos/rennerdo30/corewright/releases/latest";
+    private const string ApiList = "https://api.github.com/repos/rennerdo30/corewright/releases?per_page=30";
     private static readonly string CachePath = Path.Combine(AppPaths.UserDataDirectory, "update-check.json");
+    private static readonly string ChannelPath = Path.Combine(AppPaths.UserDataDirectory, "update-channel.json");
     private readonly CancellationTokenSource _closed = new();
     private Cache _cache = ReadCache();
+    private string _channel = ReadChannel();
     private bool _busy;
     private string _phase = "idle", _message = "";
     internal static string CurrentVersion => typeof(DashboardUpdater).Assembly
@@ -52,7 +55,35 @@ internal sealed class DashboardUpdater(Action<DashboardUpdater.Status> changed) 
     private sealed record Cache(DateTimeOffset? CheckedAt, Release? Release, string Message);
     // Camel-case names are the WebView message contract, independent of service JSON settings.
     internal sealed record Status(string type, string currentVersion, string? latestVersion, DateTimeOffset? lastChecked,
-        bool available, bool canInstall, bool busy, string phase, string message, string releaseUrl);
+        bool available, bool canInstall, bool busy, string phase, string message, string releaseUrl, string channel);
+
+    /// <summary>
+    /// "stable" or "beta" (owner, 2026-11-02). Until the user picks one, the channel follows the installed version:
+    /// a beta setup updates to newer betas, a stable setup only to stable releases.
+    /// </summary>
+    private static string ReadChannel()
+    {
+        try
+        {
+            if (new FileInfo(ChannelPath) is { Exists: true, Length: <= 4096 } &&
+                JsonDocument.Parse(File.ReadAllText(ChannelPath)).RootElement.TryGetProperty("channel", out var c) &&
+                c.GetString() is "stable" or "beta")
+                return c.GetString()!;
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or JsonException) { }
+        return CurrentVersion.Contains('-') ? "beta" : "stable";
+    }
+
+    private void SetChannel(string channel)
+    {
+        if (channel is not ("stable" or "beta") || channel == _channel) return;
+        _channel = channel;
+        Directory.CreateDirectory(AppPaths.UserDataDirectory);
+        File.WriteAllText(ChannelPath, JsonSerializer.Serialize(new Dictionary<string, string> { ["channel"] = channel }));
+        // A release found on the other channel must not be offered any more.
+        _cache = _cache with { CheckedAt = null, Release = null, Message = "" };
+        SaveCache();
+    }
 
     private static Cache ReadCache()
     {
@@ -93,12 +124,18 @@ internal sealed class DashboardUpdater(Action<DashboardUpdater.Status> changed) 
             SemVersion.TryParse(CurrentVersion, out var current) && latest.CompareTo(current) > 0;
         changed(new("update-status", CurrentVersion, release?.Version, _cache.CheckedAt, available,
             available && Installed(), _busy, _phase, _message.Length > 0 ? _message : _cache.Message,
-            release?.Url is { } url && ValidReleaseUrl(url) ? url : Repo + "/releases"));
+            release?.Url is { } url && ValidReleaseUrl(url) ? url : Repo + "/releases", _channel));
     }
 
-    internal async Task HandleAsync(string action, bool automatic)
+    internal async Task HandleAsync(string action, bool automatic, string? channel = null)
     {
         if (_closed.IsCancellationRequested) return;
+        if (action == "update-channel" && !_busy)
+        {
+            SetChannel(channel ?? "");
+            action = "update-check";
+            automatic = false;
+        }
         if (action == "update-status" || _busy) { Post(); return; }
         _busy = true;
         try
@@ -139,7 +176,7 @@ internal sealed class DashboardUpdater(Action<DashboardUpdater.Status> changed) 
         SaveCache();
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(_closed.Token);
         timeout.CancelAfter(TimeSpan.FromSeconds(30));
-        var release = await FetchReleaseAsync(timeout.Token);
+        var release = await FetchReleaseAsync(_channel == "beta", timeout.Token);
         _cache = _cache with { Release = release, Message = release is null ? "No published release is available yet." :
             SemVersion.TryParse(release.Version, out var latest) && SemVersion.TryParse(CurrentVersion, out var current) && latest.CompareTo(current) > 0
                 ? "An update is available." : "You’re up to date." };
@@ -149,21 +186,41 @@ internal sealed class DashboardUpdater(Action<DashboardUpdater.Status> changed) 
 
     // Kept separate so a unit-free metadata smoke can call the real API without
     // opening a window, touching the user's cache, or downloading executables.
-    internal static async Task<Release?> FetchReleaseAsync(CancellationToken token)
+    internal static async Task<Release?> FetchReleaseAsync(bool beta, CancellationToken token)
     {
         using var client = Client();
-        using var response = await client.GetAsync(Api, HttpCompletionOption.ResponseHeadersRead, token);
+        using var response = await client.GetAsync(beta ? ApiList : Api, HttpCompletionOption.ResponseHeadersRead, token);
         if (response.StatusCode == HttpStatusCode.NotFound) return null;
         response.EnsureSuccessStatusCode();
-        return ParseRelease(await ReadBoundedAsync(response, 1024 * 1024, token));
+        byte[] body = await ReadBoundedAsync(response, 4 * 1024 * 1024, token);
+        if (!beta) return ParseRelease(body, allowPrerelease: false);
+
+        // Beta channel: the highest published version, beta or stable (a stable 0.1.0 is newer than 0.1.0-beta.3).
+        using var document = JsonDocument.Parse(body);
+        Release? best = null;
+        SemVersion? bestVersion = null;
+        foreach (var item in document.RootElement.EnumerateArray())
+        {
+            if (item.GetProperty("draft").GetBoolean()) continue;
+            Release candidate;
+            try { candidate = ParseRelease(item, allowPrerelease: true); }
+            catch (Exception e) when (e is InvalidDataException or KeyNotFoundException or InvalidOperationException) { continue; }
+            if (!SemVersion.TryParse(candidate.Version, out var v)) continue;
+            if (bestVersion is null || v.CompareTo(bestVersion) > 0) { best = candidate; bestVersion = v; }
+        }
+        return best;
     }
 
-    internal static Release ParseRelease(byte[] json)
+    internal static Release ParseRelease(byte[] json, bool allowPrerelease)
     {
         using var document = JsonDocument.Parse(json);
-        var root = document.RootElement;
-        if (root.GetProperty("draft").GetBoolean() || root.GetProperty("prerelease").GetBoolean())
-            throw new InvalidDataException("Only published stable releases can be installed.");
+        return ParseRelease(document.RootElement, allowPrerelease);
+    }
+
+    internal static Release ParseRelease(JsonElement root, bool allowPrerelease)
+    {
+        if (root.GetProperty("draft").GetBoolean() || (!allowPrerelease && root.GetProperty("prerelease").GetBoolean()))
+            throw new InvalidDataException(allowPrerelease ? "Only published releases can be installed." : "Only published stable releases can be installed.");
         string version = root.GetProperty("tag_name").GetString() ?? "";
         if (version.StartsWith('v')) version = version[1..];
         if (!SemVersion.TryParse(version, out _)) throw new InvalidDataException("The release version is not valid SemVer.");

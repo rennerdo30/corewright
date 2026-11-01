@@ -497,3 +497,10 @@ pre code { font-size: inherit; white-space: pre; }
   .t::before { background: CanvasText; }
   .scenes button[aria-pressed="true"] { outline: 2px solid Highlight; }
 }
+
+.dl-sub { margin-top: 18px; color: var(--ink-2); font-size: 0.95rem; }
+.beta-page .band { padding-top: clamp(32px, 6vw, 72px); }
+.beta-facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; margin: 28px 0; }
+.beta-facts div { border: 1px solid var(--line); border-radius: 10px; padding: 16px 18px; }
+.beta-facts h3 { margin: 0 0 6px; font-size: 1rem; }
+.beta-facts p { margin: 0; color: var(--ink-2); }

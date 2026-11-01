@@ -82,7 +82,9 @@ internal static class Api
     public static void Map(WebApplication app, Monitor m)
     {
         var api = app.MapGroup("/api/v1");
-        string version = typeof(Api).Assembly.GetName().Version?.ToString(3) ?? "0.0.0";
+        // The informational version keeps the pre-release suffix ("0.1.0-beta.1"); the assembly version cannot.
+        string version = (System.Reflection.CustomAttributeExtensions.GetCustomAttribute<System.Reflection.AssemblyInformationalVersionAttribute>(typeof(Api).Assembly)
+            ?.InformationalVersion ?? "0.0.0").Split('+')[0];
 
         api.MapGet("/status", () =>
         {
