@@ -38,20 +38,22 @@ internal static unsafe partial class GpuDeviceProbe
                 if (a.Id == s.Info.Id)
                 { v.Load = a.LoadAvailable ? a.Utilization : null; v.DedicatedUsed = a.MemoryAvailable ? a.DedicatedUsed : null; v.SharedUsed = a.SharedUsed; break; }
         var health = s.Info.Health;
+        byte* data = stackalloc byte[64];
         health.Temperature = health.FanRpm = health.PowerPercent = health.EngineClockMhz = null;
         if (s.Adapter == 0)
         {
             var open = new OpenAdapter { Luid = s.Luid };
             if (D3DKMTOpenAdapterFromLuid(&open) < 0) return;
             s.Adapter = open.Handle;
+            new Span<byte>(data, 64).Clear();
+            s.FanAvailable = Query(s.Adapter, 63, data, 40) >= 0 && *(uint*)(data + 24) > 0;
         }
-        byte* data = stackalloc byte[64];
         new Span<byte>(data, 64).Clear();
         if (Query(s.Adapter, 62, data, 64) >= 0)
         {
             uint temp = *(uint*)(data + 56), fan = *(uint*)(data + 48), power = *(uint*)(data + 52);
             health.Temperature = temp > 0 && temp < 2000 ? temp / 10.0 : null;
-            health.FanRpm = fan > 0 && fan < 100000 ? fan : null;
+            health.FanRpm = (fan > 0 || s.FanAvailable) && fan < 100000 ? fan : null;
             // Windows reports tenths of a percent, NOT watts. Zero often means unsupported.
             health.PowerPercent = power > 0 && power < 10000 ? power / 10.0 : null;
         }

@@ -33,6 +33,9 @@ public sealed record DeviceDto(string Id, string Kind, string Name, int? Index =
     string? Alias = null, string? Type = null, ulong? ReceiveLinkSpeed = null, ulong? SendLinkSpeed = null,
     bool? Connected = null, bool Hidden = false)
 {
+    public ulong? ReceiveLinkSpeed { get; set; } = ReceiveLinkSpeed;
+    public ulong? SendLinkSpeed { get; set; } = SendLinkSpeed;
+    public bool? Connected { get; set; } = Connected;
     public DeviceValues Values { get; init; } = new();
     public DeviceHealth Health { get; init; } = new();
     public DeviceHistory? History { get; init; }
@@ -49,6 +52,7 @@ internal sealed unsafe class DeviceMonitor : IDisposable
         public string Path = "";
         public ulong Luid;
         public uint Adapter;
+        public bool FanAvailable;
         public nint Disk = -1;
         public long LastRead, LastWrite, LastIdle, LastQuery, HealthDue;
         public bool Baseline;
@@ -139,8 +143,7 @@ internal sealed unsafe class DeviceMonitor : IDisposable
         // Link state/speeds can change without a device arrival; keep these from the existing GetIfTable2 call.
         bool connected = *(int*)(r + 1156) == 1;
         ulong rxSpeed = *(ulong*)(r + 1200), txSpeed = *(ulong*)(r + 1192);
-        if (s.Info.Connected != connected || s.Info.ReceiveLinkSpeed != rxSpeed || s.Info.SendLinkSpeed != txSpeed)
-            s.Info = s.Info with { Connected = connected, ReceiveLinkSpeed = rxSpeed, SendLinkSpeed = txSpeed };
+        s.Info.Connected = connected; s.Info.ReceiveLinkSpeed = rxSpeed; s.Info.SendLinkSpeed = txSpeed;
         long rx = *(long*)(r + 1208), tx = *(long*)(r + 1280);
         s.Info.Values.Read = s.Baseline && elapsed > 0 && rx >= s.LastRead ? (rx - s.LastRead) / elapsed : null;
         s.Info.Values.Write = s.Baseline && elapsed > 0 && tx >= s.LastWrite ? (tx - s.LastWrite) / elapsed : null;

@@ -114,6 +114,8 @@ internal static unsafe partial class DiskDeviceProbe
         s.HealthDue = now + 60_000;
         var health = s.Info.Health;
         health.Temperature = null;
+        health.WearPercent = health.SparePercent = health.CriticalWarning = null;
+        health.MediaErrors = health.PowerOnHours = health.UnsafeShutdowns = health.DataUnitsRead = health.DataUnitsWritten = null;
         if (Property(s.Disk, 52, b, 4096, out got) && got >= 40 && *(ushort*)(b + 12) > 0 && *(short*)(b + 26) != short.MinValue)
             health.Temperature = *(short*)(b + 26);
         if (s.Info.Bus == "NVMe")
