@@ -71,6 +71,7 @@ internal sealed class Monitor : BackgroundService
         Topology = CpuLayout is { } layout ? WithLayout(basic, layout) : basic;
         _settingsStore = settingsStore;
         Settings = settingsStore.Load();
+        _ctx.AlwaysGames = AlwaysGamesOf(Settings);
         _placer = new AffinityPlacer(() => Topology, () => _cores.Usage,
             () => AutopilotRules.GameCcd(Settings.Autopilot.GameMode.Placement, Topology),
             () => Settings.Autopilot.Background.KeepBestCoresFree);
@@ -177,6 +178,14 @@ internal sealed class Monitor : BackgroundService
         return errors;
     }
 
+    /// <summary>Marked games count for rules even when Autopilot or game mode is off; "Never games" always wins.</summary>
+    private static HashSet<string> AlwaysGamesOf(AppSettings s)
+    {
+        var set = new HashSet<string>(s.Autopilot.GameMode.Games, StringComparer.OrdinalIgnoreCase);
+        set.ExceptWith(s.Autopilot.GameMode.NotGames);
+        return set;
+    }
+
     public List<RuleError> ReplaceSettings(AppSettings settings)
     {
         var errors = new List<RuleError>();
@@ -186,6 +195,7 @@ internal sealed class Monitor : BackgroundService
         {
             _settingsStore.Save(settings);
             Settings = settings;
+            _ctx.AlwaysGames = AlwaysGamesOf(settings);
             Engine.SetRules(compiled);
         }
         Wake();

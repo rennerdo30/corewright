@@ -9,7 +9,7 @@ import { iconUrl, isHost, levelLabel, post, useDescriptions } from '../host'
 import { usePoll } from '../hooks'
 import { quickRule, setQuick } from '../quick'
 import { isAutopilot, ownerOf } from '../roles'
-import type { ExplainRule, ProcessRow, Rule, RuleSet, Topology } from '../types'
+import type { AppSettings, ExplainRule, ProcessRow, Rule, RuleSet, Topology } from '../types'
 import { COLUMN_GROUPS, COLUMNS, type ColumnDef } from './processColumns'
 
 type View = 'apps' | 'tree' | 'list'
@@ -63,7 +63,7 @@ export function Processes({ onCreateRule }: { onCreateRule: (r: Rule) => void })
   const [sort, setSort] = useState<{ id: string; desc: boolean }>({ id: 'cpu', desc: true })
   const [toggled, setToggled] = useState<Set<string>>(new Set())
   const [selected, setSelected] = useState<number>()
-  const [menu, setMenu] = useState<{ x: number; y: number; p: ProcessRow; rules?: RuleSet }>()
+  const [menu, setMenu] = useState<{ x: number; y: number; p: ProcessRow; rules?: RuleSet; settings?: AppSettings }>()
   const [columnMenu, setColumnMenu] = useState<{ x: number; y: number }>()
   const [toast, setToast] = useState<string>()
 
@@ -166,6 +166,8 @@ export function Processes({ onCreateRule }: { onCreateRule: (r: Rule) => void })
     e.preventDefault()
     setSelected(p.pid)
     setMenu({ x: e.clientX, y: e.clientY, p })
+    // Autopilot's game lists, for the Game submenu.
+    api.settings().then((settings) => setMenu((m) => (m && m.p.pid === p.pid ? { ...m, settings } : m))).catch(() => {})
     try {
       const rules = await api.rules()
       setMenu((m) => (m && m.p.pid === p.pid ? { ...m, rules } : m))
@@ -387,6 +389,13 @@ export function Processes({ onCreateRule }: { onCreateRule: (r: Rule) => void })
             showDetails: () => setSelected(menu.p.pid),
             reveal: isHost && menu.p.path ? () => post({ type: 'reveal', path: menu.p.path }) : undefined,
             copy: (text) => navigator.clipboard.writeText(text).then(() => notify('Copied')),
+            gameKind: menu.settings ? gameKindOf(menu.settings, menu.p.name) : undefined,
+            setGame: menu.settings
+              ? (kind) =>
+                  setGameKind(menu.settings!, menu.p.name, kind)
+                    .then(() => notify(kind === 'always' ? `${menu.p.name} always counts as a game.` : kind === 'never' ? `${menu.p.name} never counts as a game.` : `Autopilot decides whether ${menu.p.name} is a game.`))
+                    .catch((e) => notify(e instanceof Error ? e.message : String(e)))
+              : undefined,
           })}
         />
       )}
@@ -576,4 +585,25 @@ function ProcessSummary({ rows }: { rows?: ProcessRow[] }) {
       ) : null}
     </>
   )
+}
+
+const sameName = (a: string, b: string) => a.toLowerCase() === b.toLowerCase()
+
+/** Where a program stands in Autopilot's game lists. */
+function gameKindOf(s: AppSettings, name: string): 'always' | 'never' | 'auto' {
+  const g = s.autopilot.gameMode
+  if (g.notGames.some((n) => sameName(n, name))) return 'never'
+  if (g.games.some((n) => sameName(n, name))) return 'always'
+  return 'auto'
+}
+
+/** Moves a program between "Always games", "Never games" and neither, and saves the settings. */
+async function setGameKind(s: AppSettings, name: string, kind: 'always' | 'never' | 'auto') {
+  const next = structuredClone(s)
+  const g = next.autopilot.gameMode
+  g.games = g.games.filter((n) => !sameName(n, name))
+  g.notGames = g.notGames.filter((n) => !sameName(n, name))
+  if (kind === 'always') g.games.push(name)
+  if (kind === 'never') g.notGames.push(name)
+  await api.saveSettings(next)
 }

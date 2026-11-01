@@ -83,6 +83,12 @@ public sealed class EvalContext
     public int GamePid { get; set; }
     public string? GameName { get; set; }
 
+    /// <summary>
+    /// Programs the user marked as games (Autopilot "Always games", right-click "Mark as a game"): they count as a game
+    /// whenever they run, for rules (isGame) and Autopilot, not only while detected in front (owner, 2026-11-02).
+    /// </summary>
+    public IReadOnlySet<string>? AlwaysGames { get; set; }
+
     /// <summary>Monotonic milliseconds (Environment.TickCount64).</summary>
     public long NowMs { get; set; }
 }

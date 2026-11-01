@@ -7,6 +7,9 @@ interface Handlers {
   showDetails: () => void
   reveal?: () => void
   copy: (text: string) => void
+  /** Marks the program as a game, never a game, or lets Autopilot decide; undefined while settings load. */
+  setGame?: (kind: 'always' | 'never' | 'auto') => void
+  gameKind?: 'always' | 'never' | 'auto'
 }
 
 const levels = (current: unknown, values: [string, string][], apply: (v: string | null) => void): MenuEntry[] => [
@@ -101,6 +104,18 @@ export function buildProcessMenu(p: ProcessRow, quick: Rule | undefined, topo: T
           cpuPriority: null, ioPriority: null, gpuPriority: null, memoryPriority: null,
           affinity: null, efficiencyMode: null, memoryLimitMb: null, workingSetLimitMb: null,
         }),
+    },
+    {
+      type: 'item',
+      label: 'Game',
+      glyph: '\uE7FC',
+      disabled: locked || !h.setGame,
+      submenu: [
+        { type: 'item', label: 'Always a game', checked: h.gameKind === 'always', onClick: () => h.setGame?.('always') },
+        { type: 'item', label: 'Never a game', checked: h.gameKind === 'never', onClick: () => h.setGame?.('never') },
+        { type: 'sep' },
+        { type: 'item', label: 'Let Autopilot detect it', checked: h.gameKind === 'auto', onClick: () => h.setGame?.('auto') },
+      ],
     },
     { type: 'sep' },
     { type: 'item', label: 'Create rule…', glyph: '\uE710', disabled: locked, onClick: h.createRule },
