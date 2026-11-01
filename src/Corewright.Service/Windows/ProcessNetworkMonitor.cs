@@ -32,7 +32,8 @@ internal sealed unsafe partial class ProcessNetworkMonitor : IDisposable
                 var props = (Properties*)buffer;
                 props->Size = 1024; props->Flags = 0x20000; props->Clock = 2; props->Guid = Guid.NewGuid();
                 props->BufferKb = 16; props->MinBuffers = 2; props->MaxBuffers = 4;
-                props->Mode = 0x100 | 0x02000000; props->FlushSeconds = 1; props->LoggerOffset = (uint)sizeof(Properties);
+                props->Mode = 0x100 | 0x02000000 | 0x10000000; // real time, system logger, shared buffers (not per CPU)
+                props->FlushSeconds = 1; props->LoggerOffset = (uint)sizeof(Properties);
                 _name.AsSpan().CopyTo(new Span<char>(buffer + props->LoggerOffset, _name.Length + 1));
                 Check(StartTraceW(out _session, name, props));
                 Check(EnableTraceEx2(_session, in Provider, 1, 4, 0x30, 0, 2000, 0));
@@ -66,7 +67,7 @@ internal sealed unsafe partial class ProcessNetworkMonitor : IDisposable
     private static void OnEvent(Record* record)
     {
         // Version 0 templates start with payload PID and size, for TCP/UDP on IPv4/IPv6.
-        if (record->Provider != Provider || record->Version != 0 || record->Length < 8 || record->Data == null) return;
+        if (record->Provider != Provider || record->Version != 0 || record->Length < 8 || record->Data == null || record->Context == 0) return;
         bool send = record->Id is 10 or 26 or 42 or 58;
         if (!send && record->Id is not (11 or 27 or 43 or 59)) return;
         var monitor = (ProcessNetworkMonitor?)GCHandle.FromIntPtr(record->Context).Target;

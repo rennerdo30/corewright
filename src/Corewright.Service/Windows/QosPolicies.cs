@@ -12,7 +12,12 @@ internal sealed unsafe partial class QosPolicies
     private const string Class = "MSFT_NetQosPolicySettingData";
     private readonly Dictionary<string, (long Upload, long Dscp)> _owned = new(StringComparer.OrdinalIgnoreCase);
     public void Cleanup() { using var wmi = new Wmi(); wmi.DeleteMatching(); }
-    public void RemoveOwned() { foreach (string path in _owned.Keys.ToArray()) Set(path, 0, -1); }
+    public void RemoveOwned()
+    {
+        Exception? failure = null;
+        foreach (string path in _owned.Keys.ToArray()) try { Set(path, 0, -1); } catch (Exception e) { failure ??= e; }
+        if (failure is not null) throw failure;
+    }
     public void Set(string path, long upload, long dscp)
     {
         if (!_owned.TryGetValue(path, out var old)) old = (0, -1);

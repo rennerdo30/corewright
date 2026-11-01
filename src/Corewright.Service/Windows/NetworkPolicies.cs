@@ -12,6 +12,7 @@ internal sealed class NetworkPolicies : IDisposable
     private readonly NetworkBlocker _blocker = new();
     private readonly QosPolicies _qos = new();
     private IEngineEventSink? _events;
+    private string? _qosStartupError;
     public static bool IsSlot(Slot slot) => slot is Slot.NetworkBlocked or Slot.UploadLimit or Slot.NetworkPriority;
     public static long Original(Slot slot) => slot == Slot.NetworkPriority ? -1 : 0;
     public void Start(IEngineEventSink events)
@@ -19,7 +20,7 @@ internal sealed class NetworkPolicies : IDisposable
         _events = events;
         if (!Environment.IsPrivilegedProcess) return;
         try { _qos.Cleanup(); }
-        catch (Exception e) { Report("QoS startup cleanup failed: " + e.Message); }
+        catch (Exception e) { _qosStartupError = "QoS startup cleanup failed: " + e.Message; Report(_qosStartupError); }
     }
     public bool Has(ProcessKey key) => _claims.ContainsKey(key);
     public (bool Blocked, double Upload, long Priority) Effective(string? path)
@@ -39,6 +40,7 @@ internal sealed class NetworkPolicies : IDisposable
     public bool Write(ProcessKey key, string? path, Slot slot, long value, out string? error)
     {
         error = null;
+        if (slot != Slot.NetworkBlocked && _qosStartupError is not null) { error = _qosStartupError; return false; }
         if (!_claims.TryGetValue(key, out var claim))
         {
             if (value == Original(slot)) return true;
