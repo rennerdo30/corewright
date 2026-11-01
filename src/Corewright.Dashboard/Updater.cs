@@ -100,10 +100,10 @@ internal sealed class DashboardUpdater(Action<DashboardUpdater.Status> changed) 
     internal async Task HandleAsync(string action, bool automatic)
     {
         if (_closed.IsCancellationRequested) return;
+        if (action == "update-status" || _busy) { Post(); return; }
+        _busy = true;
         try
         {
-            if (action == "update-status" || _busy) { Post(); return; }
-            _busy = true;
             if (action == "update-install") await InstallAsync();
             else if (!automatic || _cache.CheckedAt is not { } checkedAt || DateTimeOffset.UtcNow - checkedAt >= TimeSpan.FromDays(1))
                 await CheckAsync();
