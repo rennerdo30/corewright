@@ -17,10 +17,12 @@ internal sealed unsafe class WindowsActuator : IActuator, IDisposable
 
     // Job objects for memory caps; kept open while the process lives so the limit can be changed or removed.
     private readonly Dictionary<ProcessKey, nint> _jobs = [];
+    public NetworkPolicies Network { get; } = new();
 
     public bool TryRead(in ProcessKey key, Slot slot, out long value, out string? error)
     {
         value = 0;
+        if (NetworkPolicies.IsSlot(slot)) { value = NetworkPolicies.Original(slot); error = null; return true; }
         if (slot == Slot.MemoryLimit)
         {
             // Without our job the process has no cap from us; "0" restores to "no cap".
@@ -99,6 +101,21 @@ internal sealed unsafe class WindowsActuator : IActuator, IDisposable
 
     public bool TryWrite(in ProcessKey key, Slot slot, long value, out string? error)
     {
+        if (NetworkPolicies.IsSlot(slot))
+        {
+            if (value == NetworkPolicies.Original(slot) && Network.Has(key)) return Network.Write(key, null, slot, value, out error);
+            if (!Environment.IsPrivilegedProcess && value != NetworkPolicies.Original(slot))
+                return Network.Write(key, null, slot, value, out error);
+            nint process = Open(key, Query, out error);
+            if (process == 0) return false;
+            try
+            {
+                char* path = stackalloc char[32768]; uint length = 32768;
+                if (!Native.QueryFullProcessImageNameW(process, 0, path, ref length)) return Win32Fail(out error);
+                return Network.Write(key, new string(path, 0, (int)length), slot, value, out error);
+            }
+            finally { Native.CloseHandle(process); }
+        }
         uint access = slot switch
         {
             Slot.MemoryLimit => Native.PROCESS_SET_QUOTA | Native.PROCESS_TERMINATE | Query,
@@ -197,11 +214,13 @@ internal sealed unsafe class WindowsActuator : IActuator, IDisposable
 
     public void Forget(in ProcessKey key)
     {
+        Network.Forget(key);
         if (_jobs.Remove(key, out nint job)) Native.CloseHandle(job);
     }
 
     public void Dispose()
     {
+        Network.Dispose();
         foreach (var job in _jobs.Values) Native.CloseHandle(job);
         _jobs.Clear();
     }

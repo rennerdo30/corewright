@@ -67,4 +67,7 @@ public sealed class RuleActions
     public bool? EfficiencyMode { get; set; }
     public long? MemoryLimitMb { get; set; }
     public long? WorkingSetLimitMb { get; set; }
+    public bool? NetworkBlocked { get; set; }
+    public double? UploadLimitMbps { get; set; }
+    public int? NetworkPriority { get; set; }
 }
