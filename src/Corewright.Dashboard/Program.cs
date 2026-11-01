@@ -97,8 +97,13 @@ internal sealed partial class MainForm : Form
 
     // ---- Frame without a caption bar -----------------------------------------------------------
 
-    /// <summary>Thin strip above the page so the top edge can still be dragged to resize (the page covers the rest).</summary>
-    private int ResizeBand => WindowState == FormWindowState.Maximized ? 0 : Math.Max(4, DeviceDpi * 4 / 96);
+    /// <summary>
+    /// 1 px strip above the page (invisible) so the very top edge always resizes; where the page passes hit tests
+    /// through (its drag region), the top <see cref="ResizeGrip"/> pixels resize as well.
+    /// </summary>
+    private int ResizeBand => WindowState == FormWindowState.Maximized ? 0 : 1;
+
+    private int ResizeGrip => WindowState == FormWindowState.Maximized ? 0 : Math.Max(5, DeviceDpi * 6 / 96);
 
     private void UpdateResizeBand()
     {
@@ -125,7 +130,7 @@ internal sealed partial class MainForm : Form
         if (m.Msg == WM_NCHITTEST && m.Result == HTCLIENT && WindowState != FormWindowState.Maximized)
         {
             var pt = PointToClient(new Point((short)(m.LParam & 0xFFFF), (short)((m.LParam >> 16) & 0xFFFF)));
-            if (pt.Y < ResizeBand) m.Result = HTTOP;
+            if (pt.Y < ResizeGrip) m.Result = HTTOP;
         }
     }
 

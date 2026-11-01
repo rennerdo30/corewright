@@ -23,6 +23,8 @@ export interface ColumnDef {
   total?: (sys: SystemInfo) => string
   /** Corewright slot shown in this column; highlighted when a rule sets it. */
   slot?: string
+  /** The Windows default for this setting; shown dimmed so real changes stand out. */
+  defaultValue?: string | number
 }
 
 const num = (v: unknown) => (typeof v === 'number' ? v : undefined)
@@ -57,7 +59,7 @@ export const COLUMNS: ColumnDef[] = [
   { id: 'started', label: 'Started', group: 'General', width: 150, needs: 'ext', value: (p) => p.ext?.started, format: (v) => (typeof v === 'number' ? new Date(v).toLocaleString() : '') },
 
   // CPU
-  { id: 'priority', label: 'Priority', group: 'CPU', width: 112, visible: true, slot: 'cpuPriority', value: (p) => p.priority, format: level },
+  { id: 'priority', defaultValue: 'normal',  label: 'Priority', group: 'CPU', width: 112, visible: true, slot: 'cpuPriority', value: (p) => p.priority, format: level },
   { id: 'cpu', label: 'CPU', group: 'CPU', width: 84, num: true, visible: true, agg: 'sum', value: (p) => p.cpu, format: (v) => percent(num(v) ?? 0), heat: (v) => v / 25, total: (s) => percent(s.cpu, 0) },
   { id: 'cputime', label: 'CPU time', group: 'CPU', width: 96, num: true, needs: 'ext', agg: 'sum', value: (p) => p.ext?.cpuTimeMs, format: duration },
   { id: 'usertime', label: 'User time', group: 'CPU', width: 96, num: true, needs: 'ext', agg: 'sum', value: (p) => p.ext?.userTimeMs, format: duration },
@@ -97,13 +99,13 @@ export const COLUMNS: ColumnDef[] = [
   { id: 'userobj', label: 'USER objects', group: 'Handles', width: 100, num: true, needs: 'gui', agg: 'sum', value: (p) => p.ext?.userObjects, format: count },
 
   // Everything a Corewright rule can set (owner: always shown in this pro tool).
-  { id: 'affinity', label: 'Affinity', group: 'Corewright', width: 96, visible: true, needs: 'settings', slot: 'affinity', value: (p) => p.ext?.affinity, format: (v) => (v === 'all' ? 'All' : text(v)) },
-  { id: 'iopriority', label: 'I/O priority', group: 'Corewright', width: 96, visible: true, needs: 'settings', slot: 'ioPriority', value: (p) => p.ext?.ioPriority, format: level },
-  { id: 'gpupriority', label: 'GPU priority', group: 'Corewright', width: 104, visible: true, needs: 'settings', slot: 'gpuPriority', value: (p) => p.ext?.gpuPriority, format: level },
-  { id: 'mempriority', label: 'Memory priority', group: 'Corewright', width: 112, visible: true, needs: 'settings', slot: 'memoryPriority', value: (p) => p.ext?.memoryPriority, format: level },
-  { id: 'efficiency', label: 'Efficiency mode', group: 'Corewright', width: 108, visible: true, needs: 'settings', slot: 'efficiencyMode', value: (p) => p.ext?.efficiencyMode, format: (v) => (v === 'on' ? 'On' : v === 'off' ? 'Off' : v === 'auto' ? 'Auto' : '') },
-  { id: 'memcap', label: 'Memory cap', group: 'Corewright', width: 96, visible: true, needs: 'settings', slot: 'memoryLimitMb', value: (p) => p.ext?.memoryLimitMb, format: mb },
-  { id: 'ramcap', label: 'RAM cap', group: 'Corewright', width: 88, visible: true, needs: 'settings', slot: 'workingSetLimitMb', value: (p) => p.ext?.workingSetLimitMb, format: mb },
+  { id: 'affinity', defaultValue: 'all',  label: 'Affinity', group: 'Corewright', width: 96, visible: true, needs: 'settings', slot: 'affinity', value: (p) => p.ext?.affinity, format: (v) => (v === 'all' ? 'All' : text(v)) },
+  { id: 'iopriority', defaultValue: 'normal',  label: 'I/O priority', group: 'Corewright', width: 96, visible: true, needs: 'settings', slot: 'ioPriority', value: (p) => p.ext?.ioPriority, format: level },
+  { id: 'gpupriority', defaultValue: 'normal',  label: 'GPU priority', group: 'Corewright', width: 104, visible: true, needs: 'settings', slot: 'gpuPriority', value: (p) => p.ext?.gpuPriority, format: level },
+  { id: 'mempriority', defaultValue: 'normal',  label: 'Memory priority', group: 'Corewright', width: 112, visible: true, needs: 'settings', slot: 'memoryPriority', value: (p) => p.ext?.memoryPriority, format: level },
+  { id: 'efficiency', defaultValue: 'auto',  label: 'Efficiency mode', group: 'Corewright', width: 108, visible: true, needs: 'settings', slot: 'efficiencyMode', value: (p) => p.ext?.efficiencyMode, format: (v) => (v === 'on' ? 'On' : v === 'off' ? 'Off' : v === 'auto' ? 'Auto' : '') },
+  { id: 'memcap', defaultValue: 0,  label: 'Memory cap', group: 'Corewright', width: 96, visible: true, needs: 'settings', slot: 'memoryLimitMb', value: (p) => p.ext?.memoryLimitMb, format: mb },
+  { id: 'ramcap', defaultValue: 0,  label: 'RAM cap', group: 'Corewright', width: 88, visible: true, needs: 'settings', slot: 'workingSetLimitMb', value: (p) => p.ext?.workingSetLimitMb, format: mb },
   { id: 'rules', label: 'Rules', group: 'Corewright', width: 160, value: (p) => [...new Set((p.applied ?? []).map((a) => a.ruleName))].join(', ') },
 ]
 
