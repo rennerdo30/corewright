@@ -1,4 +1,4 @@
-import type { AppSettings, BackgroundRow, DevicesInfo, EngineEvent, Placement, Explain, ImportResponse, ProcessRow, RuleSet, RulesResult, Status, SystemInfo, Topology } from './types'
+import type { RuleHit, AppSettings, BackgroundRow, DevicesInfo, EngineEvent, Placement, Explain, ImportResponse, ProcessRow, RuleSet, RulesResult, Status, SystemInfo, Topology } from './types'
 
 declare global {
   interface Window {
@@ -55,6 +55,7 @@ export const api = {
   explain: (pid: number) => request<Explain>('GET', `/processes/${pid}/explain`),
   rules: () => request<RuleSet>('GET', '/rules'),
   saveRules: (set: RuleSet) => request<RulesResult>('PUT', '/rules', set),
+  ruleHistory: (id: string) => request<RuleHit[]>('GET', `/rules/${encodeURIComponent(id)}/history`),
   validateRules: (set: RuleSet) => request<RulesResult>('POST', '/rules/validate', set),
   pause: () => request<void>('POST', '/engine/pause'),
   resume: () => request<void>('POST', '/engine/resume'),

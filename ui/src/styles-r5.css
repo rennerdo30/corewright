@@ -179,3 +179,15 @@
 .spark-line span { position: absolute; right: 2px; top: 1px; font-size: 11px; line-height: 14px; color: var(--secondary-text); font-variant-numeric: tabular-nums;
   background: color-mix(in srgb, var(--layer) 80%, transparent); padding: 0 3px; border-radius: 3px; }
 .metric-foot { display: flex; justify-content: space-between; margin-top: 4px; font-size: 11px; color: var(--secondary-text); font-variant-numeric: tabular-nums; }
+
+/* Rule editor: recently applied to */
+.hits { overflow: hidden; }
+.hit { display: grid; grid-template-columns: 90px minmax(120px, 220px) minmax(0, 1fr) 96px; gap: 10px; align-items: center; padding: 8px 14px; border-bottom: 1px solid var(--divider); font-size: 13px; }
+.hit:last-child { border-bottom: 0; }
+.hit-time { color: var(--text-3); font-size: 12px; font-variant-numeric: tabular-nums; }
+.hit-proc { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hit-what { color: var(--secondary-text); min-width: 0; }
+.hit.failed .hit-what { color: var(--text); }
+.hit-state { justify-self: end; font-size: 12px; color: var(--text-3); }
+.hit-state.live { color: var(--role-rule); font-weight: 600; }
+.hit.failed .hit-state { color: var(--critical); }

@@ -46,6 +46,12 @@ public sealed class RuleEngine(IActuator actuator, IEngineEventSink sink)
 
     public bool Paused { get; private set; }
 
+    /// <summary>
+    /// A process group freezes Autopilot (PM-39, e.g. during a measurement): Autopilot makes no new changes and keeps
+    /// the ones it made on other processes as they are; nothing is reverted mid-run.
+    /// </summary>
+    public bool FreezeAutopilot { get; set; }
+
     /// <summary>Resolves "auto-…" affinity modes; without one they fall back to leaving affinity unchanged.</summary>
     public IAffinityPlacer? Placer { get; set; }
     public int Version => _version;
@@ -131,6 +137,16 @@ public sealed class RuleEngine(IActuator actuator, IEngineEventSink sink)
         return list;
     }
 
+    /// <summary>Slots whose last write to this process failed (with the value that was refused).</summary>
+    public List<(Slot Slot, long Value)> GetFailed(ProcessKey key)
+    {
+        var list = new List<(Slot, long)>();
+        if (!_states.TryGetValue(key, out var st)) return list;
+        for (int s = 0; s < Slots.Count; s++)
+            if (st.Failed[s]) list.Add(((Slot)s, st.FailedValue[s]));
+        return list;
+    }
+
     public bool HasApplied(ProcessKey key)
     {
         if (!_states.TryGetValue(key, out var st)) return false;
@@ -187,6 +203,13 @@ public sealed class RuleEngine(IActuator actuator, IEngineEventSink sink)
                 st.ClearTiming(i);
                 continue;
             }
+            // A grouped process belongs to the tool that registered it: only group-aware rules apply (PM-39).
+            // While Autopilot is frozen, its rules make no new decisions.
+            if ((p.GroupId is not null && !r.GroupAware) || (FreezeAutopilot && r.IsAutopilot))
+            {
+                st.ClearTiming(i);
+                continue;
+            }
             if (!IsActive(r, i, p, st, ctx)) continue;
             for (int s = 0; s < Slots.Count; s++)
             {
@@ -201,6 +224,8 @@ public sealed class RuleEngine(IActuator actuator, IEngineEventSink sink)
         for (int s = 0; s < Slots.Count; s++)
         {
             bool has = (claimed & (1 << s)) != 0;
+            // Frozen: what Autopilot set on a process outside any group stays exactly as it is.
+            if (!has && FreezeAutopilot && p.GroupId is null && st.IsApplied[s] && st.AppliedRule[s] is { IsAutopilot: true }) continue;
             Reconcile(p, st, s, has, want[s], has ? rules[wantRule[s]] : null);
         }
     }

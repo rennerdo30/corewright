@@ -162,3 +162,11 @@ run `scripts/test-installer.ps1 -Setup <setup.exe> -Version <version>`. It refus
 existing Corewright installations/data, then checks silent install, service
 identity/start mode, registration, rule migration, upgrade preservation and
 silent uninstall with data retention. Do not run this script on the owner's PC.
+
+## Firewall
+
+Setup adds an inbound Windows Firewall **block** rule, "Corewright: block network access to the service", for
+`Corewright.Service.exe`: every port, every address except the PC itself (127.0.0.1 and ::1). The API is for this PC
+only (owner, 2026-11-02); the service already listens on 127.0.0.1 and rejects non-local Host headers, so the rule is
+a third layer that holds even if the bind address is changed. Uninstall removes it. With Windows Firewall turned off
+(another firewall product), setup logs a warning and continues.

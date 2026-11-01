@@ -3,6 +3,7 @@ import { levelLabel } from '../host'
 import type { Condition, Rule, RuleActions, RuleError } from '../types'
 import { ConditionGroup, describeCondition } from './ConditionBuilder'
 import { ContextMenu, type MenuEntry } from './ContextMenu'
+import { RuleHistory } from './RuleHistory'
 
 type ActionKey = keyof RuleActions
 
@@ -53,6 +54,8 @@ export function RuleEditor(props: {
   onChange: (r: Rule) => void
   onDelete: () => void
   onDuplicate: () => void
+  /** PIDs whose settings this rule owns right now. */
+  activePids?: Set<number>
 }) {
   const { rule, errors, onChange } = props
   const [json, setJson] = useState<string>()
@@ -178,6 +181,8 @@ export function RuleEditor(props: {
               </div>
             ))}
           </section>
+
+          <RuleHistory ruleId={rule.id} activePids={props.activePids ?? new Set()} />
 
           <section className="section">
             <button className="expander" onClick={() => setAdvanced((a) => !a)}>
