@@ -166,6 +166,9 @@ internal sealed class GroupStore
                 EfficiencyMode = a.EfficiencyMode,
                 MemoryLimitMb = a.MemoryLimitMb,
                 WorkingSetLimitMb = a.WorkingSetLimitMb,
+                NetworkBlocked = a.NetworkBlocked,
+                UploadLimitMbps = a.UploadLimitMbps,
+                NetworkPriority = a.NetworkPriority,
                 Affinity = g.Exclusive != 0 ? AffinityParser.Format(g.Exclusive) : a.Affinity,
             };
             yield return new Rule

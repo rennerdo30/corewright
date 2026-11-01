@@ -536,7 +536,8 @@ internal sealed class Monitor : BackgroundService
         (a is null && b is null) || (a is not null && b is not null &&
         a.CpuPriority == b.CpuPriority && a.IoPriority == b.IoPriority && a.GpuPriority == b.GpuPriority &&
         a.MemoryPriority == b.MemoryPriority && a.EfficiencyMode == b.EfficiencyMode && a.MemoryLimitMb == b.MemoryLimitMb &&
-        a.WorkingSetLimitMb == b.WorkingSetLimitMb && a.Affinity == b.Affinity);
+        a.WorkingSetLimitMb == b.WorkingSetLimitMb && a.Affinity == b.Affinity &&
+        a.NetworkBlocked == b.NetworkBlocked && a.UploadLimitMbps == b.UploadLimitMbps && a.NetworkPriority == b.NetworkPriority);
 
     public (int Status, object Body) GetGroup(string id)
     {
