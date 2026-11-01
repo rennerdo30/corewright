@@ -60,15 +60,25 @@ Copy-Item -Path (Join-Path $publish '*') -Destination $stage -Recurse
 # Append each upgrade's entries so files removed from future builds are tracked.
 function Quote-Nsis([string]$Value) { $Value.Replace('$', '$$').Replace('"', '$\"') }
 $manifest = [Collections.Generic.List[string]]::new()
+$preflight = [Collections.Generic.List[string]]::new()
 foreach ($file in Get-ChildItem -LiteralPath $stage -File -Recurse) {
     $relative = Quote-Nsis ([IO.Path]::GetRelativePath($stage, $file.FullName))
     $manifest.Add('FileWrite $8 "F|' + $relative + '$\r$\n"')
+    if ($relative -eq 'Corewright.Service.exe') { $preflight.Add('${If} $ServicePid == 0') }
+    $preflight.Add('${If} ${FileExists} "$INSTDIR\' + $relative + '"')
+    $preflight.Add('ClearErrors')
+    $preflight.Add('FileOpen $7 "$INSTDIR\' + $relative + '" a')
+    $preflight.Add('IfErrors locked')
+    $preflight.Add('FileClose $7')
+    $preflight.Add('${EndIf}')
+    if ($relative -eq 'Corewright.Service.exe') { $preflight.Add('${EndIf}') }
 }
 foreach ($directory in Get-ChildItem -LiteralPath $stage -Directory -Recurse | Sort-Object { $_.FullName.Length } -Descending) {
     $relative = Quote-Nsis ([IO.Path]::GetRelativePath($stage, $directory.FullName))
     $manifest.Add('FileWrite $8 "D|' + $relative + '$\r$\n"')
 }
 $manifest | Set-Content -LiteralPath (Join-Path $stageRoot 'install-manifest.nsh') -Encoding utf8
+$preflight | Set-Content -LiteralPath (Join-Path $stageRoot 'preflight-files.nsh') -Encoding utf8
 $setup = Join-Path $out "Corewright-$version-setup.exe"
 # NSIS is invoked directly, without adding the portable tool to PATH.
 Invoke-Bounded $MakeNsis @('-V3', "-DVERSION=$version", "-DVI_VERSION=$numeric", "-DSRC=$stage", "-DOUTFILE=$setup", (Join-Path $root 'installer/corewright.nsi')) 180

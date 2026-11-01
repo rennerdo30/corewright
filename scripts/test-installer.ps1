@@ -15,8 +15,9 @@ $data = Join-Path $env:ProgramData 'Corewright'
 $userData = Join-Path $env:LOCALAPPDATA 'Corewright'
 $key = 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Corewright'
 $runKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
+$preferences = 'HKCU:\Software\Corewright'
 $shortcut = Join-Path ([Environment]::GetFolderPath('CommonPrograms')) 'Corewright.lnk'
-foreach ($path in $dir, $data, $userData, $key, $shortcut) {
+foreach ($path in $dir, $data, $userData, $key, $shortcut, $preferences) {
     if (Test-Path -LiteralPath $path) { throw "Refusing to touch an existing installation or data: $path" }
 }
 if ((Get-Service Corewright -ErrorAction SilentlyContinue) -or (Get-ItemProperty -LiteralPath $runKey -Name Corewright -ErrorAction SilentlyContinue)) { throw 'Corewright service or autostart already exists.' }
@@ -39,6 +40,12 @@ $rules = Join-Path $userData 'rules.json'
 Set-Content -LiteralPath $rules -Value '{"rules":[]}' -NoNewline -Encoding utf8
 $sourceHash = (Get-FileHash -LiteralPath $rules).Hash
 Invoke-Bounded $Setup @('/S')
+# The unelevated tray applies the first-run machine default in its own profile.
+# No UAC request: CI already runs under the test user's identity.
+$tray = Start-Process -FilePath (Join-Path $dir 'Corewright.Tray.exe') -PassThru -WindowStyle Hidden
+Write-Host "Tray PID $($tray.Id); setup closes it during the bounded upgrade below."
+$startupDeadline = (Get-Date).AddSeconds(10)
+while (!(Get-ItemProperty -LiteralPath $runKey -Name Corewright -ErrorAction SilentlyContinue) -and (Get-Date) -lt $startupDeadline) { Start-Sleep -Milliseconds 100 }
 foreach ($file in 'Corewright.Service.exe', 'Corewright.Tray.exe', 'Corewright.Dashboard.exe', 'Corewright.Dashboard.dll', 'Corewright.Dashboard.runtimeconfig.json', 'appsettings.json', 'corewright.ico', 'wwwroot/index.html', 'uninstall.exe', 'install-manifest.txt') {
     Assert (Test-Path -LiteralPath (Join-Path $dir $file)) "installed $file"
 }
@@ -65,10 +72,14 @@ Assert ((Get-Service Corewright).Status -eq 'Running') 'upgrade restarted the se
 Assert ((Get-FileHash -LiteralPath (Join-Path $data 'rules.json')).Hash -eq $sourceHash) 'upgrade never overwrites machine rules'
 $sentinel = Join-Path $data 'ci-preserve.txt'
 Set-Content -LiteralPath $sentinel -Value 'keep'
-# _?= runs the uninstaller in place, so WaitForExit covers the actual uninstall
-# instead of only the parent that spawns a temporary copy. It must be last.
 $uninstaller = Join-Path $dir 'uninstall.exe'
-Invoke-Bounded $uninstaller @('/S', "_?=$dir")
+Invoke-Bounded $uninstaller @('/S')
+# NSIS copies the uninstaller to TEMP; wait for its completion markers instead
+# of bypassing self-deletion with _?=. Never terminate a process by its name.
+$deadline = (Get-Date).AddSeconds(120)
+while (((Test-Path -LiteralPath $key) -or (Test-Path -LiteralPath $dir)) -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 250 }
+if (!$tray.WaitForExit(10000)) { throw "CI's tray PID $($tray.Id) did not close" }
+$tray.Dispose()
 Assert (!(Get-Service Corewright -ErrorAction SilentlyContinue)) 'service removed'
 Assert (!(Test-Path -LiteralPath $key)) 'Installed apps entry removed'
 Assert (!(Get-ItemProperty -LiteralPath $runKey -Name Corewright -ErrorAction SilentlyContinue)) 'autostart removed'
@@ -77,9 +88,5 @@ Assert (!(Test-Path -LiteralPath (Join-Path $dir 'Corewright.Service.exe'))) 'se
 Assert (!(Test-Path -LiteralPath (Join-Path $dir 'wwwroot'))) 'dashboard assets removed'
 Assert ((Get-Content -LiteralPath $sentinel -Raw).Trim() -eq 'keep') 'ProgramData survives silent uninstall'
 Assert ((Get-FileHash -LiteralPath (Join-Path $data 'rules.json')).Hash -eq $sourceHash) 'rules survive silent uninstall'
-# In-place uninstall cannot delete its own running executable. Remove only that
-# known file after its recorded PID exits, then require the directory to be empty.
-Remove-Item -LiteralPath $uninstaller -ErrorAction SilentlyContinue
-if (Test-Path -LiteralPath $dir) { Remove-Item -LiteralPath $dir }
 Assert (!(Test-Path -LiteralPath $dir)) 'install folder removed'
 exit 0

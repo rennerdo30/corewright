@@ -432,6 +432,7 @@ internal sealed partial class MainForm : Form
         using var key = Registry.CurrentUser.CreateSubKey(RunKey);
         if (enabled) key.SetValue(RunValue, $"\"{tray}\"");
         else key.DeleteValue(RunValue, throwOnMissingValue: false);
+        StartupPreferences.RememberDecision();
     }
 
     private async Task OnResizedAsync()

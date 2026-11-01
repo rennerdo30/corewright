@@ -31,6 +31,7 @@ internal static unsafe class Program
     {
         using var single = new Mutex(true, @"Local\Corewright.Tray", out bool created);
         if (!created) return 0;
+        StartupPreferences.ApplyMachineDefault();
 
         // Menus follow the system theme (dark, rounded Windows 11 menus).
         try
