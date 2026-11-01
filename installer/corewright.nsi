@@ -33,11 +33,22 @@ VIAddVersionKey "ProductVersion" "${VERSION}"
 VIAddVersionKey "FileVersion" "${VERSION}"
 VIAddVersionKey "FileDescription" "Corewright ${VERSION} setup"
 VIAddVersionKey "LegalCopyright" "rennerdo30"
-!define MUI_ICON "..\assets\corewright.ico"
-!define MUI_UNICON "..\assets\corewright.ico"
+; Artwork from scripts/build-installer-art.py (owner, 2026-11-02: the setup had no logo or banner).
+!define MUI_ICON "art\setup.ico"
+!define MUI_UNICON "art\setup.ico"
+!define MUI_WELCOMEFINISHPAGE_BITMAP "art\welcome.bmp"
+!define MUI_UNWELCOMEFINISHPAGE_BITMAP "art\welcome.bmp"
+!define MUI_HEADERIMAGE
+!define MUI_HEADERIMAGE_RIGHT
+!define MUI_HEADERIMAGE_BITMAP "art\header.bmp"
+!define MUI_HEADERIMAGE_UNBITMAP "art\header.bmp"
 !define MUI_ABORTWARNING
+; Say plainly what gets installed (owner, 2026-11-02: setup gave no hint that it installs a service).
+!define MUI_WELCOMEPAGE_TITLE "Install Corewright ${VERSION}"
+!define MUI_WELCOMEPAGE_TEXT "Corewright decides CPU, I/O, GPU and memory priority and core placement for your programs with rules you can read.$\r$\n$\r$\nSetup installs:$\r$\n$\r$\n  - the Corewright program in $INSTDIR,$\r$\n  - the Corewright Windows service, which applies your rules to every process and starts with Windows,$\r$\n  - the Corewright icon in the notification area.$\r$\n$\r$\nYour rules and settings are kept when you update or uninstall."
+
 !define MUI_FINISHPAGE_RUN
-!define MUI_FINISHPAGE_RUN_FUNCTION StartTray
+!define MUI_FINISHPAGE_RUN_FUNCTION StartApp
 !define MUI_FINISHPAGE_RUN_TEXT "Start Corewright"
 !insertmacro MUI_PAGE_WELCOME
 Page custom OptionsPage OptionsLeave
@@ -50,6 +61,7 @@ UninstPage custom un.OptionsPage un.OptionsLeave
 
 Var Autostart
 Var Checkbox
+Var ServiceBox
 Var DataDir
 Var UserDataDir
 Var ServiceState
@@ -381,21 +393,37 @@ Function un.onUninstFailed
 FunctionEnd
 
 Function OptionsPage
-  !insertmacro MUI_HEADER_TEXT "Corewright options" "The service runs automatically for all users."
+  !insertmacro MUI_HEADER_TEXT "Corewright options" "What Corewright installs and how it starts."
   nsDialogs::Create 1018
   Pop $0
-  ${NSD_CreateLabel} 0 0 100% 36u "Installs to $INSTDIR.$\r$\nThe dashboard requires .NET 10 Desktop Runtime (x64) and Microsoft Edge WebView2 Runtime."
+  ${NSD_CreateCheckbox} 0 0 100% 14u "Install the Corewright service"
+  Pop $ServiceBox
+  ${NSD_Check} $ServiceBox
+  ${NSD_CreateLabel} 12u 15u -12u 34u "A Windows service named Corewright runs as SYSTEM and starts with Windows. It applies your rules to every process, including other users' and elevated ones, and puts every change back when it stops. Corewright cannot manage processes without it."
   Pop $0
-  ${NSD_CreateCheckbox} 0 48u 100% 14u "Start Corewright when I sign in"
+  ${NSD_CreateCheckbox} 0 56u 100% 14u "Start Corewright when I sign in"
   Pop $Checkbox
   ${NSD_SetState} $Checkbox $Autostart
   ${If} $IsUpgrade == 1
     EnableWindow $Checkbox 0 ; existing users' choices remain authoritative in Settings
   ${EndIf}
+  ${NSD_CreateLabel} 12u 71u -12u 20u "Shows the Corewright icon in the notification area when you sign in. You can change this later in Settings."
+  Pop $0
+  ${NSD_CreateLabel} 0 98u 100% 24u "Installs to $INSTDIR. The window needs the .NET 10 Desktop Runtime (x64) and the Microsoft Edge WebView2 Runtime."
+  Pop $0
   nsDialogs::Show
 FunctionEnd
 Function OptionsLeave
   ${NSD_GetState} $Checkbox $Autostart
+  ; Nothing is installed behind the user's back: without the service there is nothing to install.
+  ${NSD_GetState} $ServiceBox $0
+  ${If} $0 != ${BST_CHECKED}
+    MessageBox MB_YESNO|MB_ICONQUESTION "Corewright cannot change process priorities or cores without its service.$\r$\n$\r$\nCancel setup without installing anything?" /SD IDNO IDNO keep
+    Quit
+    keep:
+    ${NSD_Check} $ServiceBox
+    Abort
+  ${EndIf}
 FunctionEnd
 ; Uninstall never deletes rules, settings or statistics (owner rule: persistent
 ; data is never lost). The page says where they stay so a user can remove them.
@@ -498,6 +526,10 @@ FunctionEnd
 ; interactive user's unelevated token instead of the installer's admin token.
 Function StartTray
   Exec '"$WINDIR\explorer.exe" "$INSTDIR\Corewright.Tray.exe"'
+FunctionEnd
+; Finish page: open the window (unelevated, through Explorer); the window starts the tray itself.
+Function StartApp
+  Exec '"$WINDIR\explorer.exe" "$INSTDIR\Corewright.Dashboard.exe"'
 FunctionEnd
 
 Section "Corewright"
