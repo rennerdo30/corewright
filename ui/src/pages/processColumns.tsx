@@ -1,3 +1,4 @@
+import { netPriorityLabel } from '../networkPriority'
 import { bytes, percent } from '../format'
 import { levelLabel } from '../host'
 import type { ProcessRow, SystemInfo } from '../types'
@@ -24,7 +25,7 @@ export interface ColumnDef {
   /** Corewright slot shown in this column; highlighted when a rule sets it. */
   slot?: string
   /** The Windows default for this setting; shown dimmed so real changes stand out. */
-  defaultValue?: string | number
+  defaultValue?: string | number | boolean
 }
 
 const num = (v: unknown) => (typeof v === 'number' ? v : undefined)
@@ -86,9 +87,6 @@ export const COLUMNS: ColumnDef[] = [
 
   // Disk
   { id: 'network', label: 'Network', group: 'Network', width: 130, needs: 'net', num: true, agg: 'sum', value: (p) => p.ext?.networkError ?? (p.ext?.netSend === undefined ? undefined : p.ext.netSend + (p.ext.netReceive ?? 0)), format: (v) => typeof v === 'string' ? v : v === undefined ? '' : rate(v) },
-  { id: 'networkblocked', label: 'Blocked', group: 'Corewright', width: 84, visible: true, needs: 'settings', slot: 'networkBlocked', value: (p) => p.ext?.networkBlocked, format: (v) => v === undefined ? '' : v ? 'Blocked' : 'Allowed' },
-  { id: 'uploadlimit', label: 'Upload limit', group: 'Corewright', width: 110, visible: true, needs: 'settings', slot: 'uploadLimitMbps', defaultValue: 0, value: (p) => p.ext?.uploadLimitMbps, format: (v) => v === 0 ? 'None' : v === undefined ? '' : `${v} Mbps` },
-  { id: 'netpriority', label: 'Net priority', group: 'Corewright', width: 110, visible: true, needs: 'settings', slot: 'networkPriority', defaultValue: -1, value: (p) => p.ext?.networkPriority, format: (v) => v === -1 ? 'Default' : v === undefined ? '' : `DSCP ${v}` },
   { id: 'io', label: 'Disk', group: 'Disk', width: 92, num: true, visible: true, agg: 'sum', value: (p) => p.ioBytesPerSec, format: rate, heat: (v) => v / (50 * 1048576), total: (s) => rate(s.ioBytesPerSec) },
   { id: 'readbytes', label: 'I/O read bytes', group: 'Disk', width: 110, num: true, needs: 'ext', agg: 'sum', value: (p) => p.ext?.readBytes, format: mem },
   { id: 'writebytes', label: 'I/O write bytes', group: 'Disk', width: 110, num: true, needs: 'ext', agg: 'sum', value: (p) => p.ext?.writeBytes, format: mem },
@@ -110,6 +108,9 @@ export const COLUMNS: ColumnDef[] = [
   { id: 'efficiency', defaultValue: 'auto',  label: 'Efficiency mode', group: 'Corewright', width: 108, visible: true, needs: 'settings', slot: 'efficiencyMode', value: (p) => p.ext?.efficiencyMode, format: (v) => (v === 'on' ? 'On' : v === 'off' ? 'Off' : v === 'auto' ? 'Auto' : '') },
   { id: 'memcap', defaultValue: 0,  label: 'Memory cap', group: 'Corewright', width: 96, visible: true, needs: 'settings', slot: 'memoryLimitMb', value: (p) => p.ext?.memoryLimitMb, format: mb },
   { id: 'ramcap', defaultValue: 0,  label: 'RAM cap', group: 'Corewright', width: 88, visible: true, needs: 'settings', slot: 'workingSetLimitMb', value: (p) => p.ext?.workingSetLimitMb, format: mb },
+  { id: 'networkblocked', label: 'Network access', group: 'Corewright', width: 110, visible: true, needs: 'settings', slot: 'networkBlocked', defaultValue: false, value: (p) => p.ext?.networkBlocked, format: (v) => v === undefined ? '' : v ? 'Blocked' : 'Allowed' },
+  { id: 'uploadlimit', label: 'Upload limit', group: 'Corewright', width: 110, visible: true, needs: 'settings', slot: 'uploadLimitMbps', defaultValue: 0, value: (p) => p.ext?.uploadLimitMbps, format: (v) => v === 0 ? 'No limit' : v === undefined ? '' : `${v} Mbps` },
+  { id: 'netpriority', label: 'Network priority', group: 'Corewright', width: 120, visible: true, needs: 'settings', slot: 'networkPriority', defaultValue: -1, value: (p) => p.ext?.networkPriority, format: (v) => v === undefined ? '' : netPriorityLabel(v as number) },
   { id: 'rules', label: 'Rules', group: 'Corewright', width: 160, value: (p) => [...new Set((p.applied ?? []).map((a) => a.ruleName))].join(', ') },
 ]
 

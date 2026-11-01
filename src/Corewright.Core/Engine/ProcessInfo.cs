@@ -30,6 +30,16 @@ public sealed class ProcessInfo(ProcessKey key, string name)
     public bool LatencyCritical;
 
     /// <summary>
+    /// The process group another tool registered this process in (PM-39, PUT /api/v1/groups/{id}): only the group's
+    /// own settings and rules that name the group apply to it; Autopilot and other rules let go of it. Null = no group.
+    /// </summary>
+    public string? GroupId;
+    /// <summary>The group's owner, e.g. "unity-tools" (rule field "group").</summary>
+    public string? GroupOwner;
+    /// <summary>Set once the group store has looked at this process (inheritance from a grouped parent).</summary>
+    public bool GroupResolved;
+
+    /// <summary>
     /// Reads a process command line; set by the host. Command lines are long and only static rules use them,
     /// and those are evaluated once per process, so the value is read on demand and never stored (memory constraint).
     /// </summary>
@@ -84,6 +94,12 @@ public sealed class EvalContext
     /// <summary>The detected game (Autopilot game mode); 0 when none. Every process with the same exe name counts.</summary>
     public int GamePid { get; set; }
     public string? GameName { get; set; }
+
+    /// <summary>
+    /// Programs the user marked as games (Autopilot "Always games", right-click "Mark as a game"): they count as a game
+    /// whenever they run, for rules (isGame) and Autopilot, not only while detected in front (owner, 2026-11-02).
+    /// </summary>
+    public IReadOnlySet<string>? AlwaysGames { get; set; }
 
     /// <summary>Monotonic milliseconds (Environment.TickCount64).</summary>
     public long NowMs { get; set; }

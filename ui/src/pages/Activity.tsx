@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { api } from '../api'
 import { Dot, PageHeader, joinAnd, plural } from '../components/PageHeader'
 import { levelLabel } from '../host'
+import { netPriorityLabel } from '../networkPriority'
 import { usePageVisible } from '../hooks'
 import { OWNER_LABELS, ownerOfName } from '../roles'
 import type { EngineEvent } from '../types'
@@ -18,7 +19,7 @@ const SLOT_LABELS: Record<string, string> = {
   efficiencyMode: 'efficiency mode',
   memoryLimitMb: 'memory cap',
   workingSetLimitMb: 'RAM cap',
-  networkBlocked: 'network blocking',
+  networkBlocked: 'network access',
   uploadLimitMbps: 'upload limit',
   networkPriority: 'network priority',
 }
@@ -37,6 +38,9 @@ const value = (e: EngineEvent) => {
   if (!e.value) return ''
   if (e.slot === 'memoryLimitMb' || e.slot === 'workingSetLimitMb') return e.value === '0' ? 'off' : `${e.value} MB`
   if (e.slot === 'affinity') return `threads ${e.value}`
+  if (e.slot === 'networkBlocked') return e.value === 'blocked' ? 'blocked' : 'allowed'
+  if (e.slot === 'uploadLimitMbps') return e.value === 'none' ? 'no limit' : e.value
+  if (e.slot === 'networkPriority') return e.value === 'default' ? 'Default' : netPriorityLabel(Number(e.value.replace('DSCP ', '')))
   if (e.slot === 'efficiencyMode') return e.value === 'on' || e.value === 'true' ? 'on' : e.value === 'off' || e.value === 'false' ? 'off' : e.value
   return levelLabel(e.value) || e.value
 }

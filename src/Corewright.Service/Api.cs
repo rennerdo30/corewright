@@ -67,6 +67,11 @@ public sealed record ImportResponseDto(bool Applied, string? Source, Rule[] Rule
 [JsonSerializable(typeof(RuleSet))]
 [JsonSerializable(typeof(RulesResultDto))]
 [JsonSerializable(typeof(EventsDto))]
+[JsonSerializable(typeof(RuleHitDto[]))]
+[JsonSerializable(typeof(GroupRequestDto))]
+[JsonSerializable(typeof(GroupDto))]
+[JsonSerializable(typeof(GroupDto[]))]
+[JsonSerializable(typeof(GroupErrorDto))]
 [JsonSerializable(typeof(Dictionary<string, string>))]
 [JsonSerializable(typeof(FactValueDto))]
 [JsonSerializable(typeof(ForegroundDto))]
@@ -77,6 +82,16 @@ public sealed record ImportResponseDto(bool Applied, string? Source, Rule[] Rule
 [JsonSerializable(typeof(ImportRequestDto))]
 [JsonSerializable(typeof(ImportResponseDto))]
 internal sealed partial class ApiJson : JsonSerializerContext;
+
+internal static class GroupResults
+{
+    public static IResult From((int Status, object Body) r) => r.Body switch
+    {
+        GroupDto dto => TypedResults.Json(dto, ApiJson.Default.GroupDto, statusCode: r.Status),
+        GroupErrorDto err => TypedResults.Json(err, ApiJson.Default.GroupErrorDto, statusCode: r.Status),
+        _ => TypedResults.StatusCode(500),
+    };
+}
 
 internal static class Api
 {
@@ -163,6 +178,16 @@ internal static class Api
             var dto = new RulesResultDto(errors.Count == 0, [.. errors.Select(ToDto)], m.Engine.Version);
             return errors.Count == 0 ? TypedResults.Ok(dto) : TypedResults.BadRequest(dto);
         });
+
+        // ---- Process groups (PM-39): exact process trees another tool registers, with rule actions and a TTL.
+        api.MapGet("/groups", () => TypedResults.Ok(m.ListGroups()));
+        api.MapGet("/groups/{id}", IResult (string id) => GroupResults.From(m.GetGroup(id)));
+        api.MapPut("/groups/{id}", IResult (string id, GroupRequestDto request) => GroupResults.From(m.PutGroup(id, request)));
+        api.MapDelete("/groups/{id}", IResult (string id) =>
+            m.DeleteGroup(id) ? TypedResults.NoContent() : TypedResults.Json(new GroupErrorDto("unknown-group", null), ApiJson.Default.GroupErrorDto, statusCode: 404));
+
+        // The last processes a rule changed (up to 10, newest first), since the service started.
+        api.MapGet("/rules/{id}/history", (string id) => TypedResults.Ok(m.Events.Hits(id)));
 
         api.MapPost("/rules/validate", (RuleSet set) =>
         {

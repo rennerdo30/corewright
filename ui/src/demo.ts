@@ -135,7 +135,7 @@ const specs: Spec[] = [
   { name: 'link.exe', path: 'C:\\Program Files\\Microsoft Visual Studio\\18\\Community\\VC\\Tools\\MSVC\\14.50.35717\\bin\\Hostx64\\x64\\link.exe', cpu: 2.9, mem: 1240, io: 8.4, threads: 9, priority: 'belowNormal', parent: 'MSBuild.exe', set: [{ owner: AP_BUILD, slots: { cpuPriority: 'belowNormal', ioPriority: 'low', affinity: '24-31' } }], ext: { affinity: '24-31', ioPriority: 'low' } },
   { name: 'OneDrive.exe', path: 'C:\\Program Files\\Microsoft OneDrive\\OneDrive.exe', cpu: 1.9, mem: 210, io: 2.1, threads: 41, priority: 'belowNormal', set: [{ owner: AP_BG, slots: { cpuPriority: 'belowNormal', ioPriority: 'low', affinity: '20-23' } }], ext: { affinity: '20-23', ioPriority: 'low' } },
   { name: 'CloudBackup.exe', path: 'C:\\Program Files\\CloudBackup\\CloudBackup.exe', cpu: 3.8, mem: 330, io: 12.6, threads: 28, priority: 'idle', set: [{ owner: AP_BAL, slots: { cpuPriority: 'idle' } }, { owner: AP_BG, slots: { ioPriority: 'low', affinity: '18-19' } }], ext: { affinity: '18-19', ioPriority: 'low' } },
-  { name: 'qbittorrent.exe', path: 'C:\\Program Files\\qBittorrent\\qbittorrent.exe', cpu: 0.7, mem: 160, io: 9.8, threads: 33, priority: 'belowNormal', set: [{ owner: DOWNLOADS, slots: { cpuPriority: 'belowNormal', ioPriority: 'veryLow' } }], ext: { ioPriority: 'veryLow' } },
+  { name: 'qbittorrent.exe', path: 'C:\\Program Files\\qBittorrent\\qbittorrent.exe', cpu: 0.7, mem: 160, io: 9.8, threads: 33, priority: 'belowNormal', set: [{ owner: DOWNLOADS, slots: { cpuPriority: 'belowNormal', ioPriority: 'veryLow' } }], ext: { ioPriority: 'veryLow', uploadLimitMbps: 25, networkPriority: 8 } },
   ...[0, 1, 2].map((i) => ({
     name: 'firefox.exe',
     path: 'C:\\Program Files\\Mozilla Firefox\\firefox.exe',
@@ -194,6 +194,9 @@ const processes: ProcessRow[] = specs.map((s) => {
       gpuPriority: 'normal',
       memoryPriority: 'normal',
       efficiencyMode: 'auto',
+      networkBlocked: false,
+      uploadLimitMbps: 0,
+      networkPriority: -1,
       gpu: 0,
       user: s.session === 0 ? 'SYSTEM' : 'Alex',
       bits: 64,
@@ -222,6 +225,17 @@ const name = (v: string): Rule['when'] => ({ type: 'group', combinator: 'and', c
 const rules: RuleSet = {
   version: 4,
   rules: [
+    {
+      id: 'downloads-low-io',
+      name: 'Downloads stay out of the way',
+      enabled: true,
+      priority: 50,
+      sustainSeconds: 0,
+      releaseSeconds: 0,
+      allowRealtime: false,
+      when: { type: 'group', combinator: 'and', children: [{ type: 'cond', field: 'name', op: 'in', value: 'qbittorrent.exe, steamservice.exe' }, { type: 'cond', field: 'isForeground', op: 'isFalse' }] },
+      actions: { cpuPriority: 'belowNormal', ioPriority: 'veryLow', uploadLimitMbps: 25, networkPriority: 8 },
+    },
     { id: 'quick-obs64-exe', name: 'Quick: obs64.exe', enabled: true, priority: 60, sustainSeconds: 0, releaseSeconds: 0, allowRealtime: false, when: name('obs64.exe'), actions: { cpuPriority: 'aboveNormal', gpuPriority: 'aboveNormal' } },
     {
       id: 'browser-cap',
@@ -233,17 +247,6 @@ const rules: RuleSet = {
       allowRealtime: false,
       when: { type: 'group', combinator: 'and', children: [{ type: 'cond', field: 'name', op: 'in', value: 'firefox.exe, chrome.exe, msedge.exe' }] },
       actions: { memoryLimitMb: 4096 },
-    },
-    {
-      id: 'downloads-low-io',
-      name: 'Downloads stay out of the way',
-      enabled: true,
-      priority: 50,
-      sustainSeconds: 0,
-      releaseSeconds: 0,
-      allowRealtime: false,
-      when: { type: 'group', combinator: 'and', children: [{ type: 'cond', field: 'name', op: 'in', value: 'qbittorrent.exe, steamservice.exe' }, { type: 'cond', field: 'isForeground', op: 'eq', value: 'false' }] },
-      actions: { cpuPriority: 'belowNormal', ioPriority: 'veryLow' },
     },
     {
       id: 'recording-boost',
@@ -375,6 +378,18 @@ export async function demoRequest(method: string, path: string, body?: unknown):
       const after = Number(new URLSearchParams(path.split('?')[1]).get('after') ?? 0)
       return { last: seq, events: events.filter((e) => e.seq > after) }
     }
+  }
+  const history = p.match(/^\/rules\/([^/]+)\/history$/)
+  if (history) {
+    const rule = rules.rules.find((r) => r.id === decodeURIComponent(history[1]))
+    const hits: { time: number; pid: number; process: string; kind: string; set: Record<string, string> }[] = []
+    for (const e of [...events].reverse()) {
+      if (!rule || e.rule !== rule.name || !e.slot || (e.kind !== 'applied' && e.kind !== 'failed')) continue
+      const last = hits[hits.length - 1]
+      if (last && last.pid === e.pid && Math.abs(last.time - e.time) < 1000) last.set[e.slot] = e.value ?? ''
+      else if (hits.length < 10) hits.push({ time: e.time, pid: e.pid, process: e.process, kind: e.kind, set: { [e.slot]: e.value ?? '' } })
+    }
+    return hits
   }
   const explain = p.match(/^\/processes\/(\d+)\/explain$/)
   if (explain) {
