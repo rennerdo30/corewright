@@ -110,12 +110,11 @@ Files you added to the installation
 folder are kept. Other users' Run values belong to their profiles and are not
 removed; they can disable them in Windows Startup apps.
 
-By default `%ProgramData%\Corewright` and `%LOCALAPPDATA%\Corewright` stay,
-including rules, backups and settings. Select **Also remove my rules and
-settings** to delete machine data and, after the same-user SID check, the
-uninstalling user's console data and remembered startup decision.
-This deletes rules shared by all users; back them up first. Silent uninstall
-always keeps data. Console data in other user profiles is never removed.
+Uninstall never deletes data: `%ProgramData%\Corewright` and
+`%LOCALAPPDATA%\Corewright` stay, including rules, backups, settings and
+learned statistics, so a later install picks them up again (owner rule:
+persistent data is never lost). The last uninstall page names both folders;
+delete them yourself if you no longer need them.
 
 ## Silent commands and diagnostics
 
