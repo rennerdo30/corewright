@@ -13,6 +13,15 @@ export interface Status {
   dataDirectory: string
 }
 
+export interface Device {
+  id: string; kind: 'disk' | 'gpu' | 'network'; name: string; index?: number; bus?: string; size?: number; volumes?: string[]
+  dedicatedMemory?: number; sharedMemory?: number; alias?: string; type?: string; receiveLinkSpeed?: number; sendLinkSpeed?: number; connected?: boolean; hidden: boolean
+  values: { read?: number; write?: number; active?: number; load?: number; dedicatedUsed?: number; sharedUsed?: number; sampledAt?: number }
+  health: { temperature?: number; fanRpm?: number; powerPercent?: number; engineClockMhz?: number; wearPercent?: number; sparePercent?: number; criticalWarning?: number; mediaErrors?: string; powerOnHours?: string; unsafeShutdowns?: string; dataUnitsRead?: string; dataUnitsWritten?: string; sampledAt?: number }
+  history?: { time: number[]; primary: (number | null)[]; secondary: (number | null)[] }
+}
+export interface DevicesInfo { inventoryAt: number; sampling: boolean; devices: Device[] }
+
 export interface AppSettings {
   version: number
   autopilot: {

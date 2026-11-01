@@ -6,16 +6,18 @@ import { Activity } from './pages/Activity'
 import { Autopilot } from './pages/Autopilot'
 import { Integrations } from './pages/Integrations'
 import { Overview } from './pages/Overview'
+import { Devices } from './pages/Devices'
 import { Processes } from './pages/Processes'
 import { Rules } from './pages/Rules'
 import { Settings } from './pages/Settings'
 import type { Rule } from './types'
 
-export type Page = 'overview' | 'autopilot' | 'processes' | 'rules' | 'activity' | 'integrations' | 'settings'
+export type Page = 'overview' | 'devices' | 'autopilot' | 'processes' | 'rules' | 'activity' | 'integrations' | 'settings'
 
 // Segoe Fluent Icons code points: Home, LightningBolt, BulletedList, Filter, History, Link.
 const NAV: { id: Page; label: string; glyph: string }[] = [
   { id: 'overview', label: 'Overview', glyph: '\uE80F' },
+  { id: 'devices', label: 'Devices', glyph: '\uE950' },
   { id: 'autopilot', label: 'Autopilot', glyph: '\uE945' },
   { id: 'processes', label: 'Processes', glyph: '\uE8FD' },
   { id: 'rules', label: 'Rules', glyph: '\uE71C' },
@@ -120,6 +122,7 @@ export function App() {
           <div className="banner">Development mode: the service runs without admin rights and can only change your own processes.</div>
         )}
         {page === 'overview' && <Overview onOpen={setPage} />}
+        {page === 'devices' && <Devices />}
         {page === 'autopilot' && <Autopilot />}
         {page === 'processes' && <Processes onCreateRule={createRuleFor} />}
         {page === 'rules' && <Rules draft={draftRule} onDraftConsumed={() => setDraftRule(undefined)} />}
