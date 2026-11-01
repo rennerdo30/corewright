@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { api, ApiError } from '../api'
 import { ChipInput } from '../components/ConditionBuilder'
+import { UpdatesCard } from '../components/UpdatesCard'
 import { isHost, levelLabel, post } from '../host'
 import { usePoll } from '../hooks'
 import type { AppSettings, RuleError, Topology } from '../types'
@@ -165,6 +166,7 @@ export function Settings() {
         <h3>Startup</h3>
         <Autostart />
       </section>
+      <UpdatesCard />
 
       <section className="section">
         <h3>About</h3>

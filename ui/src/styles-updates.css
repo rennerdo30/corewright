@@ -1,0 +1,4 @@
+.updates-card .setting-text { min-width: 0; }
+.updates-card .setting-desc { overflow-wrap: anywhere; }
+.updates-card .updates-error { color: var(--danger, #c42b1c); }
+.updates-card a.btn { text-decoration: none; white-space: nowrap; }

@@ -299,6 +299,12 @@ internal sealed partial class MainForm : Form
                 case "autostart-get":
                     PostAutostart();
                     break;
+                case "update-status":
+                case "update-check":
+                case "update-install":
+                    if (Uri.TryCreate(e.Source, UriKind.Absolute, out var source) && source.IsLoopback)
+                        _ = OnUpdateMessageAsync(type.GetString()!, root.TryGetProperty("automatic", out var automatic) && automatic.ValueKind == JsonValueKind.True);
+                    break;
                 case "autostart-set":
                     SetAutostart(root.TryGetProperty("enabled", out var en) && en.GetBoolean());
                     PostAutostart();
