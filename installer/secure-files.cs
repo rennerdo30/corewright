@@ -221,6 +221,48 @@ public static class SecureFiles
     [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)]
     static extern uint GetFileAttributes(string path);
 
+    public static bool CopyMissing(string source, string destination)
+    {
+        using (PinnedPath targetParent = new PinnedPath(Path.GetDirectoryName(destination), true, 0))
+        {
+            string name = Path.GetFileName(destination);
+            try
+            {
+                using (SafeFileHandle existing = OpenRelative(targetParent.Leaf, name, 0, false, false, IntPtr.Zero))
+                    return false; // Existing machine data always wins.
+            }
+            catch (Win32Exception e) { if (e.NativeErrorCode != 2 && e.NativeErrorCode != 3) throw; }
+            PinnedPath pinned;
+            try { pinned = new PinnedPath(source, false, 0x80000000); }
+            catch (Win32Exception e) { if (e.NativeErrorCode == 2 || e.NativeErrorCode == 3) return false; throw; }
+            using (pinned)
+            {
+                if ((Information(pinned.Leaf).Attributes & 0x10) != 0) throw new IOException("Migration source must be a file.");
+                SafeFileHandle created;
+                try { created = NewProtectedObject(targetParent.Leaf, name, true, 0x40000000, false); }
+                catch (Win32Exception e)
+                {
+                    int code = e.NativeErrorCode;
+                    if (code == 80 || code == 183) return false;
+                    throw;
+                }
+                try
+                {
+                    using (created)
+                    using (FileStream output = new FileStream(created, FileAccess.Write))
+                    using (FileStream input = new FileStream(pinned.Leaf, FileAccess.Read)) input.CopyTo(output);
+                    return true;
+                }
+                catch
+                {
+                    // Only our newly created, incomplete copy; never the source or pre-existing data.
+                    File.Delete(destination);
+                    throw;
+                }
+            }
+        }
+    }
+
     static bool Trusted(string sid)
     {
         return sid == "S-1-5-18" || sid == "S-1-5-32-544" ||

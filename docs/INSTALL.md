@@ -63,6 +63,10 @@ machine rules are never overwritten. Migration happens only when the elevated
 token's SID matches the interactive session user obtained through WTS; otherwise
 it is skipped and logged, rather than reading the credential-prompt administrator's
 profile. Back up and copy rules explicitly under administrator control in that case.
+Source files and each ancestor are opened with `FILE_FLAG_OPEN_REPARSE_POINT`,
+checked for reparse attributes (and a single link for files), and pinned against
+write/delete sharing. Bytes are copied from the validated handle into a new
+destination; a link or sharing violation aborts rather than following the link.
 On same-user upgrades, the disabled sign-in checkbox reflects the existing Run
 value (present means on, absent means off); use Settings to change an existing
 user's choice. A different elevation account cannot inspect that choice. Silent

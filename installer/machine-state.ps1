@@ -1,5 +1,5 @@
 # Embedded by NSIS; never run by package.ps1. All mutations require installer elevation.
-param([ValidateSet('SameUser', 'SecureData')][string]$Action, [string]$DataDirectory)
+param([ValidateSet('SameUser', 'SecureData', 'MigrateUser')][string]$Action, [string]$DataDirectory, [string]$SourceDirectory)
 $ErrorActionPreference = 'Stop'
 try {
     Add-Type -TypeDefinition @'
@@ -57,6 +57,11 @@ public static class InstallerSecurity {
     }
     [InstallerSecurity]::Prepare()
     Add-Type -TypeDefinition ([IO.File]::ReadAllText((Join-Path $PSScriptRoot 'secure-files.cs')))
+    if ($Action -eq 'MigrateUser') {
+        $copied = [SecureFiles]::CopyMissing((Join-Path $SourceDirectory 'rules.json'), (Join-Path $DataDirectory 'rules.json'))
+        if ($copied) { Write-Output 'Console rules migrated through validated non-reparse handles.' }
+        exit 0
+    }
     $preserved = [SecureFiles]::ReplaceMachineData($DataDirectory)
     if ($preserved) { Write-Output "Previous Corewright data preserved at $preserved" }
     Write-Output 'Corewright data migrated into freshly created protected objects.'

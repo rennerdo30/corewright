@@ -530,12 +530,12 @@ Section "Corewright"
   ${EndIf}
   FileClose $8
   ${If} $SameUser == 0
-  ${AndIfNot} ${FileExists} "$DataDir\rules.json"
-  ${AndIf} ${FileExists} "$UserDataDir\rules.json"
-    ; CopyFile with fail-if-exists also protects against a concurrent creator.
-    System::Call 'kernel32::CopyFileW(w "$UserDataDir\rules.json", w "$DataDir\rules.json", i 1) i.r0'
-    ${If} $0 == 0
-      !insertmacro FAIL "Could not migrate your rules. The original rules were kept."
+    ; Every source ancestor and file is opened without following reparse points.
+    ; Copy bytes from that held handle, never reopen the validated source by path.
+    nsExec::ExecToLog /TIMEOUT=30000 '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\machine-state.ps1" -Action MigrateUser -DataDirectory "$DataDir" -SourceDirectory "$UserDataDir"'
+    Pop $0
+    ${If} $0 != 0
+      !insertmacro FAIL "Could not safely migrate your console data. Original data was kept."
     ${EndIf}
   ${EndIf}
 
