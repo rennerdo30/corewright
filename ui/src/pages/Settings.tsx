@@ -43,6 +43,7 @@ export function Settings() {
   const a = settings.autopilot
   const g = a.gameMode
   const b = a.balance
+  const bg = a.background
   const s = status.data
 
   return (
@@ -99,6 +100,14 @@ export function Settings() {
           <ListRow title="Never games" desc="Browsers, video players and editors that go full screen." value={g.notGames} onChange={(v) => update((x) => (x.autopilot.gameMode.notGames = v))} />
           <ListRow title="Keep responsive" desc="Voice chat and streaming: kept above normal and never moved while you play." value={g.keepResponsive} onChange={(v) => update((x) => (x.autopilot.gameMode.keepResponsive = v))} />
 
+          <Card glyph={'\uE943'} title="Compilers and build tools" desc="High load but not latency critical: builds run below normal with low disk priority, so the PC stays responsive while you compile.">
+            <Toggle value={a.buildTools.enabled} onChange={(v) => update((x) => (x.autopilot.buildTools.enabled = v))} />
+          </Card>
+          <Row title="Build priority" desc="CPU priority for compilers, linkers and build drivers.">
+            <Levels levels={LOW_LEVELS} value={a.buildTools.priority} onChange={(v) => update((x) => (x.autopilot.buildTools.priority = v))} />
+          </Row>
+          <ListRow title="Build tools" desc="MSVC, Clang, GCC, Rust, .NET, Go, Java, shader compilers and build drivers. Add your own." value={a.buildTools.programs} onChange={(v) => update((x) => (x.autopilot.buildTools.programs = v))} />
+
           <Card glyph={'\uE9D9'} title="Balancing" desc="Like ProBalance: background processes that hog the CPU get lower priority until they calm down. The foreground app and services are never touched.">
             <Toggle value={b.enabled} onChange={(v) => update((x) => (x.autopilot.balance.enabled = v))} />
           </Card>
@@ -121,6 +130,34 @@ export function Settings() {
             <Levels levels={LOW_LEVELS} value={b.priority} onChange={(v) => update((x) => (x.autopilot.balance.priority = v))} />
           </Row>
           <ListRow title="Never restrain" desc="Processes balancing leaves alone." value={b.exclusions} onChange={(v) => update((x) => (x.autopilot.balance.exclusions = v))} />
+
+          <Card glyph={'\uE9F5'} title="Background placement" desc="Learns over hours which programs never come to the foreground and keeps them away from your strongest cores. Services are never touched.">
+            <Toggle value={bg.enabled} onChange={(v) => update((x) => (x.autopilot.background.enabled = v))} />
+          </Card>
+          <Row title="Observe at least" desc="Runtime a program needs before Corewright decides anything about it.">
+            <Unit unit="min">
+              <input type="number" min={5} step={5} className="num-input" value={bg.minObservedMinutes} onChange={(e) => update((x) => (x.autopilot.background.minObservedMinutes = Number(e.target.value)))} />
+            </Unit>
+          </Row>
+          <Row title="Foreground share" desc="Programs in the foreground more often than this are interactive and left alone.">
+            <Unit unit="%">
+              <input type="number" min={0} step={0.5} className="num-input" value={bg.maxForegroundPercent} onChange={(e) => update((x) => (x.autopilot.background.maxForegroundPercent = Number(e.target.value)))} />
+            </Unit>
+          </Row>
+          <Row title="Single-core load" desc="Average load up to this many cores counts as single-threaded: one physical core, filled from the back.">
+            <Unit unit="cores">
+              <input type="number" min={0.5} step={0.1} className="num-input" value={bg.singleCoreLoad} onChange={(e) => update((x) => (x.autopilot.background.singleCoreLoad = Number(e.target.value)))} />
+            </Unit>
+          </Row>
+          <Row title="Keep the strongest cores free" desc="Number of fastest cores (CPPC ranking) background programs never use.">
+            <input type="number" min={0} max={16} step={1} className="num-input" value={bg.keepBestCoresFree} onChange={(e) => update((x) => (x.autopilot.background.keepBestCoresFree = Number(e.target.value)))} />
+          </Row>
+          <Row title="Multi-threaded background priority" desc="Busy background programs that use several cores get this priority.">
+            <Levels levels={LOW_LEVELS} value={bg.priority} onChange={(v) => update((x) => (x.autopilot.background.priority = v))} />
+          </Row>
+          <ListRow title="Never place" desc="Programs background placement leaves alone." value={bg.exclusions} onChange={(v) => update((x) => (x.autopilot.background.exclusions = v))} />
+          <BackgroundTable />
+          <PlacementTable />
         </div>
       </section>
 
@@ -143,6 +180,99 @@ export function Settings() {
           </Row>
         </div>
       </section>
+    </div>
+  )
+}
+
+/** What the observer has learned so far: the programs it watched the longest and its verdict for each. */
+function BackgroundTable() {
+  const rows = usePoll(api.background, 15_000)
+  const list = (rows.data ?? []).filter((r) => r.verdict !== 'Idle').slice(0, 40)
+  return (
+    <div className="setting-row bg-table">
+      <div className="setting-text">
+        <div className="setting-title">What Corewright has learned</div>
+        <div className="setting-desc">Programs by total CPU use. Decisions update once a minute; statistics are kept for 30 days.</div>
+        <table className="mini">
+          <thead>
+            <tr>
+              <th>Program</th>
+              <th className="num">Observed</th>
+              <th className="num">Foreground</th>
+              <th className="num">Avg cores</th>
+              <th>Decision</th>
+              <th>Cores</th>
+            </tr>
+          </thead>
+          <tbody>
+            {list.map((r) => (
+              <tr key={r.name} title={r.reason}>
+                <td>{r.name}</td>
+                <td className="num secondary">{r.observedMinutes >= 120 ? `${(r.observedMinutes / 60).toFixed(1)} h` : `${Math.round(r.observedMinutes)} min`}</td>
+                <td className="num secondary">{r.foregroundPercent} %</td>
+                <td className="num secondary">{r.averageCores}</td>
+                <td className={r.verdict.startsWith('Background') ? 'accent-text' : 'secondary'}>{r.verdict}</td>
+                <td className="secondary">{r.affinity ?? ''}</td>
+              </tr>
+            ))}
+            {list.length === 0 && (
+              <tr>
+                <td className="secondary">Nothing learned yet. Corewright needs some runtime first.</td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  )
+}
+
+/** Which process the placer put where right now, and why: the whole picture behind the decisions. */
+function PlacementTable() {
+  const rows = usePoll(api.placements, 3000)
+  const list = rows.data ?? []
+  return (
+    <div className="setting-row bg-table">
+      <div className="setting-text">
+        <div className="setting-title">Live placements</div>
+        <div className="setting-desc">
+          Processes with automatic cores. Placed once on the CCD where their demand is cheapest (load, reservations, core strength, game CCD, V-Cache), then
+          kept there; they only grow within that CCD.
+        </div>
+        <table className="mini">
+          <thead>
+            <tr>
+              <th>Process</th>
+              <th className="num">PID</th>
+              <th>CCD</th>
+              <th>Threads</th>
+              <th className="num">Demand</th>
+              <th className="num">Since</th>
+              <th>Why</th>
+            </tr>
+          </thead>
+          <tbody>
+            {list.map((r) => (
+              <tr key={r.pid}>
+                <td>{r.name}</td>
+                <td className="num secondary">{r.pid}</td>
+                <td className="secondary">CCD {r.ccd}</td>
+                <td className="accent-text">{r.cores}</td>
+                <td className="num secondary">{r.demandThreads}</td>
+                <td className="num secondary">{r.placedSecondsAgo >= 120 ? `${Math.round(r.placedSecondsAgo / 60)} min` : `${r.placedSecondsAgo} s`}</td>
+                <td className="secondary" title={r.why}>
+                  {r.why}
+                </td>
+              </tr>
+            ))}
+            {list.length === 0 && (
+              <tr>
+                <td className="secondary">No process uses automatic placement right now.</td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
     </div>
   )
 }

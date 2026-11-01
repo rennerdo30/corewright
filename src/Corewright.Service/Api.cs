@@ -71,6 +71,8 @@ public sealed record ImportResponseDto(bool Applied, string? Source, Rule[] Rule
 [JsonSerializable(typeof(ForegroundDto))]
 [JsonSerializable(typeof(AppSettings))]
 [JsonSerializable(typeof(SettingsResultDto))]
+[JsonSerializable(typeof(BackgroundRowDto[]))]
+[JsonSerializable(typeof(PlacementDto[]))]
 [JsonSerializable(typeof(ImportRequestDto))]
 [JsonSerializable(typeof(ImportResponseDto))]
 internal sealed partial class ApiJson : JsonSerializerContext;
@@ -235,6 +237,19 @@ internal static class Api
             var errors = m.ReplaceSettings(settings);
             var dto = new SettingsResultDto(errors.Count == 0, [.. errors.Select(ToDto)], m.Settings);
             return errors.Count == 0 ? TypedResults.Ok(dto) : TypedResults.BadRequest(dto);
+        });
+
+        api.MapGet("/autopilot/background", () =>
+        {
+            lock (m.Sync)
+                return TypedResults.Ok(m.Background is { } b
+                    ? b.Rows(m.Settings.Autopilot.Background, m.Settings.Autopilot.GameMode).ToArray()
+                    : Array.Empty<BackgroundRowDto>());
+        });
+
+        api.MapGet("/autopilot/placements", () =>
+        {
+            lock (m.Sync) return TypedResults.Ok(m.Placer.Snapshot(Environment.TickCount64).ToArray());
         });
 
         api.MapGet("/events", (long? after) =>

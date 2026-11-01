@@ -64,6 +64,10 @@ internal sealed class Monitor : BackgroundService
         Topology = CpuLayout is { } layout ? WithLayout(basic, layout) : basic;
         _settingsStore = settingsStore;
         Settings = settingsStore.Load();
+        _placer = new AffinityPlacer(() => Topology, () => _cores.Usage,
+            () => AutopilotRules.GameCcd(Settings.Autopilot.GameMode.Placement, Topology),
+            () => Settings.Autopilot.Background.KeepBestCoresFree);
+        Engine.Placer = _placer;
         RuleSet = store.Load();
         var errors = new List<RuleError>();
         Engine.SetRules(CompileAll(RuleSet, Settings, errors));
@@ -75,6 +79,12 @@ internal sealed class Monitor : BackgroundService
 
     private readonly SettingsStore _settingsStore;
     private readonly GameDetector _game = new();
+    private BackgroundClassifier? _background;
+    private readonly AffinityPlacer _placer;
+    public AffinityPlacer Placer => _placer;
+
+    /// <summary>Long-term program statistics; created on the first tick (needs the data folder).</summary>
+    public BackgroundClassifier? Background => _background;
     private bool _reportedFullscreen;
 
     public AppSettings Settings { get; private set; }
@@ -83,7 +93,7 @@ internal sealed class Monitor : BackgroundService
     /// <summary>User rules plus the built-in Autopilot rules (lower priority, so user rules win). Errors only for enabled rules.</summary>
     private CompiledRuleSet CompileAll(RuleSet user, AppSettings settings, List<RuleError> errors)
     {
-        var all = new RuleSet { Version = user.Version, Rules = [.. user.Rules, .. AutopilotRules.Build(settings.Autopilot, Topology)] };
+        var all = new RuleSet { Version = user.Version, Rules = [.. user.Rules, .. AutopilotRules.Build(settings.Autopilot, Topology, _background?.Verdicts)] };
         var raw = new List<RuleError>();
         var compiled = RuleCompiler.Compile(all, Topology, raw);
         errors.AddRange(raw.Where(e => all.Rules.Any(r => r.Id == e.RuleId && r.Enabled)));
@@ -237,7 +247,11 @@ internal sealed class Monitor : BackgroundService
         }
         finally
         {
-            lock (Sync) Engine.RevertAll();
+            lock (Sync)
+            {
+                Engine.RevertAll();
+                _background?.Save();
+            }
             _actuator.Dispose();
             _gpu?.Dispose();
             _sampler.Dispose();
@@ -270,13 +284,26 @@ internal sealed class Monitor : BackgroundService
                 if (_game.GameName is { } gn) _facts["game.name"] = gn; else _facts.Remove("game.name");
             }
 
+            // PM-12: long-term observation; a changed classification rebuilds the rule set (at most once a minute).
+            _background ??= new BackgroundClassifier(DataDirectory);
+            if (_background.Observe(_sampler.Processes, _ctx.ForegroundPid, Topology.LogicalCount, _ctx.NowMs,
+                    Settings.Autopilot.Background, Settings.Autopilot.GameMode, Topology)
+                && Settings.Autopilot.Enabled && Settings.Autopilot.Background.Enabled)
+            {
+                var errors = new List<RuleError>();
+                var compiled = CompileAll(RuleSet, Settings, errors);
+                if (errors.Count == 0) Engine.SetRules(compiled);
+                else _log.LogWarning("background placement rules rejected: {Message}", errors[0].Message);
+            }
+
             Engine.Evaluate(_sampler.Processes, _ctx);
 
             // Cheap system counters always; the costly ones (GPU counters, per-thread load) only while someone watches.
             _network.Sample();
+            _cores.Sample(); // one call; the placer needs per-thread load for dynamic placement
+            _placer.Prune(_sampler.IsAlive);
             if (IsClientActive)
             {
-                _cores.Sample();
                 _gpu ??= new GpuMonitor();
                 _gpu.Sample();
                 _gpuLastUse = _ctx.NowMs;

@@ -20,7 +20,68 @@ public sealed class AutopilotSettings
 
     public GameModeSettings GameMode { get; set; } = new();
     public BalanceSettings Balance { get; set; } = new();
+    public BackgroundSettings Background { get; set; } = new();
+    public BuildToolsSettings BuildTools { get; set; } = new();
 }
+
+/// <summary>
+/// Compilers, linkers and build drivers: high load but not latency critical (owner, 2026-11-02), so they run below
+/// normal and with low I/O priority. Efficiency mode is deliberately not used: it would slow builds down a lot.
+/// </summary>
+public sealed class BuildToolsSettings
+{
+    public bool Enabled { get; set; } = true;
+    public string Priority { get; set; } = "belowNormal";
+    public string IoPriority { get; set; } = "low";
+
+    public List<string> Programs { get; set; } =
+    [
+        // MSVC and Windows SDK
+        "cl.exe", "link.exe", "lib.exe", "ml64.exe", "rc.exe", "mt.exe", "midl.exe", "cvtres.exe", "MSBuild.exe", "MSBuildTaskHost.exe",
+        // .NET
+        "csc.exe", "vbc.exe", "VBCSCompiler.exe", "ilc.exe", "crossgen2.exe", "fsc.exe",
+        // LLVM / GCC
+        "clang.exe", "clang++.exe", "clang-cl.exe", "lld-link.exe", "ld.lld.exe", "lld.exe", "gcc.exe", "g++.exe", "cc1.exe", "cc1plus.exe", "ld.exe", "as.exe",
+        // Rust, Go, Zig, Swift, Java/Kotlin
+        "rustc.exe", "cargo.exe", "clippy-driver.exe", "go.exe", "compile.exe", "zig.exe", "swiftc.exe", "swift-frontend.exe", "javac.exe", "kotlinc.exe",
+        // Build drivers
+        "ninja.exe", "make.exe", "mingw32-make.exe", "cmake.exe", "jom.exe", "bazel.exe", "buck2.exe",
+        // GPU and shader compilers
+        "nvcc.exe", "cicc.exe", "ptxas.exe", "dxc.exe", "fxc.exe", "glslc.exe", "glslangValidator.exe",
+        "UnityShaderCompiler.exe", "bee_backend.exe", "ShaderCompileWorker.exe", "UnrealBuildTool.exe",
+        // Web toolchains
+        "esbuild.exe", "tsgo.exe",
+    ];
+}
+/// <summary>
+/// Long-term background classification (PM-12): processes observed for a long time that are (almost) never in the
+/// foreground are placed away from the strongest cores. Careful by design: off by default, services excluded,
+/// classification needs hours of observation, and every decision is visible and reversible.
+/// </summary>
+public sealed class BackgroundSettings
+{
+    public bool Enabled { get; set; }
+
+    /// <summary>Cumulative observed runtime before a process can be classified.</summary>
+    public double MinObservedMinutes { get; set; } = 60;
+
+    /// <summary>Above this share of its runtime in the foreground it is interactive, never background.</summary>
+    public double MaxForegroundPercent { get; set; } = 1;
+
+    /// <summary>Average load up to this many cores counts as single-threaded: it gets one physical core, filled from the back.</summary>
+    public double SingleCoreLoad { get; set; } = 1.2;
+
+    /// <summary>Strongest cores (CPPC ranking) that background placement never uses.</summary>
+    public int KeepBestCoresFree { get; set; } = 4;
+
+    /// <summary>Priority for classified multi-threaded background processes.</summary>
+    public string Priority { get; set; } = "belowNormal";
+
+    public List<string> Exclusions { get; set; } = [];
+}
+
+/// <summary>A classification decision, produced by the service's observer and turned into rules here.</summary>
+public sealed record BackgroundVerdict(string Name, string Kind, string? Affinity, string Reason);
 
 public sealed class GameModeSettings
 {
@@ -78,7 +139,7 @@ public static class AutopilotRules
 {
     public const string IdPrefix = "autopilot-";
 
-    public static List<Rule> Build(AutopilotSettings s, SystemTopology topo)
+    public static List<Rule> Build(AutopilotSettings s, SystemTopology topo, IReadOnlyList<BackgroundVerdict>? background = null)
     {
         var rules = new List<Rule>();
         if (!s.Enabled) return rules;
@@ -143,9 +204,44 @@ public static class AutopilotRules
                     SustainSeconds = 1,
                     ReleaseSeconds = 10,
                     When = when,
-                    Actions = new RuleActions { CpuPriority = g.BackgroundPriority, IoPriority = "low", Affinity = backgroundAffinity },
+                    Actions = new RuleActions { CpuPriority = g.BackgroundPriority, IoPriority = "low", Affinity = backgroundAffinity is null ? null : "auto-background" },
                 });
             }
+        }
+
+        if (s.Background.Enabled && background is not null)
+        {
+            // One rule per classified program; game mode (higher priority) still wins for its slots while gaming.
+            foreach (var v in background)
+            {
+                rules.Add(new Rule
+                {
+                    Id = IdPrefix + "background-" + Slug(v.Name),
+                    Name = $"Autopilot: background {v.Name}",
+                    Priority = 5,
+                    When = Condition.All(
+                        Condition.Leaf("name", "eq", v.Name),
+                        Condition.Leaf("isForeground", "isFalse", null),
+                        Condition.Leaf("session", "gt", "0")),
+                    // Placement is dynamic and sticky (AffinityPlacer): sized to the program's real demand, never on the
+                    // strongest cores, never on the game's CCD while a game runs.
+                    Actions = v.Kind == "single"
+                        ? new RuleActions { Affinity = "auto-background" }
+                        : new RuleActions { CpuPriority = s.Background.Priority, IoPriority = "low", Affinity = "auto-background" },
+                });
+            }
+        }
+
+        if (s.BuildTools.Enabled && s.BuildTools.Programs.Count > 0)
+        {
+            rules.Add(new Rule
+            {
+                Id = IdPrefix + "build-tools",
+                Name = "Autopilot: compilers and build tools",
+                Priority = 7,
+                When = Condition.All(Condition.Leaf("name", "in", string.Join(", ", s.BuildTools.Programs))),
+                Actions = new RuleActions { CpuPriority = s.BuildTools.Priority, IoPriority = s.BuildTools.IoPriority, Affinity = "auto-background" },
+            });
         }
 
         if (s.Balance.Enabled)
@@ -185,6 +281,12 @@ public static class AutopilotRules
             _ when placement.StartsWith("ccd", StringComparison.OrdinalIgnoreCase) && int.TryParse(placement[3..], out int n) && n < topo.CcdMasks.Length => n,
             _ => -1,
         };
+    }
+
+    private static string Slug(string name)
+    {
+        var chars = name.ToLowerInvariant().Select(c => char.IsLetterOrDigit(c) ? c : '-').ToArray();
+        return new string(chars).Trim('-');
     }
 
     private static Condition Not(Condition c)
