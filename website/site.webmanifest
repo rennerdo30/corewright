@@ -1,0 +1,12 @@
+{
+  "name": "Corewright",
+  "short_name": "Corewright",
+  "start_url": "/",
+  "display": "browser",
+  "background_color": "#161a24",
+  "theme_color": "#161a24",
+  "icons": [
+    { "src": "/assets/corewright-256.png", "sizes": "256x256", "type": "image/png", "purpose": "any" },
+    { "src": "/assets/corewright-mark.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}
