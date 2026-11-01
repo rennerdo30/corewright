@@ -26,6 +26,12 @@ public sealed class CompiledRule
     /// <summary>False when the condition only reads lifetime-static fields; then it is evaluated once per process.</summary>
     public bool IsDynamic { get; }
 
+    /// <summary>Rules that apply to grouped processes: a group's own settings and rules that name group or groupId.</summary>
+    public bool GroupAware { get; internal set; }
+
+    /// <summary>Built-in Autopilot rule (frozen while a group freezes Autopilot).</summary>
+    public bool IsAutopilot => Source.Id.StartsWith("autopilot-", StringComparison.Ordinal);
+
     public long SustainMs { get; }
     public long ReleaseMs { get; }
     public long[] Values { get; } = new long[Slots.Count];
@@ -75,7 +81,7 @@ public static class RuleCompiler
             foreach (var m in messages) errors.Add(new RuleError(rule.Id, rule.Name, m));
             if (messages.Count > 0 || !rule.Enabled || match is null) continue;
 
-            var cr = new CompiledRule(rule, match, dynamic) { SlotMask = mask };
+            var cr = new CompiledRule(rule, match, dynamic) { SlotMask = mask, GroupAware = rule.Id.StartsWith(GroupRulePrefix, StringComparison.Ordinal) || NamesGroup(rule.When) };
             values.CopyTo(cr.Values, 0);
             compiled.Add((cr, i));
         }
@@ -226,6 +232,8 @@ public static class RuleCompiler
                     "isFalse" => static (p, x) => p.Key.Pid != x.ForegroundPid && (x.ForegroundRoot.Pid == 0 || p.AppRoot != x.ForegroundRoot),
                     _ => Error($"operator '{op}' does not apply to isForegroundApp (use isTrue or isFalse)"),
                 };
+            case "group": return Str(p => p.GroupOwner ?? "");
+            case "groupId": return Str(p => p.GroupId ?? "");
             case "isGame":
                 return op switch
                 {
@@ -280,6 +288,12 @@ public static class RuleCompiler
         if (pred is null) return null;
         return (_, x) => x.Facts.TryGetValue(key, out var v) && pred(v);
     }
+
+    /// <summary>Id prefix of the rule built from a process group's settings.</summary>
+    public const string GroupRulePrefix = "group-";
+
+    private static bool NamesGroup(Condition? c) =>
+        c is not null && (c.Field is "group" or "groupId" || (c.Children?.Any(NamesGroup) ?? false));
 
     private static bool IsGame(ProcessInfo p, EvalContext x) =>
         (x.GamePid != 0 && (p.Key.Pid == x.GamePid || (x.GameName is { } n && p.Name.Equals(n, StringComparison.OrdinalIgnoreCase))))

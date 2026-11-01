@@ -74,7 +74,9 @@ internal sealed class Monitor : BackgroundService
         _ctx.AlwaysGames = AlwaysGamesOf(Settings);
         _placer = new AffinityPlacer(() => Topology, () => _cores.Usage,
             () => AutopilotRules.GameCcd(Settings.Autopilot.GameMode.Placement, Topology),
-            () => Settings.Autopilot.Background.KeepBestCoresFree);
+            () => Settings.Autopilot.Background.KeepBestCoresFree,
+            () => _groups.ExclusiveMask);
+        _byPid = pid => _sampler.TryGet(pid, out var p) ? p : null;
         Engine.Placer = _placer;
         RuleSet = store.Load();
         var errors = new List<RuleError>();
@@ -86,6 +88,10 @@ internal sealed class Monitor : BackgroundService
     public Lock Sync { get; } = new();
 
     private readonly SettingsStore _settingsStore;
+    private readonly GroupStore _groups = new();
+    private readonly Func<int, ProcessInfo?> _byPid;
+    private volatile bool _stopping;
+    public GroupStore Groups => _groups;
     private readonly GameDetector _game = new();
     private BackgroundClassifier? _background;
     private readonly AffinityPlacer _placer;
@@ -101,7 +107,7 @@ internal sealed class Monitor : BackgroundService
     /// <summary>User rules plus the built-in Autopilot rules (lower priority, so user rules win). Errors only for enabled rules.</summary>
     private CompiledRuleSet CompileAll(RuleSet user, AppSettings settings, List<RuleError> errors)
     {
-        var all = new RuleSet { Version = user.Version, Rules = [.. user.Rules, .. AutopilotRules.Build(settings.Autopilot, Topology, _background?.Verdicts)] };
+        var all = new RuleSet { Version = user.Version, Rules = [.. user.Rules, .. AutopilotRules.Build(settings.Autopilot, Topology, _background?.Verdicts), .. _groups.Rules()] };
         var raw = new List<RuleError>();
         var compiled = RuleCompiler.Compile(all, Topology, raw);
         errors.AddRange(raw.Where(e => all.Rules.Any(r => r.Id == e.RuleId && r.Enabled)));
@@ -265,6 +271,7 @@ internal sealed class Monitor : BackgroundService
         }
         finally
         {
+            _stopping = true;
             lock (Sync)
             {
                 Engine.RevertAll();
@@ -294,7 +301,7 @@ internal sealed class Monitor : BackgroundService
 
             // Autopilot game mode: only re-classifies when the foreground or its full-screen state changes.
             var ap = Settings.Autopilot;
-            if (_game.Update(_sampler, _ctx.ForegroundPid, fullscreen, ap.GameMode, ap.Enabled && ap.GameMode.Enabled, Events))
+            if (!_groups.AnyFreeze && _game.Update(_sampler, _ctx.ForegroundPid, fullscreen, ap.GameMode, ap.Enabled && ap.GameMode.Enabled, Events))
             {
                 _ctx.GamePid = _game.Game?.Pid ?? 0;
                 _ctx.GameName = _game.GameName;
@@ -315,6 +322,12 @@ internal sealed class Monitor : BackgroundService
             }
 
             _ctx.ForegroundRoot = _background.ForegroundRoot;
+            // PM-39: process groups. Expiry rebuilds the rules; membership is decided once per new process.
+            if (_groups.Expire(_ctx.NowMs)) RebuildRules();
+            _groups.Resolve(_sampler.Processes, _byPid);
+            Engine.FreezeAutopilot = _groups.AnyFreeze;
+            if (_groups.AnyFreeze) _facts["autopilot.frozen"] = "true";
+            else _facts.Remove("autopilot.frozen");
             Engine.Evaluate(_sampler.Processes, _ctx);
 
             // Cheap system counters always; the costly ones (GPU counters, per-thread load) only while someone watches.
@@ -347,6 +360,164 @@ internal sealed class Monitor : BackgroundService
             _hNext = (_hNext + 1) % HistoryCapacity;
             if (_hCount < HistoryCapacity) _hCount++;
         }
+    }
+
+    private void RebuildRules()
+    {
+        var errors = new List<RuleError>();
+        var compiled = CompileAll(RuleSet, Settings, errors);
+        if (errors.Count == 0) Engine.SetRules(compiled);
+        else _log.LogWarning("rules rejected after a process group change: {Message}", errors[0].Message);
+    }
+
+    // ---- Process groups (PM-39) ------------------------------------------------------------------------------
+
+    /// <summary>
+    /// Registers or renews a group and applies its settings before returning: one fresh sample and evaluation, so a
+    /// tool that starts its root suspended can resume it with the right settings already in place.
+    /// </summary>
+    public (int Status, object Body) PutGroup(string id, GroupRequestDto request)
+    {
+        if (_stopping) return (503, new GroupErrorDto("stopping", "The Corewright service is stopping."));
+        if (id.Length is 0 or > 64 || id.Any(c => !(char.IsAsciiLetterOrDigit(c) || c is '-' or '_' or '.')))
+            return (400, new GroupErrorDto("invalid", "id: 1 to 64 letters, digits, '-', '_' or '.'"));
+        if (GroupStore.Validate(request) is { } invalid) return (400, new GroupErrorDto("invalid", invalid));
+        lock (Sync)
+        {
+            if (Engine.Paused)
+            {
+                if (_groups.Remove(id)) RebuildRules();
+                return (503, new GroupErrorDto("engine-paused", "Corewright's rules are paused; nothing is applied."));
+            }
+            Tick(); // fresh sample: a root started a moment ago (even suspended) is known now
+            var roots = request.Roots!.Select(r => new ProcessKey(r.Pid, r.CreationTime)).ToArray();
+            foreach (var r in roots)
+                if (!_sampler.TryGet(r.Pid, out var live) || live.Key != r)
+                    return (404, new GroupErrorDto("root-not-found", $"No running process with pid {r.Pid} and that creation time."));
+
+            _groups.TryGet(id, out var existing);
+            ulong exclusive = 0;
+            if (GroupStore.ExclusiveCount(request.Actions?.Affinity) is { } n)
+            {
+                if (existing is not null && GroupStore.Bits(existing.Exclusive) == n * Math.Max(1, CoreWidth()))
+                    exclusive = existing.Exclusive; // renewal keeps its cores
+                else if (_groups.PickExclusive(n, Topology, AutopilotRules.GameCcd(Settings.Autopilot.GameMode.Placement, Topology), id, out var why) is { } mask)
+                    exclusive = mask;
+                else
+                    return (409, new GroupErrorDto("placement-unavailable", why));
+            }
+            var group = new GroupStore.Group
+            {
+                Id = id,
+                Owner = request.Owner!.Trim(),
+                Label = request.Label?.Trim() is { Length: > 0 } label ? label : id,
+                Roots = roots,
+                IncludeDescendants = request.IncludeDescendants,
+                Freeze = request.FreezeAutopilot,
+                ExpiresMs = Environment.TickCount64 + (request.TtlSeconds ?? 90) * 1000L,
+                Actions = request.Actions,
+                Exclusive = exclusive,
+            };
+
+            // The group's settings are validated exactly like a rule.
+            var probe = new GroupStore();
+            probe.Put(group);
+            var errors = new List<RuleError>();
+            RuleCompiler.Compile(new RuleSet { Rules = [.. probe.Rules()] }, Topology, errors);
+            if (errors.Count > 0) return (400, new GroupErrorDto("invalid", errors[0].Message));
+
+            bool changed = existing is null || !SameShape(existing, group);
+            if (changed)
+            {
+                _groups.Put(group);
+                RebuildRules();
+                Tick(); // apply now
+            }
+            else
+            {
+                existing!.ExpiresMs = group.ExpiresMs; // plain renewal: nothing to re-apply
+                group = existing;
+            }
+
+            // A root Corewright cannot change (not elevated, protected) is refused: the tool keeps its own controls.
+            foreach (var r in roots)
+            {
+                var failed = Engine.GetFailed(r);
+                if (failed.Count > 0)
+                {
+                    _groups.Remove(id);
+                    RebuildRules();
+                    Tick();
+                    return (503, new GroupErrorDto("cannot-control",
+                        $"Corewright could not set {string.Join(", ", failed.Select(f => Slots.Name(f.Slot)))} on pid {r.Pid}."));
+                }
+            }
+            return (200, GroupView(group));
+        }
+    }
+
+    /// <summary>Whole cores have this many logical processors (SMT); 1 when unknown.</summary>
+    private int CoreWidth() => Topology.CoresByRank.Length > 0 ? System.Numerics.BitOperations.PopCount(Topology.CoresByRank[0]) : 1;
+
+    private static bool SameShape(GroupStore.Group a, GroupStore.Group b) =>
+        a.Owner == b.Owner && a.Label == b.Label && a.IncludeDescendants == b.IncludeDescendants && a.Freeze == b.Freeze &&
+        a.Exclusive == b.Exclusive && a.Roots.SequenceEqual(b.Roots) && SameActions(a.Actions, b.Actions);
+
+    private static bool SameActions(RuleActions? a, RuleActions? b) =>
+        (a is null && b is null) || (a is not null && b is not null &&
+        a.CpuPriority == b.CpuPriority && a.IoPriority == b.IoPriority && a.GpuPriority == b.GpuPriority &&
+        a.MemoryPriority == b.MemoryPriority && a.EfficiencyMode == b.EfficiencyMode && a.MemoryLimitMb == b.MemoryLimitMb &&
+        a.WorkingSetLimitMb == b.WorkingSetLimitMb && a.Affinity == b.Affinity);
+
+    public (int Status, object Body) GetGroup(string id)
+    {
+        lock (Sync)
+            return _groups.TryGet(id, out var g) ? (200, GroupView(g)) : (404, new GroupErrorDto("unknown-group", null));
+    }
+
+    public GroupDto[] ListGroups()
+    {
+        lock (Sync) return [.. _groups.All.Select(GroupView)];
+    }
+
+    public bool DeleteGroup(string id)
+    {
+        lock (Sync)
+        {
+            if (!_groups.Remove(id)) return false;
+            RebuildRules();
+            Tick(); // put back what the group's settings changed
+            return true;
+        }
+    }
+
+    private GroupDto GroupView(GroupStore.Group g)
+    {
+        var warnings = new List<GroupWarningDto>();
+        int count = 0;
+        foreach (var p in _sampler.Processes)
+        {
+            if (p.GroupId != g.Id) continue;
+            count++;
+            foreach (var (slot, _) in Engine.GetFailed(p.Key))
+                warnings.Add(new GroupWarningDto(p.Key.Pid, p.Name, Slots.Name(slot), "write refused (access denied or protected)"));
+        }
+        string? cpus = null, cpu = null, io = null, mem = null;
+        foreach (var a in Engine.GetApplied(g.Roots[0]))
+        {
+            string v = Slots.FormatValue(a.Slot, a.Value);
+            switch (a.Slot)
+            {
+                case Slot.Affinity: cpus = v; break;
+                case Slot.CpuPriority: cpu = v; break;
+                case Slot.IoPriority: io = v; break;
+                case Slot.MemoryPriority: mem = v; break;
+            }
+        }
+        if (cpus is null && g.Exclusive != 0) cpus = AffinityParser.Format(g.Exclusive);
+        int left = (int)Math.Max(0, (g.ExpiresMs - Environment.TickCount64) / 1000);
+        return new GroupDto(g.Id, g.Owner, g.Label, Engine.Paused ? "engine-paused" : _stopping ? "stopping" : "applied", g.Freeze,
+            new GroupAppliedDto(cpus, cpu, io, mem), count, left, [.. warnings]);
     }
 
     public void Pause()

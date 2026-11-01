@@ -16,7 +16,7 @@ public sealed record PlacementDto(int Pid, string Name, string Cores, int Ccd, i
 /// must leave (a game started on its CCD) or its cores stay saturated for a minute while another CCD idles, at most
 /// every two minutes.
 /// </summary>
-internal sealed class AffinityPlacer(Func<SystemTopology> topology, Func<float[]> threadLoad, Func<int> gameCcd, Func<int> keepBestFree)
+internal sealed class AffinityPlacer(Func<SystemTopology> topology, Func<float[]> threadLoad, Func<int> gameCcd, Func<int> keepBestFree, Func<ulong> groupCores)
     : IAffinityPlacer
 {
     private const long GrowEveryMs = 30_000;
@@ -56,7 +56,8 @@ internal sealed class AffinityPlacer(Func<SystemTopology> topology, Func<float[]
         // Hard limits: never the strongest cores, never the game's CCD while a game runs.
         ulong strongest = topo.CoresByRank.Take(Math.Max(0, keepBestFree())).Aggregate(0UL, (m, c) => m | c);
         ulong gameMask = ctx.GamePid != 0 && game >= 0 && topo.CcdMasks.Length > 1 ? topo.CcdMasks[game] : 0;
-        ulong allowed = topo.AllMask & ~strongest & ~gameMask;
+        // Cores a process group holds exclusively (exclusive:N) are never used for Autopilot's placements.
+        ulong allowed = topo.AllMask & ~strongest & ~gameMask & ~groupCores();
         if (allowed == 0) allowed = topo.AllMask & ~gameMask;
         if (allowed == 0) return 0;
 
