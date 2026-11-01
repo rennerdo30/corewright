@@ -1,4 +1,4 @@
-import type { ProcessRow, Rule, RuleActions } from '../types'
+import type { ProcessRow, Rule, RuleActions, Topology } from '../types'
 import type { MenuEntry } from './ContextMenu'
 
 interface Handlers {
@@ -37,14 +37,29 @@ const MEMORY: [string, string][] = [
   ['veryLow', 'Very low'],
 ]
 
+/** Affinity presets from the real CPU layout: all cores, each CCD (with V-Cache / fastest marked), the best cores by CPPC. */
+function affinityPresets(topo: Topology | undefined, hybrid: boolean): [string, string][] {
+  const out: [string, string][] = [['all', 'All cores']]
+  if (hybrid) out.push(['p-cores', 'Performance cores'], ['e-cores', 'Efficiency cores'])
+  if (!topo) return out
+  const top = topo.ccds.flatMap((c) => c.cores.map((k) => ({ ccd: c.id, k }))).sort((a, b) => a.k.rank - b.k.rank)[0]
+  if (topo.ccds.length > 1)
+    for (const c of topo.ccds) {
+      const lps = c.cores.flatMap((k) => k.threads)
+      const tags = [c.vCache && topo.ccds.some((o) => !o.vCache) ? 'V-Cache' : '', topo.rankingAvailable && top?.ccd === c.id ? 'fastest' : '']
+        .filter(Boolean)
+        .join(', ')
+      out.push([`ccd${c.id}`, `CCD ${c.id} (threads ${Math.min(...lps)}–${Math.max(...lps)}${tags ? `, ${tags}` : ''})`])
+    }
+  if (topo.rankingAvailable) for (const n of [2, 4, 8]) if (n < topo.physical) out.push([`best-cores:${n}`, `Best ${n} cores`])
+  return out
+}
+
 /** Context menu for one process. "Always" settings are stored in that process's quick rule. */
-export function buildProcessMenu(p: ProcessRow, quick: Rule | undefined, logical: number, hybrid: boolean, h: Handlers): MenuEntry[] {
+export function buildProcessMenu(p: ProcessRow, quick: Rule | undefined, topo: Topology | undefined, hybrid: boolean, h: Handlers): MenuEntry[] {
   const a = quick?.actions ?? {}
   const locked = p.protected
-  const half = Math.floor(logical / 2)
-  const affinity: [string, string][] = [['all', 'All cores']]
-  if (hybrid) affinity.push(['p-cores', 'Performance cores'], ['e-cores', 'Efficiency cores'])
-  if (logical >= 4) affinity.push([`0-${half - 1}`, `Cores 0–${half - 1}`], [`${half}-${logical - 1}`, `Cores ${half}–${logical - 1}`])
+  const affinity = affinityPresets(topo, hybrid)
 
   return [
     { type: 'head', label: `${p.name} · ${p.pid}` },

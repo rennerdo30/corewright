@@ -6,7 +6,7 @@ export type MenuEntry =
   | { type: 'head'; label: string }
 
 /** A Windows 11 MenuFlyout: keyboard Escape, click outside or scroll closes it; submenus open on hover. */
-export function ContextMenu({ x, y, items, onClose }: { x: number; y: number; items: MenuEntry[]; onClose: () => void }) {
+export function ContextMenu({ x, y, items, onClose, keepOpen }: { x: number; y: number; items: MenuEntry[]; onClose: () => void; keepOpen?: boolean }) {
   useEffect(() => {
     const close = (e: Event) => {
       if (e instanceof KeyboardEvent && e.key !== 'Escape') return
@@ -24,10 +24,10 @@ export function ContextMenu({ x, y, items, onClose }: { x: number; y: number; it
     }
   }, [onClose])
 
-  return <MenuPanel x={x} y={y} items={items} onClose={onClose} />
+  return <MenuPanel x={x} y={y} items={items} onClose={onClose} keepOpen={keepOpen} />
 }
 
-function MenuPanel({ x, y, items, onClose, alignRight }: { x: number; y: number; items: MenuEntry[]; onClose: () => void; alignRight?: number }) {
+function MenuPanel({ x, y, items, onClose, alignRight, keepOpen }: { x: number; y: number; items: MenuEntry[]; onClose: () => void; alignRight?: number; keepOpen?: boolean }) {
   const ref = useRef<HTMLDivElement>(null)
   const [pos, setPos] = useState({ left: x, top: y })
   const [open, setOpen] = useState<number>()
@@ -66,7 +66,7 @@ function MenuPanel({ x, y, items, onClose, alignRight }: { x: number; y: number;
             onClick={() => {
               if (hasSub || it.disabled) return
               it.onClick?.()
-              onClose()
+              if (!keepOpen) onClose()
             }}
           >
             <span className="glyph">{it.glyph ?? ''}</span>

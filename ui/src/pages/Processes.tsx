@@ -1,113 +1,120 @@
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { useMemo, useRef, useState } from 'react'
 import { api } from '../api'
-import { ContextMenu } from '../components/ContextMenu'
+import { ContextMenu, type MenuEntry } from '../components/ContextMenu'
 import { buildProcessMenu } from '../components/processMenu'
 import { bytes, newId, percent } from '../format'
 import { iconUrl, isHost, levelLabel, post, useDescriptions } from '../host'
 import { usePoll } from '../hooks'
 import { quickRule, setQuick } from '../quick'
-import type { ProcessRow, Rule, RuleSet } from '../types'
+import type { ProcessRow, Rule, RuleSet, Topology } from '../types'
+import { COLUMN_GROUPS, COLUMNS, type ColumnDef } from './processColumns'
 
-type SortKey = 'name' | 'pid' | 'cpu' | 'privateBytes' | 'ioBytesPerSec' | 'threads'
 type View = 'apps' | 'tree' | 'list'
 
-/** One visible line: a process, or an app group (all processes with the same exe name). */
+/** One visible line: a single process, or an app group (all processes with the same exe name). */
 interface Line {
   key: string
-  p: ProcessRow // the process, or the group's first process (used for menus and details)
+  items: ProcessRow[]
+  p: ProcessRow // first process: used for name, icon, menus and details
   depth: number
-  count: number // > 1 for groups
   expandable: boolean
   expanded: boolean
-  cpu: number
-  privateBytes: number
-  ioBytesPerSec: number
-  threads: number
-  priority: string
-  managed: boolean
 }
 
-const RATE_FULL = 50 * 1024 * 1024 // I/O heat is full at 50 MB/s
+const WIDTHS_KEY = 'corewright.processColumns.widths'
+const VISIBLE_KEY = 'corewright.processColumns.visible'
+const DEFAULT_VISIBLE = COLUMNS.filter((c) => c.visible).map((c) => c.id)
+
+function load<T>(key: string, fallback: T): T {
+  try {
+    const raw = localStorage.getItem(key)
+    return raw ? (JSON.parse(raw) as T) : fallback
+  } catch {
+    return fallback
+  }
+}
+
+/** Value of a column for a line: one process, or the group aggregate (sum / max / same-or-Mixed). */
+function cellValue(c: ColumnDef, l: Line): number | string | boolean | undefined {
+  if (l.items.length === 1) return c.value(l.p)
+  const values = l.items.map(c.value)
+  if (c.agg === 'sum') return values.reduce<number>((s, v) => s + (typeof v === 'number' ? v : 0), 0)
+  if (c.agg === 'max') return values.reduce<number>((s, v) => Math.max(s, typeof v === 'number' ? v : 0), 0)
+  const first = values[0]
+  return values.every((v) => v === first) ? first : 'mixed'
+}
 
 export function Processes({ onCreateRule }: { onCreateRule: (r: Rule) => void }) {
-  const procs = usePoll(api.processes, 1000)
+  const [visible, setVisible] = useState<string[]>(() => load(VISIBLE_KEY, DEFAULT_VISIBLE))
+  const [widths, setWidths] = useState<Record<string, number>>(() => load(WIDTHS_KEY, {}))
+  const columns = COLUMNS.filter((c) => c.id === 'name' || visible.includes(c.id))
+  // Only ask the service for what visible columns need (handle reads cost CPU).
+  const include = [...new Set(columns.map((c) => c.needs).filter(Boolean))].sort().join(',')
+
+  const procs = usePoll(() => api.processes(include), 1000)
   const sys = usePoll(api.system, 2000)
+  const topo = usePoll(api.topology, 600_000)
   const [search, setSearch] = useState('')
   const [view, setView] = useState<View>('apps')
   const [managedOnly, setManagedOnly] = useState(false)
-  const [sort, setSort] = useState<{ key: SortKey; desc: boolean }>({ key: 'cpu', desc: true })
+  const [sort, setSort] = useState<{ id: string; desc: boolean }>({ id: 'cpu', desc: true })
   const [toggled, setToggled] = useState<Set<string>>(new Set())
   const [selected, setSelected] = useState<number>()
   const [menu, setMenu] = useState<{ x: number; y: number; p: ProcessRow; rules?: RuleSet }>()
+  const [columnMenu, setColumnMenu] = useState<{ x: number; y: number }>()
   const [toast, setToast] = useState<string>()
 
   const list = procs.data ?? []
   const descriptions = useDescriptions(list.map((p) => p.path))
   const label = (p: ProcessRow) => (p.path && descriptions.get(p.path)) || p.name
-  const memTotal = sys.data?.memoryTotal ?? 0
+  const width = (c: ColumnDef) => widths[c.id] ?? c.width
 
   const lines = useMemo<Line[]>(() => {
     const q = search.trim().toLowerCase()
-    const visible = list.filter(
+    const shown = list.filter(
       (p) =>
         (!managedOnly || p.applied?.length) &&
         (!q || p.name.toLowerCase().includes(q) || String(p.pid) === q || p.path?.toLowerCase().includes(q) || label(p).toLowerCase().includes(q)),
     )
-    const value = (l: Line) =>
-      sort.key === 'name' ? 0 : sort.key === 'pid' ? l.p.pid : sort.key === 'cpu' ? l.cpu : sort.key === 'privateBytes' ? l.privateBytes : sort.key === 'ioBytesPerSec' ? l.ioBytesPerSec : l.threads
+    const sortCol = COLUMNS.find((c) => c.id === sort.id) ?? COLUMNS[0]
     const cmp = (a: Line, b: Line) => {
-      const r = sort.key === 'name' ? label(a.p).localeCompare(label(b.p)) : value(a) - value(b)
+      let r: number
+      if (sortCol.id === 'name') r = label(a.p).localeCompare(label(b.p))
+      else {
+        const va = cellValue(sortCol, a)
+        const vb = cellValue(sortCol, b)
+        r = typeof va === 'number' && typeof vb === 'number' ? va - vb : String(va ?? '').localeCompare(String(vb ?? ''))
+      }
       return sort.desc ? -r : r
     }
     const one = (p: ProcessRow, depth: number, expandable = false, expanded = false): Line => ({
       key: `p${p.pid}`,
+      items: [p],
       p,
       depth,
-      count: 1,
       expandable,
       expanded,
-      cpu: p.cpu,
-      privateBytes: p.privateBytes,
-      ioBytesPerSec: p.ioBytesPerSec,
-      threads: p.threads,
-      priority: p.priority,
-      managed: !!p.applied?.length,
     })
 
-    if (view === 'list') return visible.map((p) => one(p, 0)).sort(cmp)
+    if (view === 'list') return shown.map((p) => one(p, 0)).sort(cmp)
 
     if (view === 'apps') {
       // Like Task Manager: processes with the same exe form one app line with a count; groups start collapsed.
       const groups = new Map<string, ProcessRow[]>()
-      for (const p of visible) {
+      for (const p of shown) {
         const k = p.name.toLowerCase()
         const g = groups.get(k)
         if (g) g.push(p)
         else groups.set(k, [p])
       }
-      const heads = [...groups.entries()].map(([k, ps]): Line => {
-        if (ps.length === 1) return one(ps[0], 0)
-        const prios = new Set(ps.map((p) => p.priority))
-        return {
-          key: `g${k}`,
-          p: ps[0],
-          depth: 0,
-          count: ps.length,
-          expandable: true,
-          expanded: toggled.has(k),
-          cpu: ps.reduce((s, p) => s + p.cpu, 0),
-          privateBytes: ps.reduce((s, p) => s + p.privateBytes, 0),
-          ioBytesPerSec: ps.reduce((s, p) => s + p.ioBytesPerSec, 0),
-          threads: ps.reduce((s, p) => s + p.threads, 0),
-          priority: prios.size === 1 ? ps[0].priority : 'mixed',
-          managed: ps.some((p) => p.applied?.length),
-        }
-      })
+      const heads = [...groups.entries()].map(([k, ps]): Line =>
+        ps.length === 1 ? one(ps[0], 0) : { key: `g${k}`, items: ps, p: ps[0], depth: 0, expandable: true, expanded: toggled.has(k) },
+      )
       const out: Line[] = []
       for (const h of heads.sort(cmp)) {
         out.push(h)
-        if (h.count > 1 && h.expanded) out.push(...groups.get(h.p.name.toLowerCase())!.map((p) => one(p, 1)).sort(cmp))
+        if (h.items.length > 1 && h.expanded) out.push(...h.items.map((p) => one(p, 1)).sort(cmp))
       }
       return out
     }
@@ -116,7 +123,7 @@ export function Processes({ onCreateRule }: { onCreateRule: (r: Rule) => void })
     const pids = new Set(list.map((p) => p.pid))
     const byParent = new Map<number, ProcessRow[]>()
     const roots: ProcessRow[] = []
-    for (const p of visible) {
+    for (const p of shown) {
       if (!q && !managedOnly && p.parentPid != null && pids.has(p.parentPid) && p.parentPid !== p.pid) {
         const arr = byParent.get(p.parentPid) ?? []
         arr.push(p)
@@ -136,11 +143,12 @@ export function Processes({ onCreateRule }: { onCreateRule: (r: Rule) => void })
   }, [list, search, view, managedOnly, sort, toggled, descriptions.size])
 
   const scroller = useRef<HTMLDivElement>(null)
-  const virtual = useVirtualizer({ count: lines.length, getScrollElement: () => scroller.current, estimateSize: () => 30, overscan: 16 })
+  const headRef = useRef<HTMLDivElement>(null)
+  const virtual = useVirtualizer({ count: lines.length, getScrollElement: () => scroller.current, estimateSize: () => 28, overscan: 16 })
 
   const toggle = (l: Line) =>
     setToggled((s) => {
-      const k = l.count > 1 ? l.p.name.toLowerCase() : l.key
+      const k = l.items.length > 1 ? l.p.name.toLowerCase() : l.key
       const n = new Set(s)
       if (n.has(k)) n.delete(k)
       else n.add(k)
@@ -173,24 +181,68 @@ export function Processes({ onCreateRule }: { onCreateRule: (r: Rule) => void })
     URL.revokeObjectURL(a.href)
   }
 
-  const s = sys.data
-  const headers: { key: SortKey | null; label: string; total?: string; num?: boolean; col: string }[] = [
-    { key: 'name', label: 'Name', col: 'name' },
-    { key: 'pid', label: 'PID', num: true, col: 'pid' },
-    { key: null, label: 'Priority', col: 'priority' },
-    { key: 'cpu', label: 'CPU', total: s ? percent(s.cpu, 0) : undefined, num: true, col: 'cpu' },
-    { key: 'privateBytes', label: 'Memory', total: s ? percent((100 * s.memoryUsed) / s.memoryTotal, 0) : undefined, num: true, col: 'mem' },
-    { key: 'ioBytesPerSec', label: 'Disk', total: s ? rateShort(s.ioBytesPerSec) : undefined, num: true, col: 'io' },
-    { key: 'threads', label: 'Threads', num: true, col: 'threads' },
+  // ---- Columns: visibility (chooser) and widths (drag the header edge; double-click resets) ----
+
+  const saveVisible = (next: string[]) => {
+    setVisible(next)
+    localStorage.setItem(VISIBLE_KEY, JSON.stringify(next))
+  }
+
+  const columnItems: MenuEntry[] = [
+    ...COLUMN_GROUPS.flatMap((g): MenuEntry[] => [
+      { type: 'head', label: g },
+      ...COLUMNS.filter((c) => c.group === g && c.id !== 'name').map(
+        (c): MenuEntry => ({
+          type: 'item',
+          label: c.label,
+          checked: visible.includes(c.id),
+          onClick: () => saveVisible(visible.includes(c.id) ? visible.filter((v) => v !== c.id) : [...visible, c.id]),
+        }),
+      ),
+    ]),
+    { type: 'sep' },
+    { type: 'item', label: 'Reset columns', glyph: '\uE777', onClick: () => { saveVisible(DEFAULT_VISIBLE); setWidths({}); localStorage.removeItem(WIDTHS_KEY) } },
   ]
 
+  const startResize = (c: ColumnDef, e: React.PointerEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    const startX = e.clientX
+    const startW = width(c)
+    const min = c.id === 'name' ? 160 : 48
+    document.body.classList.add('resizing')
+    const move = (ev: PointerEvent) => setWidths((w) => ({ ...w, [c.id]: Math.max(min, Math.round(startW + ev.clientX - startX)) }))
+    const up = () => {
+      window.removeEventListener('pointermove', move)
+      window.removeEventListener('pointerup', up)
+      document.body.classList.remove('resizing')
+      setWidths((w) => {
+        localStorage.setItem(WIDTHS_KEY, JSON.stringify(w))
+        return w
+      })
+    }
+    window.addEventListener('pointermove', move)
+    window.addEventListener('pointerup', up)
+  }
+
+  const resetWidth = (c: ColumnDef) =>
+    setWidths((w) => {
+      const next = { ...w }
+      delete next[c.id]
+      localStorage.setItem(WIDTHS_KEY, JSON.stringify(next))
+      return next
+    })
+
+  const template = columns.map((c) => `${width(c)}px`).join(' ') + ' minmax(0, 1fr)'
+  const tableWidth = columns.reduce((s, c) => s + width(c), 0)
+  const s = sys.data
   const sel = list.find((p) => p.pid === selected)
 
   return (
-    <div className="page split">
+    <div className="page split dense">
       <div className="split-main proc-wrap">
         <div className="toolbar">
-          <h1>Processes</h1>
+          <h2 className="page-title">Processes</h2>
           <div className="search-box">
             <span className="glyph">{'\uE721'}</span>
             <input placeholder="Search by name, PID or path" value={search} onChange={(e) => setSearch(e.target.value)} />
@@ -206,82 +258,103 @@ export function Processes({ onCreateRule }: { onCreateRule: (r: Rule) => void })
             <input type="checkbox" checked={managedOnly} onChange={(e) => setManagedOnly(e.target.checked)} /> Managed only
           </label>
           <div className="spacer" />
+          <button className="btn subtle" onClick={(e) => setColumnMenu({ x: e.clientX, y: e.clientY })} title="Choose columns (or right-click a column header)">
+            <span className="glyph">{'\uE8A4'}</span> Columns
+          </button>
           <button className="btn subtle" onClick={saveSnapshot} title="Save the process list as JSON">
             <span className="glyph">{'\uE74E'}</span> Snapshot
           </button>
         </div>
         {procs.error && <div className="banner danger">{procs.error}</div>}
-        <div className="ptable">
-          <div className="phead">
-            {headers.map((h) => (
-              <button
-                key={h.label}
-                className={`ph col-${h.col} ${h.num ? 'num' : ''} ${sort.key === h.key ? 'sorted' : ''}`}
-                disabled={!h.key}
-                onClick={() => h.key && setSort((x) => ({ key: h.key!, desc: x.key === h.key ? !x.desc : h.key !== 'name' }))}
-              >
-                {h.total && <span className="ph-total">{h.total}</span>}
-                <span className="ph-label">
-                  {h.label}
-                  {sort.key === h.key && <span className="sort-glyph">{sort.desc ? '\uE70D' : '\uE70E'}</span>}
-                </span>
-              </button>
-            ))}
+        <div className="ptable" style={{ '--cols': template, '--table-w': `${tableWidth}px` } as React.CSSProperties}>
+          <div
+            className="phead"
+            ref={headRef}
+            onContextMenu={(e) => {
+              e.preventDefault()
+              setColumnMenu({ x: e.clientX, y: e.clientY })
+            }}
+          >
+            <div className="phead-inner">
+              {columns.map((c) => (
+                <div key={c.id} className="ph-cell">
+                  <button
+                    className={`ph ${c.num ? 'num' : ''} ${sort.id === c.id ? 'sorted' : ''}`}
+                    title={c.label}
+                    onClick={() => setSort((x) => ({ id: c.id, desc: x.id === c.id ? !x.desc : !!c.num }))}
+                  >
+                    {c.total && s && <span className="ph-total">{c.total(s)}</span>}
+                    <span className="ph-label">
+                      {c.label}
+                      {sort.id === c.id && <span className="sort-glyph">{sort.desc ? '\uE70D' : '\uE70E'}</span>}
+                    </span>
+                  </button>
+                  <span className="col-resize" title="Drag to resize, double-click to reset" onPointerDown={(e) => startResize(c, e)} onDoubleClick={() => resetWidth(c)} />
+                </div>
+              ))}
+            </div>
           </div>
-          <div className="pbody" ref={scroller}>
-            <div style={{ height: virtual.getTotalSize(), position: 'relative' }}>
+          <div className="pbody" ref={scroller} onScroll={(e) => headRef.current && (headRef.current.scrollLeft = e.currentTarget.scrollLeft)}>
+            <div className="pbody-inner" style={{ height: virtual.getTotalSize() }}>
               {virtual.getVirtualItems().map((v) => {
                 const l = lines[v.index]
                 const p = l.p
+                const group = l.items.length > 1
                 const icon = iconUrl(p.path)
-                const isSel = selected === p.pid && l.count === 1
                 return (
                   <div
                     key={l.key}
-                    className={`prow ${isSel ? 'sel' : ''} ${p.protected ? 'dim' : ''}`}
+                    className={`prow ${selected === p.pid && !group ? 'sel' : ''} ${p.protected ? 'dim' : ''}`}
                     style={{ transform: `translateY(${v.start}px)` }}
                     onClick={() => setSelected(p.pid)}
                     onDoubleClick={() => l.expandable && toggle(l)}
                     onContextMenu={(e) => openMenu(e, p)}
                   >
-                    <div className="pc col-name" style={{ paddingLeft: 8 + l.depth * 20 }}>
-                      <span
-                        className="twisty"
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          if (l.expandable) toggle(l)
-                        }}
-                      >
-                        {l.expandable ? (l.expanded ? '\uE70D' : '\uE76C') : ''}
-                      </span>
-                      {icon ? (
-                        <img className="picon" src={icon} alt="" onError={(e) => ((e.target as HTMLImageElement).style.visibility = 'hidden')} />
-                      ) : (
-                        <span className="picon glyph">{'\uECAA'}</span>
-                      )}
-                      <span className="pname" title={`${p.name}${p.path ? `\n${p.path}` : ''}`}>
-                        {label(p)}
-                        {l.count > 1 && <span className="pcount"> ({l.count})</span>}
-                      </span>
-                      {l.managed && (
-                        <span className="managed" title="Corewright manages this process">
-                          {'\uE9F5'}
-                        </span>
-                      )}
-                      {p.foreground && l.count === 1 && <span className="tag">foreground</span>}
-                    </div>
-                    <div className="pc num col-pid secondary">{l.count > 1 ? '' : p.pid}</div>
-                    <div className="pc col-priority secondary">{l.priority === 'mixed' ? 'Mixed' : levelLabel(l.priority)}</div>
-                    <div className="pc num col-cpu heat" style={heat(l.cpu / 25)}>
-                      {l.cpu >= 0.05 ? percent(l.cpu) : '0%'}
-                    </div>
-                    <div className="pc num col-mem heat" style={heat(memTotal ? (l.privateBytes / memTotal) * 12 : 0)}>
-                      {bytes(l.privateBytes)}
-                    </div>
-                    <div className="pc num col-io heat" style={heat(l.ioBytesPerSec / RATE_FULL)}>
-                      {rateShort(l.ioBytesPerSec)}
-                    </div>
-                    <div className="pc num col-threads secondary">{l.threads}</div>
+                    {columns.map((c) => {
+                      if (c.id === 'name')
+                        return (
+                          <div key={c.id} className="pc col-name" style={{ paddingLeft: 6 + l.depth * 20 }}>
+                            <span
+                              className="twisty"
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                if (l.expandable) toggle(l)
+                              }}
+                            >
+                              {l.expandable ? (l.expanded ? '\uE70D' : '\uE76C') : ''}
+                            </span>
+                            {icon ? (
+                              <img className="picon" src={icon} alt="" onError={(e) => ((e.target as HTMLImageElement).style.visibility = 'hidden')} />
+                            ) : (
+                              <span className="picon glyph">{'\uECAA'}</span>
+                            )}
+                            <span className="pname" title={`${p.name}${p.path ? `\n${p.path}` : ''}`}>
+                              {label(p)}
+                              {group && <span className="pcount"> ({l.items.length})</span>}
+                            </span>
+                            {l.items.some((x) => x.applied?.length) && (
+                              <span className="managed" title="Corewright manages this process">
+                                {'\uE9F5'}
+                              </span>
+                            )}
+                            {p.foreground && !group && <span className="tag">foreground</span>}
+                          </div>
+                        )
+                      const raw = c.id === 'pid' && group ? undefined : cellValue(c, l)
+                      const display = raw === 'mixed' ? 'Mixed' : c.format ? c.format(raw) : raw === undefined ? '' : String(raw)
+                      const managedSlot = c.slot ? l.items.flatMap((x) => x.applied ?? []).find((a) => a.slot === c.slot) : undefined
+                      const level = c.heat && typeof raw === 'number' ? c.heat(raw, s) : 0
+                      return (
+                        <div
+                          key={c.id}
+                          className={`pc ${c.num ? 'num' : ''} ${c.heat ? 'heat' : 'secondary'} ${managedSlot ? 'set-by-rule' : ''}`}
+                          style={heat(level)}
+                          title={managedSlot ? `${display}, set by ${managedSlot.ruleName}` : display}
+                        >
+                          {display}
+                        </div>
+                      )
+                    })}
                   </div>
                 )
               })}
@@ -295,7 +368,7 @@ export function Processes({ onCreateRule }: { onCreateRule: (r: Rule) => void })
           x={menu.x}
           y={menu.y}
           onClose={() => setMenu(undefined)}
-          items={buildProcessMenu(menu.p, quickRule(menu.rules, menu.p.name), s?.cores.logicalProcessors ?? 0, s?.cores.hybrid ?? false, {
+          items={buildProcessMenu(menu.p, quickRule(menu.rules, menu.p.name), topo.data, s?.cores.hybrid ?? false, {
             setAlways: (patch) =>
               setQuick(menu.p, patch)
                 .then(() => notify(`Saved. Applies to every ${menu.p.name} from now on.`))
@@ -307,6 +380,7 @@ export function Processes({ onCreateRule }: { onCreateRule: (r: Rule) => void })
           })}
         />
       )}
+      {columnMenu && <ContextMenu x={columnMenu.x} y={columnMenu.y} onClose={() => setColumnMenu(undefined)} items={columnItems} keepOpen />}
       {toast && <div className="toast">{toast}</div>}
     </div>
   )
@@ -317,11 +391,6 @@ function heat(level: number): React.CSSProperties | undefined {
   const v = Math.max(0, Math.min(1, level))
   if (v < 0.02) return undefined
   return { background: `color-mix(in srgb, var(--heat) ${Math.round(12 + v * 58)}%, transparent)` }
-}
-
-function rateShort(n: number): string {
-  if (n < 1024) return '0 MB/s'
-  return `${(n / 1048576).toFixed(n < 10 * 1048576 ? 1 : 0)} MB/s`
 }
 
 function ProcessPanel({ p, title, onClose, onCreateRule }: { p: ProcessRow; title: string; onClose: () => void; onCreateRule: (r: Rule) => void }) {
@@ -424,3 +493,5 @@ function ruleFor(p: ProcessRow): Rule {
     actions: { cpuPriority: 'aboveNormal' },
   }
 }
+
+export type { Topology }

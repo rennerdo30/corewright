@@ -30,6 +30,30 @@ export function App() {
     history.replaceState(null, '', `#${p}`)
   }
   const [draftRule, setDraftRule] = useState<Rule>()
+  // Navigation pane like Task Manager: collapses to an icon rail; the expanded width can be dragged.
+  const [collapsed, setCollapsed] = useState(() => localStorage.getItem('corewright.nav.collapsed') === '1')
+  const [navWidth, setNavWidth] = useState(() => Number(localStorage.getItem('corewright.nav.width')) || 200)
+  const toggleNav = () =>
+    setCollapsed((c) => {
+      localStorage.setItem('corewright.nav.collapsed', c ? '0' : '1')
+      return !c
+    })
+  const startNavResize = (e: React.PointerEvent) => {
+    if (collapsed) return
+    e.preventDefault()
+    const startX = e.clientX
+    const startW = navWidth
+    document.body.classList.add('resizing')
+    const move = (ev: PointerEvent) => setNavWidth(Math.min(320, Math.max(150, startW + ev.clientX - startX)))
+    const up = (ev: PointerEvent) => {
+      window.removeEventListener('pointermove', move)
+      window.removeEventListener('pointerup', up)
+      document.body.classList.remove('resizing')
+      localStorage.setItem('corewright.nav.width', String(Math.min(320, Math.max(150, startW + ev.clientX - startX))))
+    }
+    window.addEventListener('pointermove', move)
+    window.addEventListener('pointerup', up)
+  }
   const status = usePoll(api.status, 3000)
   const s = status.data
 
@@ -47,16 +71,26 @@ export function App() {
   return (
     <div className="app">
       <TitleBar />
-      <div className="shell">
-      <aside className="nav">
+      <div className="shell" style={{ gridTemplateColumns: `${collapsed ? 48 : navWidth}px 1fr` }}>
+      <aside className={`nav ${collapsed ? 'collapsed' : ''}`}>
+        <button className="nav-item hamburger" onClick={toggleNav} title={collapsed ? 'Expand navigation' : 'Collapse navigation'}>
+          <span className="glyph">{'\uE700'}</span>
+        </button>
         {NAV.map((n) => (
-          <button key={n.id} className={`nav-item ${page === n.id ? 'active' : ''}`} onClick={() => setPage(n.id)}>
+          <button key={n.id} className={`nav-item ${page === n.id ? 'active' : ''}`} onClick={() => setPage(n.id)} title={collapsed ? n.label : undefined}>
             <span className="glyph">{n.glyph}</span>
-            {n.label}
+            <span className="nav-label">{n.label}</span>
           </button>
         ))}
+        {!collapsed && <div className="nav-resize" onPointerDown={startNavResize} title="Drag to resize" />}
         <div className="nav-footer">
-          {status.error ? (
+          {collapsed ? (
+            s && (
+              <button className="nav-item" onClick={togglePause} title={s.paused ? 'Rules paused: resume' : `${s.activeRules} rules active: pause and revert all`}>
+                <span className={`glyph ${s.paused ? 'warn-text' : 'ok-text'}`}>{s.paused ? '\uE768' : '\uE769'}</span>
+              </button>
+            )
+          ) : status.error ? (
             <div className="pill danger">{status.error}</div>
           ) : s ? (
             <>

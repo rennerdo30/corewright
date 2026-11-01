@@ -36,6 +36,22 @@ public sealed class ProcessInfo(ProcessKey key, string name)
     public int Handles;
     public int BasePriority;
 
+    // Task Manager "Details" values; they come with the same system call, so they cost nothing extra.
+    public long PrivateWorkingSet;
+    public long PeakWorkingSet;
+    public long PeakPrivateBytes;
+    public long VirtualSize;
+    public long PeakVirtualSize;
+    public long PagedPool;
+    public long NonPagedPool;
+    public long UserTime;    // 100 ns units
+    public long KernelTime;  // 100 ns units
+    public long CycleTime;
+    public uint PageFaults;
+    public uint HardFaults;
+    public long ReadOperations, WriteOperations, OtherOperations;
+    public long ReadBytes, WriteBytes, OtherBytes;
+
     // Sampler bookkeeping.
     public long LastCpuTime;
     public long LastIoBytes;

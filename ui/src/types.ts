@@ -21,6 +21,74 @@ export interface SystemInfo {
   historyCpu: number[]
   historyMemory: number[]
   historyIo: number[]
+  gpu: number
+  gpuMemory: number
+  gpuAdapters: { id: string; utilization: number; dedicatedUsed: number }[]
+  netReceive: number
+  netSend: number
+  historyGpu: number[]
+  historyNetReceive: number[]
+  historyNetSend: number[]
+  threadUsage: number[]
+}
+
+export interface CoreInfo {
+  id: number
+  threads: number[]
+  performance?: number
+  rank: number
+  ccdRank: number
+  tied: boolean
+  efficiencyClass: number
+}
+
+export interface Topology {
+  name: string
+  logical: number
+  physical: number
+  hybrid: boolean
+  rankingAvailable: boolean
+  ccds: { id: number; l3Bytes: number; vCache: boolean; cores: CoreInfo[] }[]
+}
+
+/** Optional per-process values, filled only for the groups requested with ?include=. */
+export interface ProcessExt {
+  started?: number
+  cpuTimeMs?: number
+  userTimeMs?: number
+  kernelTimeMs?: number
+  cycles?: number
+  privateWorkingSet?: number
+  sharedWorkingSet?: number
+  peakWorkingSet?: number
+  peakPrivateBytes?: number
+  virtualSize?: number
+  peakVirtualSize?: number
+  pagedPool?: number
+  nonPagedPool?: number
+  pageFaults?: number
+  hardFaults?: number
+  readOperations?: number
+  writeOperations?: number
+  otherOperations?: number
+  readBytes?: number
+  writeBytes?: number
+  otherBytes?: number
+  basePriority?: number
+  gpu?: number
+  affinity?: string
+  ioPriority?: string
+  gpuPriority?: string
+  memoryPriority?: string
+  efficiencyMode?: string
+  workingSetLimitMb?: number
+  memoryLimitMb?: number
+  gdiObjects?: number
+  userObjects?: number
+  user?: string
+  elevated?: boolean
+  bits?: number
+  commandLine?: string
 }
 
 export interface AppliedSlot {
@@ -46,6 +114,7 @@ export interface ProcessRow {
   protected: boolean
   foreground: boolean
   applied?: AppliedSlot[]
+  ext?: ProcessExt
 }
 
 export interface ExplainRule {

@@ -4,6 +4,7 @@ using System.Text.Json.Serialization;
 using Corewright.Core.Engine;
 using Corewright.Core.Import;
 using Corewright.Core.Rules;
+using Corewright.Service.Windows;
 
 namespace Corewright.Service;
 
@@ -13,13 +14,25 @@ public sealed record StatusDto(string Version, string Mode, bool Elevated, bool 
 public sealed record CoresDto(int LogicalProcessors, bool Hybrid, string PerformanceCores, string EfficiencyCores);
 
 public sealed record SystemDto(double Cpu, ulong MemoryTotal, ulong MemoryUsed, double IoBytesPerSec, int ProcessCount,
-    CoresDto Cores, long[] HistoryTime, float[] HistoryCpu, float[] HistoryMemory, float[] HistoryIo);
+    CoresDto Cores, long[] HistoryTime, float[] HistoryCpu, float[] HistoryMemory, float[] HistoryIo,
+    double Gpu, long GpuMemory, GpuAdapterDto[] GpuAdapters, double NetReceive, double NetSend,
+    float[] HistoryGpu, float[] HistoryNetReceive, float[] HistoryNetSend, float[] ThreadUsage);
+
+/// <summary>Optional per-process values; only the groups a client asks for are filled in.</summary>
+public sealed record ProcessExtDto(
+    long? Started, long? CpuTimeMs, long? UserTimeMs, long? KernelTimeMs, long? Cycles,
+    long? PrivateWorkingSet, long? SharedWorkingSet, long? PeakWorkingSet, long? PeakPrivateBytes, long? VirtualSize, long? PeakVirtualSize,
+    long? PagedPool, long? NonPagedPool, long? PageFaults, long? HardFaults,
+    long? ReadOperations, long? WriteOperations, long? OtherOperations, long? ReadBytes, long? WriteBytes, long? OtherBytes,
+    int? BasePriority, double? Gpu,
+    string? Affinity, string? IoPriority, string? GpuPriority, string? MemoryPriority, string? EfficiencyMode, long? WorkingSetLimitMb, long? MemoryLimitMb,
+    int? GdiObjects, int? UserObjects, string? User, bool? Elevated, int? Bits, string? CommandLine);
 
 public sealed record AppliedSlotDto(string Slot, string Value, string RuleId, string RuleName);
 
 public sealed record ProcessDto(int Pid, int? ParentPid, string Name, string? Path, double Cpu, long WorkingSet,
     long PrivateBytes, double IoBytesPerSec, int Threads, int Handles, string Priority, int Session, bool Protected,
-    bool Foreground, AppliedSlotDto[]? Applied);
+    bool Foreground, AppliedSlotDto[]? Applied, ProcessExtDto? Ext);
 
 public sealed record ExplainDto(int Pid, string Name, ExplainEntry[] Rules);
 
@@ -43,6 +56,7 @@ public sealed record ImportResponseDto(bool Applied, string? Source, Rule[] Rule
 [JsonSerializable(typeof(StatusDto))]
 [JsonSerializable(typeof(SystemDto))]
 [JsonSerializable(typeof(ProcessDto[]))]
+[JsonSerializable(typeof(TopologyDto))]
 [JsonSerializable(typeof(ExplainDto))]
 [JsonSerializable(typeof(RuleSet))]
 [JsonSerializable(typeof(RulesResultDto))]
@@ -71,23 +85,44 @@ internal static class Api
 
         api.MapGet("/system", () =>
         {
-            var (t, c, mem, io) = m.History();
+            var (t, c, mem, io, gpu, rx, tx) = m.History();
             var topo = m.Topology;
             lock (m.Sync)
                 return TypedResults.Ok(new SystemDto(m.Sampler.SystemCpuPercent, m.Sampler.MemoryTotal, m.Sampler.MemoryUsed,
                     m.Sampler.TotalIoBytesPerSec, m.Sampler.Processes.Count,
                     new CoresDto(topo.LogicalCount, topo.IsHybrid, AffinityParser.Format(topo.PerformanceMask),
                         AffinityParser.Format(topo.EfficiencyMask)),
-                    t, c, mem, io));
+                    t, c, mem, io,
+                    m.Gpu?.Utilization ?? 0, m.Gpu?.DedicatedUsed ?? 0, m.Gpu?.Adapters ?? [],
+                    m.Network.ReceiveBytesPerSec, m.Network.SendBytesPerSec, gpu, rx, tx, [.. m.Cores.Usage]));
         });
 
-        api.MapGet("/processes", () =>
+        api.MapGet("/topology", IResult () => m.CpuLayout is { } layout ? TypedResults.Ok(layout) : TypedResults.NotFound());
+
+        // include = comma list of: ext (sampler details), gpu, settings, identity, cmdline, gui.
+        api.MapGet("/processes", (string? include) =>
         {
+            var inc = (include ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var groups = DetailGroups.None;
+            if (inc.Contains("settings")) groups |= DetailGroups.Settings;
+            if (inc.Contains("identity")) groups |= DetailGroups.Identity;
+            if (inc.Contains("cmdline")) groups |= DetailGroups.CommandLine;
+            if (inc.Contains("gui")) groups |= DetailGroups.Gui;
+            if (groups != DetailGroups.None)
+            {
+                // Handle reads happen outside the engine lock so the tick is never delayed by a client.
+                ProcessKey[] keys;
+                lock (m.Sync) keys = [.. m.Sampler.Processes.Select(p => p.Key)];
+                m.Details.Refresh(keys, groups);
+            }
+            bool ext = inc.Count > 0;
             lock (m.Sync)
             {
                 var list = m.Sampler.Processes;
                 var result = new ProcessDto[list.Count];
-                for (int i = 0; i < list.Count; i++) result[i] = ToDto(m, list[i]);
+                for (int i = 0; i < list.Count; i++)
+                    result[i] = ToDto(m, list[i], ext, inc.Contains("ext"), inc.Contains("gpu"), groups);
                 return TypedResults.Ok(result);
             }
         });
@@ -188,7 +223,8 @@ internal static class Api
         });
     }
 
-    private static ProcessDto ToDto(Monitor m, ProcessInfo p)
+    private static ProcessDto ToDto(Monitor m, ProcessInfo p, bool ext = false, bool sampler = false, bool gpu = false,
+        DetailGroups groups = DetailGroups.None)
     {
         AppliedSlotDto[]? applied = null;
         if (m.Engine.HasApplied(p.Key))
@@ -198,7 +234,38 @@ internal static class Api
         int? parent = p.Parent is { } pk && m.Sampler.IsAlive(pk) ? pk.Pid : null;
         return new ProcessDto(p.Key.Pid, parent, p.Name, p.Path, Math.Round(p.CpuPercent, 2), p.WorkingSet, p.PrivateBytes,
             Math.Round(p.IoBytesPerSec), p.Threads, p.Handles, Slots.FormatBasePriority(p.BasePriority), p.SessionId,
-            p.IsProtected, p.Key.Pid == m.Context.ForegroundPid, applied);
+            p.IsProtected, p.Key.Pid == m.Context.ForegroundPid, applied, ext ? Ext(m, p, sampler, gpu, groups) : null);
+    }
+
+    private static ProcessExtDto Ext(Monitor m, ProcessInfo p, bool sampler, bool gpu, DetailGroups groups)
+    {
+        var d = groups == DetailGroups.None ? null : m.Details.Get(p.Key);
+        bool settings = groups.HasFlag(DetailGroups.Settings);
+        static string? Fmt(Slot slot, long? v) => v is long x ? Slots.FormatValue(slot, x) : null;
+        string? affinity = settings && d?.Affinity is long mask
+            ? ((ulong)mask & m.Topology.AllMask) == m.Topology.AllMask ? "all" : AffinityParser.Format((ulong)mask)
+            : null;
+        long? memLimit = null;
+        if (settings)
+        {
+            memLimit = 0;
+            foreach (var a in m.Engine.GetApplied(p.Key))
+                if (a.Slot == Slot.MemoryLimit) memLimit = a.Value;
+        }
+        long? Ms(long t) => sampler ? t / 10_000 : null;
+        long? S(long v) => sampler ? v : null;
+        return new ProcessExtDto(
+            sampler && p.Key.CreateTime > 0 ? (p.Key.CreateTime - 116444736000000000L) / 10_000 : null,
+            Ms(p.UserTime + p.KernelTime), Ms(p.UserTime), Ms(p.KernelTime), S(p.CycleTime),
+            S(p.PrivateWorkingSet), S(Math.Max(0, p.WorkingSet - p.PrivateWorkingSet)), S(p.PeakWorkingSet),
+            S(p.PeakPrivateBytes), S(p.VirtualSize), S(p.PeakVirtualSize),
+            S(p.PagedPool), S(p.NonPagedPool), S(p.PageFaults), S(p.HardFaults),
+            S(p.ReadOperations), S(p.WriteOperations), S(p.OtherOperations), S(p.ReadBytes), S(p.WriteBytes), S(p.OtherBytes),
+            sampler ? p.BasePriority : null,
+            gpu ? Math.Round(m.Gpu?.ByProcess.GetValueOrDefault(p.Key.Pid) ?? 0, 1) : null,
+            affinity, Fmt(Slot.IoPriority, d?.IoPriority), Fmt(Slot.GpuPriority, d?.GpuPriority), Fmt(Slot.MemoryPriority, d?.MemoryPriority),
+            Fmt(Slot.EfficiencyMode, d?.Efficiency), settings ? d?.WorkingSetLimitMb : null, memLimit,
+            d?.GdiObjects, d?.UserObjects, d?.UserName, d?.Elevated, d?.Bits, d?.CommandLine);
     }
 
     private static RuleErrorDto ToDto(RuleError e) => new(e.RuleId, e.RuleName, e.Message);

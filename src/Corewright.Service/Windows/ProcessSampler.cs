@@ -15,6 +15,9 @@ internal sealed unsafe class ProcessSampler : IDisposable
     private const int OffNameLen = 56, OffNameBuf = 64, OffBasePrio = 72, OffPid = 80, OffParent = 88;
     private const int OffHandles = 96, OffSession = 100, OffWorkingSet = 144, OffPrivate = 200;
     private const int OffReadXfer = 232, OffWriteXfer = 240, OffOtherXfer = 248;
+    private const int OffPrivateWs = 8, OffHardFaults = 16, OffCycles = 24, OffPeakVirtual = 112, OffVirtual = 120;
+    private const int OffPageFaults = 128, OffPeakWs = 136, OffPagedPool = 160, OffNonPagedPool = 176, OffPeakPagefile = 192;
+    private const int OffReadOps = 208, OffWriteOps = 216, OffOtherOps = 224;
 
     private readonly Dictionary<ProcessKey, ProcessInfo> _live = [];
     private readonly Dictionary<int, ProcessInfo> _byPid = [];
@@ -106,6 +109,24 @@ internal sealed unsafe class ProcessSampler : IDisposable
             info.BasePriority = *(int*)(p + OffBasePrio);
             info.WorkingSet = (long)*(nuint*)(p + OffWorkingSet);
             info.PrivateBytes = (long)*(nuint*)(p + OffPrivate);
+            info.PrivateWorkingSet = *(long*)(p + OffPrivateWs);
+            info.HardFaults = *(uint*)(p + OffHardFaults);
+            info.CycleTime = *(long*)(p + OffCycles);
+            info.PeakVirtualSize = (long)*(nuint*)(p + OffPeakVirtual);
+            info.VirtualSize = (long)*(nuint*)(p + OffVirtual);
+            info.PageFaults = *(uint*)(p + OffPageFaults);
+            info.PeakWorkingSet = (long)*(nuint*)(p + OffPeakWs);
+            info.PagedPool = (long)*(nuint*)(p + OffPagedPool);
+            info.NonPagedPool = (long)*(nuint*)(p + OffNonPagedPool);
+            info.PeakPrivateBytes = (long)*(nuint*)(p + OffPeakPagefile);
+            info.UserTime = *(long*)(p + OffUser);
+            info.KernelTime = *(long*)(p + OffKernel);
+            info.ReadOperations = *(long*)(p + OffReadOps);
+            info.WriteOperations = *(long*)(p + OffWriteOps);
+            info.OtherOperations = *(long*)(p + OffOtherOps);
+            info.ReadBytes = *(long*)(p + OffReadXfer);
+            info.WriteBytes = *(long*)(p + OffWriteXfer);
+            info.OtherBytes = *(long*)(p + OffOtherXfer);
             info.LastSeenTick = _tick;
 
             _list.Add(info);

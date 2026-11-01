@@ -299,6 +299,8 @@ public sealed class RuleEngine(IActuator actuator, IEngineEventSink sink)
         st.Failed[s] = true;
         st.FailedValue[s] = value;
         var slot = (Slot)s;
+        // A setting that does not apply to this process (GPU priority without a GPU context) is not an error worth a log line.
+        if (error is not null && error.StartsWith("not applicable", StringComparison.Ordinal)) return;
         sink.Emit(new EngineEvent(EngineEventKind.Failed, p.Key.Pid, p.Name, rule.Name, Slots.Name(slot),
             Slots.FormatValue(slot, value), error));
     }

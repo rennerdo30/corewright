@@ -121,6 +121,21 @@ internal static unsafe partial class Native
     public static partial int D3DKMTGetProcessSchedulingPriorityClass(nint process, out int priorityClass);
 
     [LibraryImport("user32.dll")]
+    public static partial uint GetGuiResources(nint process, uint flags); // 0 = GDI objects, 1 = USER objects
+
+    [LibraryImport("advapi32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static partial bool GetTokenInformation(nint token, int infoClass, void* info, uint length, out uint returned);
+
+    [LibraryImport("advapi32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static partial bool LookupAccountSidW(char* system, void* sid, char* name, ref uint nameLength, char* domain, ref uint domainLength, out int use);
+
+    [LibraryImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static partial bool IsWow64Process2(nint process, out ushort processMachine, out ushort nativeMachine);
+
+    [LibraryImport("user32.dll")]
     public static partial nint GetForegroundWindow();
 
     [LibraryImport("user32.dll")]

@@ -1,0 +1,82 @@
+/* Round 3: density, resizable columns, collapsible navigation, CPU map (PM-21 to PM-26). Loaded last. */
+:root { --chart-4: #4cc2ff; --chart-5: #6ccb5f; }
+@media (prefers-color-scheme: dark) { :root { --chart-4: #4cc2ff; --chart-5: #6ccb5f; } }
+.ok-text { color: var(--success); }
+.warn-text { color: var(--caution); }
+body.resizing, body.resizing * { cursor: col-resize !important; user-select: none !important; }
+
+/* Dense pages: tight margins, smaller titles, more data. */
+.page.dense { padding: 12px 16px 16px; max-width: none; }
+.page.split.dense { padding: 0; }
+.page-title { font: 600 20px/28px 'Segoe UI Variable Display', 'Segoe UI', sans-serif; margin: 0 12px 0 0; }
+.dense .toolbar { margin-bottom: 8px; gap: 6px; }
+.split-main { padding: 12px 0 0 16px; }
+.split-main .toolbar { padding-right: 16px; }
+.content > .banner { margin: 8px 16px 0; padding: 6px 12px; }
+
+/* Navigation pane: icon rail when collapsed, draggable width when expanded. */
+.shell { transition: grid-template-columns 0.12s ease; }
+.nav { position: relative; padding: 4px 4px 8px; overflow: hidden; }
+.nav-item { height: 36px; padding: 0 12px; gap: 14px; white-space: nowrap; }
+.nav-item.hamburger { width: 40px; padding: 0; justify-content: center; margin-bottom: 4px; }
+.nav.collapsed .nav-item { width: 40px; padding: 0; justify-content: center; }
+.nav.collapsed .nav-label { display: none; }
+.nav.collapsed .nav-footer { padding: 8px 0; align-items: center; }
+.nav-resize { position: absolute; top: 0; right: 0; width: 5px; height: 100%; cursor: col-resize; z-index: 2; }
+.nav-resize:hover { background: color-mix(in srgb, var(--accent) 35%, transparent); }
+.nav-footer { padding: 8px 6px; }
+
+/* Process table with resizable columns; header scrolls horizontally with the body. */
+.ptable { margin-right: 0; min-width: 0; }
+.phead { overflow: hidden; border-bottom: 1px solid var(--divider); flex: none; }
+.phead-inner { display: grid; grid-template-columns: var(--cols); width: max(var(--table-w), 100%); }
+.ph-cell { position: relative; min-width: 0; display: flex; }
+.ph { flex: 1; min-width: 0; padding: 4px 8px 6px; overflow: hidden; }
+.ph-label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+.ph-total { font-size: 15px; line-height: 20px; }
+.col-resize { position: absolute; right: -3px; top: 0; bottom: 0; width: 7px; cursor: col-resize; z-index: 2; }
+.col-resize::after { content: ''; position: absolute; left: 3px; top: 25%; bottom: 25%; width: 1px; background: var(--divider); }
+.col-resize:hover::after { background: var(--accent); top: 0; bottom: 0; width: 2px; left: 2px; }
+.pbody { overflow: auto; }
+.pbody-inner { position: relative; width: max(var(--table-w), 100%); }
+.prow { height: 28px; right: auto; width: max(var(--table-w), 100%); }
+.pc { padding: 0 8px; font-size: 13px; }
+.pc.heat { border-left: 1px solid var(--divider); }
+.pc.set-by-rule { color: var(--accent); font-weight: 600; }
+.panel { width: 340px; padding: 16px; }
+
+/* Overview */
+.overview { display: flex; flex-direction: column; gap: 12px; }
+.overview .page-title { margin-bottom: 0; }
+.metric-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 12px; }
+.card.metric { padding: 12px 14px 8px; }
+.metric-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.metric-title { font-weight: 600; }
+.metric-head strong { font: 600 20px/26px 'Segoe UI Variable Display', 'Segoe UI', sans-serif; white-space: nowrap; }
+.metric-sub { font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 4px; min-height: 16px; }
+.overview .card { margin: 0; }
+.overview .grid2 { margin-top: 0; }
+
+/* CPU → CCD → core → thread map */
+.cpu-map .card-head { flex-wrap: wrap; }
+.ccd-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 12px; }
+.ccd { border: 1px solid var(--stroke); border-radius: var(--radius); padding: 10px; background: var(--layer-alt); }
+.ccd-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 8px; font-size: 13px; }
+.ccd-load { margin-left: auto; font-variant-numeric: tabular-nums; font-weight: 600; }
+.core-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
+.core { border: 1px solid var(--stroke); border-radius: 6px; padding: 5px 6px 6px; background: var(--layer); }
+.core.best { border-color: color-mix(in srgb, var(--caution) 55%, transparent); }
+.core-head { display: flex; align-items: center; justify-content: space-between; font-size: 12px; margin-bottom: 4px; }
+.star { color: #f7c948; font-size: 13px; }
+.dot2 { color: var(--text); font-size: 18px; line-height: 12px; }
+.threads { display: grid; grid-template-columns: repeat(auto-fit, minmax(0, 1fr)); gap: 4px; }
+.thread { position: relative; height: 44px; border-radius: 4px; background: var(--control); overflow: hidden; border: 1px solid var(--stroke); }
+.thread-fill { position: absolute; left: 0; right: 0; bottom: 0; background: color-mix(in srgb, var(--chart-1) 70%, transparent); transition: height 0.4s ease; }
+.thread-id { position: absolute; top: 2px; left: 4px; font-size: 10px; color: var(--secondary-text); }
+.thread-load { position: absolute; bottom: 2px; right: 4px; font-size: 11px; font-weight: 600; font-variant-numeric: tabular-nums; }
+
+/* Activity: one line per event */
+table.log.compact { table-layout: fixed; }
+table.log.compact th { padding: 6px 10px; }
+table.log.compact td { padding: 4px 10px; height: 28px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 13px; vertical-align: middle; }
+.dense .card.flush { border-radius: var(--radius-control); }

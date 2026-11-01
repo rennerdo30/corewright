@@ -76,6 +76,14 @@ Network (next phase): egress throttling and DSCP marking through QoS policies in
 
 - Quick rules: the process context menu saves "always" settings into one rule per process name (`quick-<name>`, priority 60, above imports and examples).
 
+## Monitoring data and its cost (owner requests, 2026-11-02)
+
+- Sampler values (Task Manager "Details" memory, CPU time, I/O counters, …) come from the same `NtQuerySystemInformation` call and cost nothing extra.
+- Per-process values that need a handle (current affinity and priorities, command line, user, GDI objects) are read only for columns the dashboard shows (`/processes?include=`), at most every 3 s, outside the engine lock; the cache is dropped 30 s after the last request.
+- GPU (PDH "GPU Engine" / "GPU Adapter Memory") and per-thread load are sampled only while a client is active; the PDH query is closed 60 s after the dashboard goes away. Network totals (`GetIfTable2`) are always sampled.
+- CPU topology (CCDs from L3 groups, cores, SMT threads, V-Cache by L3 size) and the CPPC core ranking (Kernel-Processor-Power event 55, `MaximumPerformancePercent`; matches Ryzen Master's ★/• on the owner's 9950X3D2, tied cores shown as tied) are read once at start. Affinity tokens: `ccd0`…, `vcache-ccd`, `frequency-ccd`, `best-ccd`, `best-cores:N`.
+- Every setting a rule can change is visible as a process column (owner: "pro tool", always shown); all Task Manager columns are available through the column chooser.
+
 ## Native Windows look (owner, 2026-11-02)
 
 "This needs to look more native windows!" and "tray icon context menu also needs to be modern! not windows xp!" Every UI surface follows Windows 11 Fluent:

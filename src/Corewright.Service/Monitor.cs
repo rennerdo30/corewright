@@ -33,7 +33,15 @@ internal sealed class Monitor : BackgroundService
     private long _reportedForegroundMs;
 
     // History ring.
+    private readonly NetworkSampler _network = new();
+    private readonly CoreUsageSampler _cores = new();
+    private GpuMonitor? _gpu;
+    private long _gpuLastUse;
+
     private readonly long[] _hTime = new long[HistoryCapacity];
+    private readonly float[] _hGpu = new float[HistoryCapacity];
+    private readonly float[] _hNetRx = new float[HistoryCapacity];
+    private readonly float[] _hNetTx = new float[HistoryCapacity];
     private readonly float[] _hCpu = new float[HistoryCapacity];
     private readonly float[] _hMem = new float[HistoryCapacity];
     private readonly float[] _hIo = new float[HistoryCapacity];
@@ -49,7 +57,10 @@ internal sealed class Monitor : BackgroundService
         _ctx.Facts = _facts;
         ProcessInfo.CommandLineReader = SystemProbe.ReadCommandLine;
         SystemProbe.EnablePrivileges();
-        Topology = SystemProbe.ReadTopology();
+        var basic = SystemProbe.ReadTopology();
+        try { CpuLayout = CpuTopologyProbe.Read(); }
+        catch (Exception e) { log.LogWarning("CPU topology probe failed: {Message}", e.Message); }
+        Topology = CpuLayout is { } layout ? WithLayout(basic, layout) : basic;
         RuleSet = store.Load();
         var errors = new List<RuleError>();
         Engine.SetRules(RuleCompiler.Compile(RuleSet, Topology, errors));
@@ -58,9 +69,36 @@ internal sealed class Monitor : BackgroundService
     }
 
     public Lock Sync { get; } = new();
+
+    /// <summary>Adds CCDs, V-Cache and the CPPC ranking to the topology used by affinity tokens (ccd0, best-cores:4, ...).</summary>
+    private static SystemTopology WithLayout(SystemTopology basic, TopologyDto layout)
+    {
+        static ulong Mask(IEnumerable<int> lps) => lps.Where(i => i < 64).Aggregate(0UL, (m, i) => m | (1UL << i));
+        var ccdMasks = layout.Ccds.Select(c => Mask(c.Cores.SelectMany(k => k.Threads))).ToArray();
+        var cores = layout.Ccds.SelectMany(c => c.Cores).ToList();
+        var ranked = layout.RankingAvailable ? cores.Where(k => k.Rank > 0).OrderBy(k => k.Rank).Select(k => Mask(k.Threads)).ToArray() : [];
+        int freq = -1;
+        if (layout.RankingAvailable)
+        {
+            var top = cores.OrderBy(k => k.Rank).First();
+            freq = layout.Ccds.ToList().FindIndex(c => c.Cores.Contains(top));
+        }
+        return new SystemTopology(basic.LogicalCount, basic.PerformanceMask, basic.EfficiencyMask)
+        {
+            CcdMasks = ccdMasks,
+            VCacheCcds = [.. layout.Ccds.Where(c => c.VCache).Select(c => c.Id)],
+            FrequencyCcd = freq,
+            CoresByRank = ranked,
+        };
+    }
     public RuleEngine Engine { get; }
     public EventBuffer Events { get; }
     public SystemTopology Topology { get; }
+    public TopologyDto? CpuLayout { get; }
+    public ProcessDetailsCache Details { get; } = new();
+    public NetworkSampler Network => _network;
+    public CoreUsageSampler Cores => _cores;
+    public GpuMonitor? Gpu => _gpu;
     public RuleSet RuleSet { get; private set; }
     public ProcessSampler Sampler => _sampler;
     public EvalContext Context => _ctx;
@@ -118,7 +156,7 @@ internal sealed class Monitor : BackgroundService
         Wake();
     }
 
-    public (long[] Time, float[] Cpu, float[] Mem, float[] Io) History()
+    public (long[] Time, float[] Cpu, float[] Mem, float[] Io, float[] Gpu, float[] NetRx, float[] NetTx) History()
     {
         lock (Sync)
         {
@@ -126,6 +164,9 @@ internal sealed class Monitor : BackgroundService
             var c = new float[_hCount];
             var m = new float[_hCount];
             var io = new float[_hCount];
+            var gpu = new float[_hCount];
+            var rx = new float[_hCount];
+            var tx = new float[_hCount];
             int start = (_hNext - _hCount + HistoryCapacity) % HistoryCapacity;
             for (int i = 0; i < _hCount; i++)
             {
@@ -134,8 +175,11 @@ internal sealed class Monitor : BackgroundService
                 c[i] = _hCpu[j];
                 m[i] = _hMem[j];
                 io[i] = _hIo[j];
+                gpu[i] = _hGpu[j];
+                rx[i] = _hNetRx[j];
+                tx[i] = _hNetTx[j];
             }
-            return (t, c, m, io);
+            return (t, c, m, io, gpu, rx, tx);
         }
     }
 
@@ -156,6 +200,7 @@ internal sealed class Monitor : BackgroundService
         {
             lock (Sync) Engine.RevertAll();
             _actuator.Dispose();
+            _gpu?.Dispose();
             _sampler.Dispose();
             _log.LogInformation("Corewright monitor stopped; all changes reverted");
         }
@@ -177,10 +222,32 @@ internal sealed class Monitor : BackgroundService
 
             Engine.Evaluate(_sampler.Processes, _ctx);
 
+            // Cheap system counters always; the costly ones (GPU counters, per-thread load) only while someone watches.
+            _network.Sample();
+            if (IsClientActive)
+            {
+                _cores.Sample();
+                _gpu ??= new GpuMonitor();
+                _gpu.Sample();
+                _gpuLastUse = _ctx.NowMs;
+            }
+            else
+            {
+                Details.DropIfIdle();
+                if (_gpu is not null && _ctx.NowMs - _gpuLastUse > 60_000)
+                {
+                    _gpu.Dispose();
+                    _gpu = null;
+                }
+            }
+
             _hTime[_hNext] = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
             _hCpu[_hNext] = (float)_sampler.SystemCpuPercent;
             _hMem[_hNext] = _sampler.MemoryTotal == 0 ? 0 : (float)(100.0 * _sampler.MemoryUsed / _sampler.MemoryTotal);
             _hIo[_hNext] = (float)_sampler.TotalIoBytesPerSec;
+            _hGpu[_hNext] = (float)(_gpu?.Utilization ?? 0);
+            _hNetRx[_hNext] = (float)_network.ReceiveBytesPerSec;
+            _hNetTx[_hNext] = (float)_network.SendBytesPerSec;
             _hNext = (_hNext + 1) % HistoryCapacity;
             if (_hCount < HistoryCapacity) _hCount++;
         }

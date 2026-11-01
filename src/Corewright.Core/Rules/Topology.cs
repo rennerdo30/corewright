@@ -21,6 +21,18 @@ public sealed class SystemTopology
     public ulong EfficiencyMask { get; }
     public bool IsHybrid => EfficiencyMask != 0;
 
+    /// <summary>Logical processors per CCD (L3 group), in CCD order.</summary>
+    public ulong[] CcdMasks { get; init; } = [];
+
+    /// <summary>CCD indexes with 3D V-Cache (empty when unknown; all of them on dual V-Cache parts).</summary>
+    public int[] VCacheCcds { get; init; } = [];
+
+    /// <summary>The CCD with the highest boosting core, or -1.</summary>
+    public int FrequencyCcd { get; init; } = -1;
+
+    /// <summary>Physical cores (their logical processors) ordered fastest first by CPPC; empty without a ranking.</summary>
+    public ulong[] CoresByRank { get; init; } = [];
+
     public static SystemTopology Uniform(int logicalCount) => new(logicalCount, ulong.MaxValue, 0);
 }
 
@@ -39,10 +51,43 @@ public static class AffinityParser
             case "p-cores" or "performance":
                 mask = topo.PerformanceMask;
                 return true;
+            case "vcache-ccd" or "frequency-ccd" or "best-ccd":
+            {
+                int ccd = text.Trim().ToLowerInvariant() switch
+                {
+                    "vcache-ccd" => topo.VCacheCcds.Length == 1 ? topo.VCacheCcds[0] : -1,
+                    _ => topo.FrequencyCcd,
+                };
+                if (ccd < 0 || ccd >= topo.CcdMasks.Length)
+                {
+                    error = text.Trim().Equals("vcache-ccd", StringComparison.OrdinalIgnoreCase)
+                        ? "this CPU has no single V-Cache CCD (none, or every CCD has V-Cache)"
+                        : "the CPU reports no core ranking";
+                    return false;
+                }
+                mask = topo.CcdMasks[ccd] & topo.AllMask;
+                return mask != 0;
+            }
             case "e-cores" or "efficiency":
                 if (!topo.IsHybrid) { error = "this CPU has no efficiency cores"; return false; }
                 mask = topo.EfficiencyMask;
                 return true;
+        }
+
+        var lower = text.Trim().ToLowerInvariant();
+        if (lower.StartsWith("ccd") && int.TryParse(lower[3..], out int ccdIndex))
+        {
+            if (ccdIndex < 0 || ccdIndex >= topo.CcdMasks.Length) { error = $"CCD {ccdIndex} does not exist"; return false; }
+            mask = topo.CcdMasks[ccdIndex] & topo.AllMask;
+            return mask != 0;
+        }
+        if (lower.StartsWith("best-cores:") && int.TryParse(lower[11..], out int best))
+        {
+            if (topo.CoresByRank.Length == 0) { error = "the CPU reports no core ranking"; return false; }
+            if (best < 1) { error = "best-cores needs at least 1"; return false; }
+            foreach (var core in topo.CoresByRank.Take(best)) mask |= core;
+            mask &= topo.AllMask;
+            return mask != 0;
         }
 
         foreach (var raw in text.Split([',', ';', ' '], StringSplitOptions.RemoveEmptyEntries))

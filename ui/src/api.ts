@@ -1,4 +1,4 @@
-import type { EngineEvent, Explain, ImportResponse, ProcessRow, RuleSet, RulesResult, Status, SystemInfo } from './types'
+import type { EngineEvent, Explain, ImportResponse, ProcessRow, RuleSet, RulesResult, Status, SystemInfo, Topology } from './types'
 
 declare global {
   interface Window {
@@ -43,7 +43,8 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
 export const api = {
   status: () => request<Status>('GET', '/status'),
   system: () => request<SystemInfo>('GET', '/system'),
-  processes: () => request<ProcessRow[]>('GET', '/processes'),
+  processes: (include?: string) => request<ProcessRow[]>('GET', `/processes${include ? `?include=${include}` : ''}`),
+  topology: () => request<Topology>('GET', '/topology'),
   explain: (pid: number) => request<Explain>('GET', `/processes/${pid}/explain`),
   rules: () => request<RuleSet>('GET', '/rules'),
   saveRules: (set: RuleSet) => request<RulesResult>('PUT', '/rules', set),
