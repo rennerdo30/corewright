@@ -63,6 +63,10 @@ export function buildProcessMenu(p: ProcessRow, quick: Rule | undefined, topo: T
 
   return [
     { type: 'head', label: `${p.name} · ${p.pid}` },
+    { type: 'item', label: 'Block network', glyph: '\uE701', disabled: locked, checked: a.networkBlocked === true, onClick: () => h.setAlways({ networkBlocked: true }) },
+    { type: 'item', label: 'Allow network', disabled: locked, checked: a.networkBlocked === false, onClick: () => h.setAlways({ networkBlocked: false }) },
+    { type: 'item', label: 'Limit upload…', disabled: locked, submenu: levels(a.uploadLimitMbps == null ? null : String(a.uploadLimitMbps), [['0', 'No limit'], ...[1, 5, 10, 25, 50, 100].map((n): [string, string] => [String(n), `${n} Mbps (upload only)`])], (v) => h.setAlways({ uploadLimitMbps: v === null ? null : Number(v) })) },
+    { type: 'item', label: 'Network priority', disabled: locked, submenu: levels(a.networkPriority == null ? null : String(a.networkPriority), [['8', 'Low (CS1)'], ['0', 'Normal'], ['34', 'High (AF41)'], ['46', 'Highest (EF)']], (v) => h.setAlways({ networkPriority: v === null ? null : Number(v) })) },
     { type: 'item', label: 'CPU priority', glyph: '\uE9D9', disabled: locked, submenu: levels(a.cpuPriority, CPU, (v) => h.setAlways({ cpuPriority: v })) },
     { type: 'item', label: 'I/O priority', glyph: '\uEDA2', disabled: locked, submenu: levels(a.ioPriority, IO, (v) => h.setAlways({ ioPriority: v })) },
     { type: 'item', label: 'GPU priority', glyph: '\uE7F4', disabled: locked, submenu: levels(a.gpuPriority, CPU, (v) => h.setAlways({ gpuPriority: v })) },
@@ -100,6 +104,7 @@ export function buildProcessMenu(p: ProcessRow, quick: Rule | undefined, topo: T
         h.setAlways({
           cpuPriority: null, ioPriority: null, gpuPriority: null, memoryPriority: null,
           affinity: null, efficiencyMode: null, memoryLimitMb: null, workingSetLimitMb: null,
+          networkBlocked: null, uploadLimitMbps: null, networkPriority: null,
         }),
     },
     { type: 'sep' },

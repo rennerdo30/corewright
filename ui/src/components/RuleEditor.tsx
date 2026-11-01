@@ -11,12 +11,15 @@ interface ActionDef {
   title: string
   description: string
   glyph: string
-  kind: 'levels' | 'toggle' | 'cores' | 'mb'
+  kind: 'levels' | 'toggle' | 'cores' | 'mb' | 'mbps' | 'dscp'
   levels?: string[]
   initial: RuleActions[ActionKey]
 }
 
 export const ACTIONS: ActionDef[] = [
+  { key: 'networkBlocked', title: 'Block network', description: 'Also blocks downloads. Existing connections may survive. Applies to every process using this executable path; any block claim wins.', glyph: '\uE701', kind: 'toggle', initial: true },
+  { key: 'uploadLimitMbps', title: 'Upload limit', description: 'Upload only; download limits need a kernel driver and are out of scope. Shared by executable path; the lowest nonzero limit wins.', glyph: '\uE898', kind: 'mbps', initial: 10 },
+  { key: 'networkPriority', title: 'Network priority (DSCP)', description: 'Only helps when your router honours it. Shared by executable path; the highest DSCP number wins.', glyph: '\uE968', kind: 'dscp', initial: 0 },
   { key: 'cpuPriority', title: 'CPU priority', description: 'How much CPU time the process gets when the CPU is busy.', glyph: '\uE9D9', kind: 'levels', levels: ['idle', 'belowNormal', 'normal', 'aboveNormal', 'high', 'realtime'], initial: 'belowNormal' },
   { key: 'ioPriority', title: 'Disk priority', description: 'Who goes first when several processes read or write.', glyph: '\uEDA2', kind: 'levels', levels: ['veryLow', 'low', 'normal', 'high'], initial: 'low' },
   { key: 'gpuPriority', title: 'GPU priority', description: 'Scheduling priority on the graphics card.', glyph: '\uE7F4', kind: 'levels', levels: ['idle', 'belowNormal', 'normal', 'aboveNormal', 'high', 'realtime'], initial: 'aboveNormal' },
@@ -37,7 +40,9 @@ const CORE_PRESETS: [string, string][] = [
 export function summarizeActions(a: RuleActions): string {
   const parts = ACTIONS.filter((d) => a[d.key] != null).map((d) => {
     const v = a[d.key]
-    if (d.kind === 'toggle') return v ? 'efficiency mode on' : 'efficiency mode off'
+    if (d.kind === 'toggle') return `${d.title.toLowerCase()} ${v ? 'on' : 'off'}`
+    if (d.kind === 'mbps') return `upload ${v === 0 ? 'unlimited' : `${v} Mbps`}`
+    if (d.kind === 'dscp') return `network DSCP ${v}`
     if (d.kind === 'mb') return `${d.title.toLowerCase().replace(/ \(.*\)/, '')} ${formatMb(v as number)}`
     if (d.kind === 'cores') return `cores ${v}`
     return `${d.title.replace(' priority', '').toLowerCase()} ${levelLabel(v as string).toLowerCase()}`
@@ -252,6 +257,13 @@ function Unit({ unit, children }: { unit: string; children: React.ReactNode }) {
 }
 
 function ActionControl({ def, value, allowRealtime, onChange }: { def: ActionDef; value: unknown; allowRealtime: boolean; onChange: (v: unknown) => void }) {
+  if (def.kind === 'mbps') return <Unit unit="Mbps"><input type="number" min={0} step={0.1} className="num-input wide" value={(value as number) ?? ''} onChange={(e) => onChange(e.target.value === '' ? null : Number(e.target.value))} /></Unit>
+  if (def.kind === 'dscp') return <span className="cores-control">
+    <select value={value as number} onChange={(e) => onChange(e.target.value === 'default' ? null : Number(e.target.value))}>
+      <option value="default">Default</option><option value={8}>Low (CS1)</option><option value={0}>Normal</option><option value={34}>High (AF41)</option><option value={46}>Highest (EF)</option>
+      {![8, 0, 34, 46].includes(value as number) && <option value={value as number}>Custom DSCP</option>}
+    </select><input aria-label="DSCP number" type="number" min={0} max={63} step={1} className="num-input" value={value as number} onChange={(e) => onChange(e.target.value === '' ? null : Number(e.target.value))} />
+  </span>
   if (def.kind === 'levels') {
     const levels = def.levels!.filter((l) => l !== 'realtime' || allowRealtime || value === 'realtime')
     return (

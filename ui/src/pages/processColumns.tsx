@@ -3,7 +3,7 @@ import { levelLabel } from '../host'
 import type { ProcessRow, SystemInfo } from '../types'
 
 /** Detail groups the service reads on demand; requested only when a visible column needs them. */
-export type Need = 'ext' | 'gpu' | 'settings' | 'identity' | 'cmdline' | 'gui'
+export type Need = 'ext' | 'gpu' | 'net' | 'settings' | 'identity' | 'cmdline' | 'gui'
 
 export interface ColumnDef {
   id: string
@@ -85,6 +85,10 @@ export const COLUMNS: ColumnDef[] = [
   { id: 'hardfaults', label: 'Hard faults', group: 'Memory', width: 96, num: true, needs: 'ext', agg: 'sum', value: (p) => p.ext?.hardFaults, format: count },
 
   // Disk
+  { id: 'network', label: 'Network', group: 'Network', width: 130, needs: 'net', num: true, agg: 'sum', value: (p) => p.ext?.networkError ?? (p.ext?.netSend === undefined ? undefined : p.ext.netSend + (p.ext.netReceive ?? 0)), format: (v) => typeof v === 'string' ? v : v === undefined ? '' : rate(v) },
+  { id: 'networkblocked', label: 'Blocked', group: 'Corewright', width: 84, visible: true, needs: 'settings', slot: 'networkBlocked', value: (p) => p.ext?.networkBlocked, format: (v) => v === undefined ? '' : v ? 'Blocked' : 'Allowed' },
+  { id: 'uploadlimit', label: 'Upload limit', group: 'Corewright', width: 110, visible: true, needs: 'settings', slot: 'uploadLimitMbps', defaultValue: 0, value: (p) => p.ext?.uploadLimitMbps, format: (v) => v === 0 ? 'None' : v === undefined ? '' : `${v} Mbps` },
+  { id: 'netpriority', label: 'Net priority', group: 'Corewright', width: 110, visible: true, needs: 'settings', slot: 'networkPriority', defaultValue: -1, value: (p) => p.ext?.networkPriority, format: (v) => v === -1 ? 'Default' : v === undefined ? '' : `DSCP ${v}` },
   { id: 'io', label: 'Disk', group: 'Disk', width: 92, num: true, visible: true, agg: 'sum', value: (p) => p.ioBytesPerSec, format: rate, heat: (v) => v / (50 * 1048576), total: (s) => rate(s.ioBytesPerSec) },
   { id: 'readbytes', label: 'I/O read bytes', group: 'Disk', width: 110, num: true, needs: 'ext', agg: 'sum', value: (p) => p.ext?.readBytes, format: mem },
   { id: 'writebytes', label: 'I/O write bytes', group: 'Disk', width: 110, num: true, needs: 'ext', agg: 'sum', value: (p) => p.ext?.writeBytes, format: mem },

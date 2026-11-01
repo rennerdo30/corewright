@@ -150,6 +150,12 @@ export interface ProcessExt {
   elevated?: boolean
   bits?: number
   commandLine?: string
+  netSend?: number
+  netReceive?: number
+  networkError?: string
+  networkBlocked?: boolean
+  uploadLimitMbps?: number
+  networkPriority?: number
 }
 
 export interface AppliedSlot {
@@ -179,6 +185,7 @@ export interface ProcessRow {
 }
 
 export interface ExplainRule {
+  unavailable?: string
   ruleId: string
   ruleName: string
   priority: number
@@ -214,6 +221,9 @@ export interface RuleActions {
   efficiencyMode?: boolean | null
   memoryLimitMb?: number | null
   workingSetLimitMb?: number | null
+  networkBlocked?: boolean | null
+  uploadLimitMbps?: number | null
+  networkPriority?: number | null
 }
 
 export interface Rule {

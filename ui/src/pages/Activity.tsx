@@ -18,6 +18,9 @@ const SLOT_LABELS: Record<string, string> = {
   efficiencyMode: 'efficiency mode',
   memoryLimitMb: 'memory cap',
   workingSetLimitMb: 'RAM cap',
+  networkBlocked: 'network blocking',
+  uploadLimitMbps: 'upload limit',
+  networkPriority: 'network priority',
 }
 
 const FILTERS: { id: Filter; label: string; kinds: Kind[] }[] = [
