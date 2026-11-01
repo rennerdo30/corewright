@@ -25,6 +25,9 @@ internal static class Program
             return;
         }
         ApplicationConfiguration.Initialize();
+        // The window never runs without the tray (owner, 2026-11-02): start it when it is missing,
+        // whichever way the window was opened (Start menu, installer, updater, tray).
+        TrayGuard.Ensure();
         Application.Run(new MainForm());
     }
 }
@@ -68,13 +71,22 @@ internal sealed partial class MainForm : Form
         Load += async (_, _) => await InitAsync();
         Resize += async (_, _) =>
         {
+            // Settings > Window: "Minimize to the tray" hides the window instead of a taskbar button.
+            if (WindowState == FormWindowState.Minimized && Visible && WindowPreferences.MinimizeToTray) Hide();
             UpdateResizeBand();
             PostWindowState();
             await OnResizedAsync();
         };
         Activated += (_, _) => PostWindowState();
         Deactivate += (_, _) => PostWindowState();
-        FormClosing += (_, _) => SavePlacement();
+        FormClosing += (_, _) =>
+        {
+            SavePlacement();
+            // Settings > Window: the close button either leaves Corewright in the tray (default) or exits it.
+            // The exit event means the tray itself is closing us, so it needs no message back.
+            if (!WindowPreferences.CloseToTray && !_exit.WaitOne(0)) TrayGuard.ExitAll();
+        };
+        TrayGuard.Watch(this);
         FormClosed += (_, _) =>
         {
             SystemEvents.UserPreferenceChanged -= OnUserPreferenceChanged;
@@ -85,6 +97,7 @@ internal sealed partial class MainForm : Form
 
     private new void BringToFront()
     {
+        if (!Visible) Show(); // hidden by "minimize to tray"
         if (WindowState == FormWindowState.Minimized) WindowState = FormWindowState.Normal;
         Activate();
     }
@@ -308,6 +321,15 @@ internal sealed partial class MainForm : Form
         core.Navigate(url);
     }
 
+    private void PostWindowPrefs() =>
+        _web.CoreWebView2?.PostWebMessageAsJson(JsonSerializer.Serialize(new Dictionary<string, object>
+        {
+            ["type"] = "window-prefs",
+            ["openOnStart"] = WindowPreferences.OpenOnStart,
+            ["closeToTray"] = WindowPreferences.CloseToTray,
+            ["minimizeToTray"] = WindowPreferences.MinimizeToTray,
+        }));
+
     private void PostWindowState()
     {
         var core = _web.CoreWebView2;
@@ -352,6 +374,15 @@ internal sealed partial class MainForm : Form
                 case "autostart-set":
                     SetAutostart(root.TryGetProperty("enabled", out var en) && en.GetBoolean());
                     PostAutostart();
+                    break;
+                case "window-prefs-get":
+                    PostWindowPrefs();
+                    break;
+                case "window-prefs-set":
+                    if (root.TryGetProperty("openOnStart", out var oos)) WindowPreferences.OpenOnStart = oos.GetBoolean();
+                    if (root.TryGetProperty("closeToTray", out var ctt)) WindowPreferences.CloseToTray = ctt.GetBoolean();
+                    if (root.TryGetProperty("minimizeToTray", out var mtt)) WindowPreferences.MinimizeToTray = mtt.GetBoolean();
+                    PostWindowPrefs();
                     break;
                 case "theme-set":
                     if (root.TryGetProperty("scheme", out var sch) && sch.GetString() is { } scheme) SetScheme(scheme);

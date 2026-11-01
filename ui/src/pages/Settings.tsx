@@ -19,8 +19,11 @@ export function Settings() {
       </PageHeader>
 
       <section className="section">
-        <h3>Startup</h3>
-        <Autostart />
+        <h3>Startup and window</h3>
+        <div className="card-group">
+          <Autostart />
+          <WindowCards />
+        </div>
       </section>
       <UpdatesCard />
 
@@ -126,5 +129,52 @@ function AppearanceCards() {
         </div>
       </div>
     </div>
+  )
+}
+
+interface WindowPrefs {
+  openOnStart: boolean
+  closeToTray: boolean
+  minimizeToTray: boolean
+}
+
+/** Start minimized, close to tray, minimize to tray (owner, 2026-11-02). Stored per user by the window host. */
+function WindowCards() {
+  const [prefs, setPrefs] = useState<WindowPrefs>()
+  useEffect(() => {
+    const wv = window.chrome?.webview
+    if (!wv) return
+    const on = (e: { data: unknown }) => {
+      const d = e.data as { type?: string } & WindowPrefs
+      if (d?.type === 'window-prefs') setPrefs({ openOnStart: d.openOnStart, closeToTray: d.closeToTray, minimizeToTray: d.minimizeToTray })
+    }
+    wv.addEventListener('message', on)
+    post({ type: 'window-prefs-get' })
+    return () => wv.removeEventListener('message', on)
+  }, [])
+  const set = (next: Partial<WindowPrefs>) => {
+    if (prefs) setPrefs({ ...prefs, ...next })
+    post({ type: 'window-prefs-set', ...next })
+  }
+  const off = !isHost || !prefs
+  return (
+    <>
+      <Card glyph={'\uE737'} title="Open the window when Corewright starts" desc="Off: Corewright starts minimized as an icon in the notification area.">
+        <Toggle value={!!prefs?.openOnStart} disabled={off} onChange={(v) => set({ openOnStart: v })} />
+      </Card>
+      <Card glyph={'\uE711'} title="Close button" desc="What the window's close button does. The service keeps applying your rules either way.">
+        <div className="seg">
+          <button className={prefs?.closeToTray !== false ? 'on' : ''} disabled={off} onClick={() => set({ closeToTray: true })}>
+            Keep in the tray
+          </button>
+          <button className={prefs?.closeToTray === false ? 'on' : ''} disabled={off} onClick={() => set({ closeToTray: false })}>
+            Exit Corewright
+          </button>
+        </div>
+      </Card>
+      <Card glyph={'\uE921'} title="Minimize to the tray" desc="Minimizing hides the window in the notification area instead of the taskbar.">
+        <Toggle value={!!prefs?.minimizeToTray} disabled={off} onChange={(v) => set({ minimizeToTray: v })} />
+      </Card>
+    </>
   )
 }
