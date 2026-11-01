@@ -3,6 +3,7 @@ import { api } from '../api'
 import type { Page } from '../App'
 import { Chart } from '../components/Chart'
 import { DieMap } from '../components/DieMap'
+import { PageHeader, plural } from '../components/PageHeader'
 import { bytes, percent } from '../format'
 import { useDescriptions } from '../host'
 import { usePoll } from '../hooks'
@@ -28,7 +29,9 @@ export function Overview({ onOpen }: { onOpen: (p: Page) => void }) {
 
   return (
     <div className="page dense overview">
-      <h2 className="page-title">Overview</h2>
+      <PageHeader title="Overview">
+        {managed ? <>Corewright manages {plural(managed, 'process', 'processes')} right now.</> : <>Corewright is not changing any process right now.</>}
+      </PageHeader>
       <div className="metric-grid">
         <Metric title="CPU" value={percent(s.cpu)} sub={topo.data?.name}>
           <Chart time={s.historyTime} values={s.historyCpu} colorVar="--chart-1" max={100} height={90} format={(v) => `${v.toFixed(0)}%`} />

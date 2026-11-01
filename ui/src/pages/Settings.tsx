@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { api } from '../api'
+import { PageHeader } from '../components/PageHeader'
 import { Card, Toggle } from '../components/SettingsControls'
 import { isHost, post } from '../host'
 import { usePoll } from '../hooks'
@@ -11,7 +12,9 @@ export function Settings() {
 
   return (
     <div className="page dense settings">
-      <h2 className="page-title">Settings</h2>
+      <PageHeader title="Settings">
+        How Corewright itself starts and runs. Game mode, balancing and core placement are on the Autopilot page.
+      </PageHeader>
 
       <section className="section">
         <h3>Startup</h3>

@@ -5,6 +5,7 @@ import './styles.css'
 import './styles-r2.css'
 import './styles-r3.css'
 import './styles-r4.css'
+import './styles-r5.css'
 
 // The dashboard host passes the Windows accent palette (light 3..1, base, dark 1..3); use the shades WinUI uses.
 const palette = window.__COREWRIGHT__?.accent

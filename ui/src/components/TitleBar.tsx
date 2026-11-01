@@ -10,7 +10,7 @@ export function TitleBar() {
   return (
     <header className={`titlebar ${active ? '' : 'inactive'}`}>
       <div className="titlebar-brand">
-        <Logo size={16} />
+        <Logo size={20} />
         <span>Corewright</span>
       </div>
       {isHost && (
