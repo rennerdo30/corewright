@@ -50,6 +50,14 @@ Endpoints (all under `/api/v1`): `status`, `system` (with history), `processes`,
 
 ## Controlled resources
 
+`GET /api/v1/devices` returns `inventoryAt` (Unix ms), `sampling`, and `devices` (disks, GPUs and interfaces).
+`?history=disk:1` adds up to 300 active-client samples to that device; comma-separated IDs and `*` are supported.
+Disk IDs are Windows physical indices, GPU IDs are full LUID plus physical index, network IDs are interface LUIDs; IDs can change after reboot/replacement.
+History has Unix-ms `time`, `primary` (disk read B/s, GPU %, network receive B/s), `secondary` (disk write/network send B/s). Missing samples are null. It resets after an inactive period.
+Loopback/filter/end-point pseudo interfaces are hidden unless `includeHidden=true`. Ordinary virtual adapters remain visible and labelled.
+Inventory refreshes at startup and on API demand at most every three minutes; new/removed NICs reconcile on that refresh. Disk/GPU handles close after 60 s idle; no device sampling or allocation per idle tick.
+Storage health is queried at most once a minute while active. Missing fields mean not available (permissions/driver support); SATA vendor SMART is not attempted. NVMe counters are lossless decimal strings; data units are 512,000 bytes. GPU power is % of limit, not watts; engine clock is node 0; ambiguous zero sensors are unavailable.
+
 | Slot | Mechanism | Notes |
 |---|---|---|
 | `cpuPriority` | `SetPriorityClass` | Realtime only with the rule's `allowRealtime`. Re-asserted up to 3 times if the process changes it back, then left alone with a drift event. |

@@ -60,6 +60,7 @@ public sealed record ImportResponseDto(bool Applied, string? Source, Rule[] Rule
     DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull)]
 [JsonSerializable(typeof(StatusDto))]
 [JsonSerializable(typeof(SystemDto))]
+[JsonSerializable(typeof(DevicesDto))]
 [JsonSerializable(typeof(ProcessDto[]))]
 [JsonSerializable(typeof(TopologyDto))]
 [JsonSerializable(typeof(ExplainDto))]
@@ -111,6 +112,15 @@ internal static class Api
         });
 
         api.MapGet("/topology", IResult () => m.CpuLayout is { } layout ? TypedResults.Ok(layout) : TypedResults.NotFound());
+
+        api.MapGet("/devices", (string? history, bool? includeHidden) =>
+        {
+            lock (m.Sync)
+            {
+                m.Devices.Refresh();
+                return TypedResults.Ok(m.Devices.Snapshot(history, includeHidden == true));
+            }
+        });
 
         // include = comma list of: ext (sampler details), gpu, settings, identity, cmdline, gui.
         api.MapGet("/processes", (string? include) =>

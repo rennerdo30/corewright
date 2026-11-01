@@ -1,147 +1,110 @@
+using System.Globalization;
 using System.Runtime.InteropServices;
-
 namespace Corewright.Service.Windows;
 
-public sealed record GpuAdapterDto(string Id, double Utilization, long DedicatedUsed);
+public sealed class GpuAdapterDto(string id)
+{
+    public string Id { get; } = id;
+    public double Utilization { get; internal set; }
+    public long DedicatedUsed { get; internal set; }
+    public long? SharedUsed { get; internal set; }
+    public bool LoadAvailable { get; internal set; }
+    public bool MemoryAvailable { get; internal set; }
+}
 
-/// <summary>
-/// GPU utilization like Task Manager: the "GPU Engine" counters per (process, adapter, engine). An adapter's
-/// utilization is its busiest engine (sum over processes); a process's is its busiest engine. Dedicated memory comes
-/// from "GPU Adapter Memory". Sampled only while a client is watching, because the counter set is large.
-/// </summary>
+/// <summary>Task Manager's busiest engine per adapter, summed across processes. Buffers and numeric keys
+/// are reused. Full LUIDs prevent collisions. Owned by Monitor's existing client-active lifecycle.</summary>
 internal sealed unsafe partial class GpuMonitor : IDisposable
 {
-    private const uint PDH_FMT_DOUBLE = 0x200, PDH_FMT_LARGE = 0x400, PDH_MORE_DATA = 0x800007D2;
-    private nint _query, _engine, _memory;
-    private bool _ready;
+    private nint _query, _engine, _memory, _shared;
     private byte[] _buffer = new byte[256 * 1024];
-    private readonly Dictionary<int, double> _engineSum = [];
+    private readonly Dictionary<(ulong Luid, uint Physical, int Engine), double> _engines = [];
+    private readonly Dictionary<(ulong Luid, uint Physical), GpuAdapterDto> _adapters = [];
     private readonly Dictionary<int, double> _byPid = [];
-
     public GpuAdapterDto[] Adapters { get; private set; } = [];
     public double Utilization { get; private set; }
     public long DedicatedUsed { get; private set; }
     public IReadOnlyDictionary<int, double> ByProcess => _byPid;
-    public bool Available => _ready;
-
+    public bool Available { get; private set; }
     public GpuMonitor()
     {
         if (PdhOpenQueryW(null, 0, out _query) != 0) return;
         if (PdhAddEnglishCounterW(_query, @"\GPU Engine(*)\Utilization Percentage", 0, out _engine) != 0) return;
         PdhAddEnglishCounterW(_query, @"\GPU Adapter Memory(*)\Dedicated Usage", 0, out _memory);
-        _ready = PdhCollectQueryData(_query) == 0;
+        PdhAddEnglishCounterW(_query, @"\GPU Adapter Memory(*)\Shared Usage", 0, out _shared);
+        Available = PdhCollectQueryData(_query) == 0;
     }
-
+    internal static string Id(ulong luid, uint physical = 0) => $"gpu:{luid:X16}:{physical}";
     public void Sample()
     {
-        if (!_ready || PdhCollectQueryData(_query) != 0) return;
-        _engineSum.Clear();
-        _byPid.Clear();
-        var engines = Read(_engine, PDH_FMT_DOUBLE);
-        foreach (var (name, value) in engines)
+        foreach (var a in Adapters) { a.LoadAvailable = a.MemoryAvailable = false; a.SharedUsed = null; a.Utilization = 0; a.DedicatedUsed = 0; }
+        Utilization = 0; DedicatedUsed = 0; _engines.Clear(); _byPid.Clear();
+        if (!Available || PdhCollectQueryData(_query) != 0) return;
+        Read(_engine, 0x200, 0); Read(_memory, 0x400, 1); Read(_shared, 0x400, 2);
+        foreach (var (key, value) in _engines)
         {
-            // pid_1234_luid_0x00000000_0x0000D1A5_phys_0_eng_3_engtype_3D
-            var span = name.AsSpan();
-            int luid = span.IndexOf("_luid_"), eng = span.IndexOf("_engtype_");
-            if (luid < 0 || eng < 0) continue;
-            int engKey = string.GetHashCode(span[luid..eng]);
-            _engineSum[engKey] = _engineSum.GetValueOrDefault(engKey) + value;
-            if (span.StartsWith("pid_") && int.TryParse(span[4..luid], out int pid))
-                _byPid[pid] = Math.Max(_byPid.GetValueOrDefault(pid), value);
+            var a = Adapter(key.Luid, key.Physical);
+            a.Utilization = Math.Max(a.Utilization, Math.Clamp(value, 0, 100)); a.LoadAvailable = true;
         }
-
-        // An adapter's utilization is its busiest engine (summed over processes).
-        var busiest = new Dictionary<string, double>();
-        foreach (var (name, _) in engines)
-        {
-            var span = name.AsSpan();
-            int luid = span.IndexOf("_luid_"), eng = span.IndexOf("_engtype_");
-            if (luid < 0 || eng < 0) continue;
-            string adapter = AdapterId(span[(luid + 1)..]);
-            double sum = _engineSum.GetValueOrDefault(string.GetHashCode(span[luid..eng]));
-            busiest[adapter] = Math.Max(busiest.GetValueOrDefault(adapter), Math.Min(100, sum));
-        }
-
-        var memory = new Dictionary<string, long>();
-        if (_memory != 0)
-            foreach (var (name, value) in Read(_memory, PDH_FMT_LARGE))
-                memory[AdapterId(name.AsSpan())] = (long)value;
-
-        Adapters = [.. busiest.Keys.Union(memory.Keys).Order()
-            .Select(k => new GpuAdapterDto(k, Math.Round(busiest.GetValueOrDefault(k), 1), memory.GetValueOrDefault(k)))];
-        Utilization = Adapters.Length == 0 ? 0 : Adapters.Max(a => a.Utilization);
-        DedicatedUsed = Adapters.Sum(a => a.DedicatedUsed);
+        foreach (var a in Adapters) { Utilization = Math.Max(Utilization, a.Utilization); DedicatedUsed += a.DedicatedUsed; }
     }
-
-    /// <summary>"luid_0x00000000_0x0000D1A5_phys_0..." → "0x0000D1A5:0".</summary>
-    private static string AdapterId(ReadOnlySpan<char> s)
+    private GpuAdapterDto Adapter(ulong luid, uint physical)
     {
-        int luid = s.IndexOf("luid_");
-        if (luid < 0) return s.ToString();
-        s = s[(luid + 5)..];
-        int phys = s.IndexOf("_phys_");
-        var luidPart = phys < 0 ? s : s[..phys];
-        int sep = luidPart.LastIndexOf('_');
-        string low = (sep < 0 ? luidPart : luidPart[(sep + 1)..]).ToString();
-        string physNo = "0";
-        if (phys >= 0)
-        {
-            var rest = s[(phys + 6)..];
-            int end = rest.IndexOf('_');
-            physNo = (end < 0 ? rest : rest[..end]).ToString();
-        }
-        return $"{low}:{physNo}";
+        if (_adapters.TryGetValue((luid, physical), out var a)) return a;
+        a = new(Id(luid, physical)); _adapters[(luid, physical)] = a;
+        Adapters = [.. _adapters.Values]; // Only when a new adapter is observed.
+        return a;
     }
-
-    private List<(string Name, double Value)> Read(nint counter, uint format)
+    private void Read(nint counter, uint format, int kind)
     {
-        var list = new List<(string, double)>();
-        uint size = (uint)_buffer.Length;
-        uint status;
-        uint count;
+        if (counter == 0) return;
+        uint size = (uint)_buffer.Length, count; uint status;
         fixed (byte* p = _buffer) status = PdhGetFormattedCounterArrayW(counter, format, ref size, out count, p);
-        if (status == PDH_MORE_DATA)
+        if (status == 0x800007D2 && size < 16 * 1024 * 1024)
         {
-            _buffer = new byte[size + 4096];
-            size = (uint)_buffer.Length;
+            _buffer = new byte[size + 4096]; size = (uint)_buffer.Length;
             fixed (byte* p = _buffer) status = PdhGetFormattedCounterArrayW(counter, format, ref size, out count, p);
         }
-        if (status != 0) return list;
+        if (status != 0) return;
         fixed (byte* p = _buffer)
         {
-            // PDH_FMT_COUNTERVALUE_ITEM_W: { LPWSTR szName; { DWORD CStatus; (pad) union { double; LONGLONG } } } = 24 bytes
             for (uint i = 0; i < count; i++)
             {
-                byte* item = p + i * 24;
-                char* name = *(char**)item;
-                uint cstatus = *(uint*)(item + 8);
-                if (cstatus > 1 || name == null) continue;
-                double v = format == PDH_FMT_LARGE ? *(long*)(item + 16) : *(double*)(item + 16);
-                list.Add((new string(name), v));
+                byte* item = p + i * 24; char* name = *(char**)item;
+                if (*(uint*)(item + 8) > 1 || name == null) continue;
+                int length = 0; while (length < 1024 && name[length] != 0) length++;
+                var text = new ReadOnlySpan<char>(name, length);
+                int at = text.IndexOf("luid_"), phys = text.IndexOf("_phys_");
+                if (at < 0 || phys < at + 5) continue;
+                var luidText = text[(at + 5)..phys]; int sep = luidText.IndexOf('_');
+                if (sep < 2 || sep + 3 > luidText.Length || !uint.TryParse(luidText[2..sep], NumberStyles.HexNumber, null, out uint hi)
+                    || !uint.TryParse(luidText[(sep + 3)..], NumberStyles.HexNumber, null, out uint lo)) continue;
+                var tail = text[(phys + 6)..]; int end = tail.IndexOf('_');
+                if (!uint.TryParse(end < 0 ? tail : tail[..end], out uint physical)) continue;
+                ulong luid = (ulong)hi << 32 | lo;
+                var a = Adapter(luid, physical);
+                if (kind != 0)
+                {
+                    long value = Math.Max(0, *(long*)(item + 16));
+                    if (kind == 1) { a.DedicatedUsed = value; a.MemoryAvailable = true; } else a.SharedUsed = value;
+                    continue;
+                }
+                double load = *(double*)(item + 16);
+                if (!double.IsFinite(load) || load < 0) continue;
+                int engAt = text.IndexOf("_eng_"); if (engAt < 0) continue;
+                var engine = text[(engAt + 5)..]; end = engine.IndexOf('_');
+                if (!int.TryParse(end < 0 ? engine : engine[..end], out int eng)) continue;
+                var key = (luid, physical, eng); _engines[key] = _engines.GetValueOrDefault(key) + load;
+                int pidEnd = text.IndexOf("_luid_");
+                if (text.StartsWith("pid_") && pidEnd > 4 && int.TryParse(text[4..pidEnd], out int pid))
+                    _byPid[pid] = Math.Max(_byPid.GetValueOrDefault(pid), load);
             }
         }
-        return list;
     }
-
-    public void Dispose()
-    {
-        if (_query != 0) PdhCloseQuery(_query);
-        _query = 0;
-        _ready = false;
-    }
-
-    [LibraryImport("pdh.dll", StringMarshalling = StringMarshalling.Utf16)]
-    private static partial uint PdhOpenQueryW(string? source, nint userData, out nint query);
-
-    [LibraryImport("pdh.dll", StringMarshalling = StringMarshalling.Utf16)]
-    private static partial uint PdhAddEnglishCounterW(nint query, string path, nint userData, out nint counter);
-
-    [LibraryImport("pdh.dll")]
-    private static partial uint PdhCollectQueryData(nint query);
-
-    [LibraryImport("pdh.dll")]
-    private static partial uint PdhGetFormattedCounterArrayW(nint counter, uint format, ref uint bufferSize, out uint itemCount, byte* items);
-
-    [LibraryImport("pdh.dll")]
-    private static partial uint PdhCloseQuery(nint query);
+    public void Dispose() { if (_query != 0) PdhCloseQuery(_query); _query = 0; Available = false; }
+    [LibraryImport("pdh.dll", StringMarshalling = StringMarshalling.Utf16)] private static partial uint PdhOpenQueryW(string? source, nint data, out nint query);
+    [LibraryImport("pdh.dll", StringMarshalling = StringMarshalling.Utf16)] private static partial uint PdhAddEnglishCounterW(nint query, string path, nint data, out nint counter);
+    [LibraryImport("pdh.dll")] private static partial uint PdhCollectQueryData(nint query);
+    [LibraryImport("pdh.dll")] private static partial uint PdhGetFormattedCounterArrayW(nint counter, uint format, ref uint size, out uint count, byte* items);
+    [LibraryImport("pdh.dll")] private static partial uint PdhCloseQuery(nint query);
 }

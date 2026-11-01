@@ -35,6 +35,7 @@ internal sealed class Monitor : BackgroundService
 
     // History ring.
     private readonly NetworkSampler _network = new();
+    public DeviceMonitor Devices { get; } = new();
     private readonly CoreUsageSampler _cores = new();
     private GpuMonitor? _gpu;
     private long _gpuLastUse;
@@ -254,6 +255,7 @@ internal sealed class Monitor : BackgroundService
             }
             _actuator.Dispose();
             _gpu?.Dispose();
+            Devices.Dispose();
             _sampler.Dispose();
             _log.LogInformation("Corewright monitor stopped; all changes reverted");
         }
@@ -300,7 +302,8 @@ internal sealed class Monitor : BackgroundService
             Engine.Evaluate(_sampler.Processes, _ctx);
 
             // Cheap system counters always; the costly ones (GPU counters, per-thread load) only while someone watches.
-            _network.Sample();
+            Devices.BeginSample(IsClientActive);
+            _network.Sample(Devices, IsClientActive);
             _cores.Sample(); // one call; the placer needs per-thread load for dynamic placement
             _placer.Prune(_sampler.IsAlive);
             if (IsClientActive)
@@ -319,6 +322,7 @@ internal sealed class Monitor : BackgroundService
                 }
             }
 
+            Devices.Sample(_gpu, _ctx.NowMs);
             _hTime[_hNext] = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
             _hCpu[_hNext] = (float)_sampler.SystemCpuPercent;
             _hMem[_hNext] = _sampler.MemoryTotal == 0 ? 0 : (float)(100.0 * _sampler.MemoryUsed / _sampler.MemoryTotal);
