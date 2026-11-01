@@ -100,6 +100,9 @@ internal sealed unsafe class WindowsActuator : IActuator, IDisposable
     }
 
     public bool TryWrite(in ProcessKey key, Slot slot, long value, out string? error)
+        => Write(key, slot, value, out error).Status == WriteStatus.Succeeded;
+
+    public WriteResult Write(in ProcessKey key, Slot slot, long value, out string? error)
     {
         if (NetworkPolicies.IsSlot(slot))
         {
@@ -107,15 +110,20 @@ internal sealed unsafe class WindowsActuator : IActuator, IDisposable
             if (!Environment.IsPrivilegedProcess && value != NetworkPolicies.Original(slot))
                 return Network.Write(key, null, slot, value, out error);
             nint process = Open(key, Query, out error);
-            if (process == 0) return false;
+            if (process == 0) return new(WriteStatus.Failed);
             try
             {
                 char* path = stackalloc char[32768]; uint length = 32768;
-                if (!Native.QueryFullProcessImageNameW(process, 0, path, ref length)) return Win32Fail(out error);
+                if (!Native.QueryFullProcessImageNameW(process, 0, path, ref length)) { Win32Fail(out error); return new(WriteStatus.Failed); }
                 return Network.Write(key, new string(path, 0, (int)length), slot, value, out error);
             }
             finally { Native.CloseHandle(process); }
         }
+        return new(WriteNative(key, slot, value, out error) ? WriteStatus.Succeeded : WriteStatus.Failed);
+    }
+
+    private bool WriteNative(in ProcessKey key, Slot slot, long value, out string? error)
+    {
         uint access = slot switch
         {
             Slot.MemoryLimit => Native.PROCESS_SET_QUOTA | Native.PROCESS_TERMINATE | Query,

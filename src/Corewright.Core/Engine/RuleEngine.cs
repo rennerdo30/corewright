@@ -10,9 +10,16 @@ public interface IActuator
 
     bool TryWrite(in ProcessKey key, Slot slot, long value, out string? error);
 
+    /// <summary>A deferred write has not changed confirmed enforcement and must not be cached as a refusal.</summary>
+    WriteResult Write(in ProcessKey key, Slot slot, long value, out string? error) =>
+        new(TryWrite(key, slot, value, out error) ? WriteStatus.Succeeded : WriteStatus.Failed);
+
     /// <summary>The process exited or is no longer managed: release handles held for it.</summary>
     void Forget(in ProcessKey key);
 }
+
+public enum WriteStatus { Succeeded, Failed, Deferred }
+public readonly record struct WriteResult(WriteStatus Status, long RetryAfterMs = 0);
 
 public enum EngineEventKind { Applied, Reverted, Failed, Drift, Info }
 
@@ -289,11 +296,11 @@ public sealed class RuleEngine(IActuator actuator, IEngineEventSink sink)
         }
         if (!has)
         {
-            if (st.IsApplied[s]) Revert(st, s);
+            if (st.Owned[s]) Revert(st, s);
             return;
         }
 
-        if (st.IsApplied[s] && st.Applied[s] == value && (st.RevertFailed & (1 << s)) == 0)
+        if (st.IsApplied[s] && st.Applied[s] == value && ((st.RevertFailed | st.Pending) & (1 << s)) == 0)
         {
             st.AppliedRule[s] = rule;
             if (slot == Slot.CpuPriority && p.BasePriority != 0 &&
@@ -309,8 +316,9 @@ public sealed class RuleEngine(IActuator actuator, IEngineEventSink sink)
         }
 
         if (st.Failed[s] && st.FailedValue[s] == value) return;
+        if ((st.Pending & (1 << s)) != 0 && (_ctx?.NowMs ?? Environment.TickCount64) < st.ApplyRetry[s]) return;
 
-        if (!st.IsApplied[s])
+        if (!st.Owned[s])
         {
             if (!actuator.TryRead(p.Key, slot, out var original, out var readErr))
             {
@@ -320,13 +328,22 @@ public sealed class RuleEngine(IActuator actuator, IEngineEventSink sink)
             st.Original[s] = original;
         }
 
-        if (actuator.TryWrite(p.Key, slot, value, out var err2))
+        var result = actuator.Write(p.Key, slot, value, out var err2);
+        if (result.Status == WriteStatus.Deferred)
         {
+            st.Owned[s] = true; // Preserve the first original, even before the first confirmed apply.
+            st.Pending |= 1 << s;
+            st.ApplyRetry[s] = result.RetryAfterMs;
+        }
+        else if (result.Status == WriteStatus.Succeeded)
+        {
+            st.Owned[s] = true;
             st.IsApplied[s] = true;
             st.Applied[s] = value;
             st.AppliedRule[s] = rule;
             st.Failed[s] = false;
             st.RevertFailed &= ~(1 << s);
+            st.Pending &= ~(1 << s);
             sink.Emit(new EngineEvent(EngineEventKind.Applied, p.Key.Pid, p.Name, rule!.Name, Slots.Name(slot),
                 Slots.FormatValue(slot, value), null));
         }
@@ -352,7 +369,13 @@ public sealed class RuleEngine(IActuator actuator, IEngineEventSink sink)
         var slot = (Slot)s;
         bool network = slot is Slot.NetworkBlocked or Slot.UploadLimit or Slot.NetworkPriority;
         bool reported = (st.RevertFailed & (1 << s)) != 0;
-        bool ok = actuator.TryWrite(st.Key, slot, st.Original[s], out var err);
+        var result = actuator.Write(st.Key, slot, st.Original[s], out var err);
+        bool ok = result.Status == WriteStatus.Succeeded;
+        if (result.Status == WriteStatus.Deferred)
+        {
+            st.Pending |= 1 << s;
+            return;
+        }
         if (ok || !reported)
             sink.Emit(new EngineEvent(ok ? EngineEventKind.Reverted : EngineEventKind.Failed, st.Key.Pid, st.Name,
                 st.AppliedRule[s]?.Name, Slots.Name(slot), Slots.FormatValue(slot, st.Original[s]),
@@ -364,6 +387,8 @@ public sealed class RuleEngine(IActuator actuator, IEngineEventSink sink)
         }
         st.RevertFailed &= ~(1 << s);
         st.IsApplied[s] = false;
+        st.Owned[s] = false;
+        st.Pending &= ~(1 << s);
         st.AppliedRule[s] = null;
     }
 
@@ -375,6 +400,7 @@ public sealed class RuleEngine(IActuator actuator, IEngineEventSink sink)
         public int Version = -1;
         public int DriftCount;
         public int RevertFailed;
+        public int Pending;
 
         // Per rule (resized when the rule set changes).
         public byte[] StaticCache = [];
@@ -384,6 +410,8 @@ public sealed class RuleEngine(IActuator actuator, IEngineEventSink sink)
 
         // Per slot.
         public readonly bool[] IsApplied = new bool[Slots.Count];
+        public readonly bool[] Owned = new bool[Slots.Count];
+        public readonly long[] ApplyRetry = new long[Slots.Count];
         public readonly long[] Applied = new long[Slots.Count];
         public readonly long[] Original = new long[Slots.Count];
         public readonly CompiledRule?[] AppliedRule = new CompiledRule?[Slots.Count];

@@ -8,7 +8,7 @@ namespace Corewright.Service.Windows;
 internal sealed class NetworkPolicies : IDisposable
 {
     private const int Block = 1, Qos = 2;
-    private sealed class Claim(string path) { public readonly string Path = path; public bool Block; public long Upload; public long Dscp = -1; }
+    private sealed class Claim(string path) { public readonly string Path = path; public bool Block; public long Upload; public long Dscp = -1; public int Pending; }
     private sealed class Enforcement
     {
         public bool Blocked;
@@ -69,33 +69,40 @@ internal sealed class NetworkPolicies : IDisposable
             }
         return (block, upload, dscp);
     }
-    public bool Write(ProcessKey key, string? path, Slot slot, long value, out string? error)
+    public WriteResult Write(ProcessKey key, string? path, Slot slot, long value, out string? error)
     {
         error = null;
-        if (value != Original(slot) && !Ownership.TryAcquire(out error)) return false;
-        if (slot != Slot.NetworkBlocked && _qosStartupError is not null) { error = _qosStartupError; return false; }
+        if (value != Original(slot) && !Ownership.TryAcquire(out error)) return new(WriteStatus.Failed);
+        if (slot != Slot.NetworkBlocked && _qosStartupError is not null) { error = _qosStartupError; return new(WriteStatus.Deferred, _startupRetry); }
         if (!_claims.TryGetValue(key, out var claim))
         {
-            if (value == Original(slot)) return true;
-            if (string.IsNullOrEmpty(path)) { error = "executable path unavailable"; return false; }
+            if (value == Original(slot)) return new(WriteStatus.Succeeded);
+            if (string.IsNullOrEmpty(path)) { error = "executable path unavailable"; return new(WriteStatus.Failed); }
             _claims.Add(key, claim = new Claim(path));
         }
         if (!_effective.TryGetValue(claim.Path, out var state)) _effective.Add(claim.Path, state = new());
         long old = slot == Slot.NetworkBlocked ? (claim.Block ? 1 : 0) : slot == Slot.UploadLimit ? claim.Upload : claim.Dscp;
         Assign(claim, slot, value);
         int backend = slot == Slot.NetworkBlocked ? Block : Qos;
-        bool ok;
+        bool retrying = (claim.Pending & backend) != 0;
         if ((state.Pending & backend) != 0 && Environment.TickCount64 < state.RetryAfter)
-        { error = backend == Block ? state.BlockError : state.QosError; ok = false; }
-        else ok = Sync(claim.Path, state, backend, out error);
+        {
+            claim.Pending |= backend;
+            return new(WriteStatus.Deferred, state.RetryAfter);
+        }
+        bool ok = Sync(claim.Path, state, backend, out error);
         if (!ok)
         {
             // Failed applies are not desired. Failed releases MUST remain desired until confirmed.
-            if (value != Original(slot)) Assign(claim, slot, old);
+            if (value == Original(slot) || retrying) claim.Pending |= backend;
+            else Assign(claim, slot, old);
             state.Reported |= backend; // The engine reports this write; retries stay silent.
+            // A refused first apply has no live engine owner. Transfer its cleanup to the path record.
+            if (!claim.Block && claim.Upload == 0 && claim.Dscp < 0 && claim.Pending == 0) _claims.Remove(key);
         }
         Prune(claim.Path, state);
-        return ok;
+        if (!ok && retrying) return new(WriteStatus.Deferred, state.RetryAfter);
+        return new(ok ? WriteStatus.Succeeded : WriteStatus.Failed);
     }
     private static void Assign(Claim c, Slot slot, long value)
     { if (slot == Slot.NetworkBlocked) c.Block = value != 0; else if (slot == Slot.UploadLimit) c.Upload = value; else c.Dscp = value; }
@@ -128,6 +135,10 @@ internal sealed class NetworkPolicies : IDisposable
             state.RetryAfter = Environment.TickCount64 + 60_000;
             _nextRetry = Math.Min(_nextRetry, state.RetryAfter);
         }
+        int confirmed = backends & ~state.Pending;
+        if (confirmed != 0)
+            foreach (var claim in _claims.Values)
+                if (string.Equals(claim.Path, path, StringComparison.OrdinalIgnoreCase)) claim.Pending &= ~confirmed;
         return (state.Pending & backends) == 0;
     }
     public void Forget(ProcessKey key)
@@ -138,6 +149,8 @@ internal sealed class NetworkPolicies : IDisposable
         // Sibling exits and pause must not bypass a failed backend's retry deadline.
         if (Environment.TickCount64 < state.RetryAfter) backends &= ~state.Pending;
         Sync(c.Path, state, backends, out _);
+        // RetryPending may have left this deadline to the live engine. Transfer it back on Forget.
+        if (state.Pending != 0) _nextRetry = Math.Min(_nextRetry, state.RetryAfter);
         ReportPending(state);
         Prune(c.Path, state);
     }
@@ -159,6 +172,12 @@ internal sealed class NetworkPolicies : IDisposable
         foreach (var (path, state) in _effective)
         {
             if (state.Pending == 0) continue;
+            // Live claims are reconciled by the engine, so cleanup can never change enforcement behind its back.
+            // Only orphaned cleanup (exit/Forget or a refused first apply) is retried here.
+            bool owned = false;
+            foreach (var claim in _claims.Values)
+                if ((claim.Pending & state.Pending) != 0 && string.Equals(claim.Path, path, StringComparison.OrdinalIgnoreCase)) { owned = true; break; }
+            if (owned) continue;
             if (now >= state.RetryAfter)
             {
                 Sync(path, state, state.Pending, out _);

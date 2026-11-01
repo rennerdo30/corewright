@@ -47,7 +47,13 @@ desired release and confirmed enforcement. Ambiguous WMI failures invalidate
 the confirmed backend cache and retain journal ownership. Process exit and
 `Forget` transfer cleanup to the per-path record instead of losing it.
 
-The existing sampler retries pending cleanup at most once per minute, including
+A write deferred by backend backoff is distinct from a refused write. It keeps
+the latest desired claim and the engine original; it is retried at the deadline
+without caching a hard failure. Live pending claims are retried by the engine,
+so background cleanup cannot silently undo confirmed engine enforcement.
+Orphaned cleanup transfers to the per-path record on Forget.
+
+The existing sampler retries orphaned pending cleanup at most once per minute, including
 while paused. The original failure is reported once. Each backend updates its
 confirmed state only on success; unrelated successful slot writes cannot claim
 that a failed backend changed. Shutdown attempts final cleanup, retains failed
