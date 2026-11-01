@@ -27,7 +27,7 @@ public interface IEngineEventSink
 public sealed record AppliedSlot(Slot Slot, long Value, string RuleId, string RuleName);
 
 public sealed record ExplainEntry(
-    string RuleId, string RuleName, int Priority, bool Matches, bool Active, string[] Won, string[] Lost);
+    string RuleId, string RuleName, int Priority, bool Matches, bool Active, string[] Won, string[] Lost, string? Unavailable = null);
 
 /// <summary>
 /// Evaluates compiled rules against processes and reconciles each slot: the highest-priority active rule
@@ -150,10 +150,12 @@ public sealed class RuleEngine(IActuator actuator, IEngineEventSink sink)
         for (int i = 0; i < rules.Length; i++)
         {
             var r = rules[i];
-            bool matches = r.Match(p, ctx);
+            bool unavailable = r.UsesNetwork && !p.NetAvailable;
+            bool matches = !unavailable && r.Match(p, ctx);
             bool active = st is not null && st.Version == _version && i < st.Active.Length
                 ? (r.SustainMs > 0 || r.ReleaseMs > 0 ? st.Active[i] : matches)
                 : matches;
+            if (unavailable) active = false;
             var won = new List<string>();
             var lost = new List<string>();
             for (int s = 0; s < Slots.Count; s++)
@@ -163,7 +165,7 @@ public sealed class RuleEngine(IActuator actuator, IEngineEventSink sink)
                 if (owner[s] is null) { owner[s] = r; won.Add(Slots.Name((Slot)s)); }
                 else lost.Add($"{Slots.Name((Slot)s)} (to {owner[s]!.Name})");
             }
-            result.Add(new ExplainEntry(r.Id, r.Name, r.Priority, matches, active, [.. won], [.. lost]));
+            result.Add(new ExplainEntry(r.Id, r.Name, r.Priority, matches, active, [.. won], [.. lost], unavailable ? "network data unavailable; needs the installed service" : null));
         }
         return result;
     }
@@ -181,6 +183,7 @@ public sealed class RuleEngine(IActuator actuator, IEngineEventSink sink)
         for (int i = 0; i < rules.Length; i++)
         {
             var r = rules[i];
+            if (r.UsesNetwork && !p.NetAvailable) { st.ClearTiming(i); continue; }
             if ((r.SlotMask & ~claimed) == 0)
             {
                 // Every slot of this rule is already owned by a higher rule: skip the evaluation entirely.

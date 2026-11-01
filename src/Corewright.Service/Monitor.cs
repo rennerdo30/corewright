@@ -38,6 +38,11 @@ internal sealed class Monitor : BackgroundService
     private readonly CoreUsageSampler _cores = new();
     private GpuMonitor? _gpu;
     private long _gpuLastUse;
+    private ProcessNetworkMonitor? _processNetwork;
+    private long _networkLastUse = long.MinValue / 2;
+    private bool _networkFailed;
+    public string? NetworkError { get; private set; }
+    public void TouchNetwork() => Interlocked.Exchange(ref _networkLastUse, Environment.TickCount64);
 
     private readonly long[] _hTime = new long[HistoryCapacity];
     private readonly float[] _hGpu = new float[HistoryCapacity];
@@ -55,6 +60,7 @@ internal sealed class Monitor : BackgroundService
         _log = log;
         Events = events;
         Engine = new RuleEngine(_actuator, events);
+        _actuator.Network.Start(events);
         _ctx.Facts = _facts;
         ProcessInfo.CommandLineReader = SystemProbe.ReadCommandLine;
         SystemProbe.EnablePrivileges();
@@ -127,6 +133,7 @@ internal sealed class Monitor : BackgroundService
     public TopologyDto? CpuLayout { get; }
     public ProcessDetailsCache Details { get; } = new();
     public NetworkSampler Network => _network;
+    public NetworkPolicies NetworkPolicies => _actuator.Network;
     public CoreUsageSampler Cores => _cores;
     public GpuMonitor? Gpu => _gpu;
     public RuleSet RuleSet { get; private set; }
@@ -254,6 +261,7 @@ internal sealed class Monitor : BackgroundService
             }
             _actuator.Dispose();
             _gpu?.Dispose();
+            _processNetwork?.Dispose();
             _sampler.Dispose();
             _log.LogInformation("Corewright monitor stopped; all changes reverted");
         }
@@ -265,6 +273,29 @@ internal sealed class Monitor : BackgroundService
         {
             _sampler.Sample();
             _ctx.NowMs = Environment.TickCount64;
+            bool needNetwork = Engine.Rules.NeedsNetwork || (IsClientActive && _ctx.NowMs - Interlocked.Read(ref _networkLastUse) < 5000);
+            if (needNetwork && _processNetwork is null && !_networkFailed)
+            {
+                _processNetwork = new ProcessNetworkMonitor();
+                NetworkError = _processNetwork.Error;
+                if (!_processNetwork.Available)
+                {
+                    _networkFailed = true;
+                    Events.Emit(new(EngineEventKind.Failed, 0, "", null, "network", null, NetworkError));
+                    _processNetwork.Dispose(); _processNetwork = null;
+                }
+            }
+            if (_processNetwork is not null && !Engine.Rules.NeedsNetwork && _ctx.NowMs - Interlocked.Read(ref _networkLastUse) > 60_000)
+            { _processNetwork.Dispose(); _processNetwork = null; }
+            if (_processNetwork is not null) _processNetwork.Sample(_sampler.Processes);
+            else foreach (var p in _sampler.Processes) { p.NetAvailable = false; p.NetSend = p.NetReceive = 0; }
+            if (_processNetwork is { Available: false } failed)
+            {
+                NetworkError = failed.Error ?? "network ETW unavailable"; _networkFailed = true;
+                Events.Emit(new(EngineEventKind.Failed, 0, "", null, "network", null, NetworkError));
+                failed.Dispose(); _processNetwork = null;
+                foreach (var p in _sampler.Processes) p.NetAvailable = false;
+            }
 
             // A service in session 0 cannot see the desktop; the tray reports the foreground process.
             // In console mode the service can read it itself unless the tray reported recently.
