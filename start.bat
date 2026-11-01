@@ -5,6 +5,8 @@ rem Tray -> "Exit Corewright" stops everything again; every change Corewright ma
 
 set "ROOT=%~dp0"
 set "BIN=%ROOT%artifacts\publish"
+sc query Corewright >nul 2>&1
+if not errorlevel 1 goto :installed
 
 if /I "%~1"=="--skip-check" goto :service
 powershell -NoProfile -ExecutionPolicy Bypass -File "%ROOT%scripts\is-stale.ps1"
@@ -13,12 +15,6 @@ call "%ROOT%build.bat" --no-start
 if errorlevel 1 exit /b 1
 
 :service
-rem Installed as a Windows service? Then just make sure it runs.
-sc query Corewright >nul 2>&1
-if errorlevel 1 goto :console
-sc start Corewright >nul 2>&1
-goto :ui
-
 :console
 tasklist /FI "IMAGENAME eq Corewright.Service.exe" 2>nul | find /I "Corewright.Service.exe" >nul
 if not errorlevel 1 goto :ui
@@ -29,4 +25,11 @@ timeout /t 2 /nobreak >nul
 :ui
 start "" "%BIN%\Corewright.Tray.exe"
 start "" "%BIN%\Corewright.Dashboard.exe"
+exit /b 0
+
+:installed
+rem The installed service starts with Windows; never launch a second console instance.
+set "BIN=%ProgramW6432%\Corewright"
+if not defined ProgramW6432 set "BIN=%ProgramFiles%\Corewright"
+start "" "%BIN%\Corewright.Tray.exe"
 exit /b 0

@@ -4,6 +4,7 @@ import { api } from '../api'
 import { PageHeader } from '../components/PageHeader'
 import { Card, Toggle } from '../components/SettingsControls'
 import { isHost, post } from '../host'
+import { UpdatesCard } from '../components/UpdatesCard'
 import { usePoll } from '../hooks'
 
 /** App settings. Autopilot has its own page; this one is for how Corewright itself starts and runs. */
@@ -21,6 +22,7 @@ export function Settings() {
         <h3>Startup</h3>
         <Autostart />
       </section>
+      <UpdatesCard />
 
       <section className="section">
         <h3>Appearance</h3>
@@ -104,7 +106,7 @@ function AppearanceCards() {
             title="Windows accent colour"
             onClick={() => change({ accent: 'windows' })}
           >
-            <span className="glyph">{''}</span>
+            <span className="glyph">{'\uE7F4'}</span>
           </button>
           {PRESETS.map((p) => (
             <button

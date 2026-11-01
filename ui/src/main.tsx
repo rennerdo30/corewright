@@ -6,6 +6,7 @@ import './styles.css'
 import './styles-r2.css'
 import './styles-r3.css'
 import './styles-r4.css'
+import './styles-updates.css'
 import './styles-r5.css'
 
 applyAccent()
