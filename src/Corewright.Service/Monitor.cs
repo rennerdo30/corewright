@@ -41,7 +41,8 @@ internal sealed class Monitor : BackgroundService
     private ProcessNetworkMonitor? _processNetwork;
     private long _networkLastUse = long.MinValue / 2;
     private bool _networkFailed;
-    private bool _networkStopReported;
+    private bool _networkDemand, _networkStopReported;
+    private int _networkVersion = -1;
     private long _networkStopRetry;
     public string? NetworkError { get; private set; }
     public void TouchNetwork() => Interlocked.Exchange(ref _networkLastUse, Environment.TickCount64);
@@ -279,30 +280,29 @@ internal sealed class Monitor : BackgroundService
             _sampler.Sample();
             _ctx.NowMs = Environment.TickCount64;
             _actuator.Network.RetryPending(_ctx.NowMs);
-            if (_networkFailed && _processNetwork is { Available: false } && _ctx.NowMs >= _networkStopRetry) StopProcessNetwork();
-            bool needNetwork = Engine.Rules.NeedsNetwork || (IsClientActive && _ctx.NowMs - Interlocked.Read(ref _networkLastUse) < 5000);
+            bool ruleDemand = !Engine.Paused && Engine.Rules.NeedsNetwork;
+            bool needNetwork = ruleDemand || (IsClientActive && _ctx.NowMs - Interlocked.Read(ref _networkLastUse) < 5000);
+            if ((needNetwork && !_networkDemand) || _networkVersion != Engine.Version) _networkFailed = false;
+            _networkDemand = needNetwork; _networkVersion = Engine.Version;
+            if (_processNetwork is { Available: false } failed)
+            {
+                if (!_networkFailed) NetworkFailure(failed.Error);
+                if (_ctx.NowMs >= _networkStopRetry) StopProcessNetwork();
+            }
             if (needNetwork && _processNetwork is null && !_networkFailed)
             {
                 _processNetwork = new ProcessNetworkMonitor(_actuator.Network.Ownership);
                 NetworkError = _processNetwork.Error;
                 if (!_processNetwork.Available)
                 {
-                    _networkFailed = true;
-                    Events.Emit(new(EngineEventKind.Failed, 0, "", null, "network", null, NetworkError));
+                    NetworkFailure(NetworkError);
                     StopProcessNetwork();
                 }
             }
-            if (_processNetwork is { Available: true } && !Engine.Rules.NeedsNetwork && _ctx.NowMs - Interlocked.Read(ref _networkLastUse) > 60_000)
-            { StopProcessNetwork(); }
-            if (_processNetwork is not null) _processNetwork.Sample(_sampler.Processes);
-            else foreach (var p in _sampler.Processes) { p.NetAvailable = false; p.NetSend = p.NetReceive = 0; }
-            if (_processNetwork is { Available: false } failed && !_networkFailed)
-            {
-                NetworkError = failed.Error ?? "network ETW unavailable"; _networkFailed = true;
-                Events.Emit(new(EngineEventKind.Failed, 0, "", null, "network", null, NetworkError));
+            if (_processNetwork is { Available: true } && !ruleDemand && _ctx.NowMs - Interlocked.Read(ref _networkLastUse) > 60_000)
                 StopProcessNetwork();
-                foreach (var p in _sampler.Processes) p.NetAvailable = false;
-            }
+            if (_processNetwork is { Available: true } active) active.Sample(_sampler.Processes);
+            else foreach (var p in _sampler.Processes) { p.NetAvailable = false; p.NetSend = p.NetReceive = 0; }
 
             // A service in session 0 cannot see the desktop; the tray reports the foreground process.
             // In console mode the service can read it itself unless the tray reported recently.
@@ -367,6 +367,13 @@ internal sealed class Monitor : BackgroundService
             _hNext = (_hNext + 1) % HistoryCapacity;
             if (_hCount < HistoryCapacity) _hCount++;
         }
+    }
+
+    private void NetworkFailure(string? error)
+    {
+        NetworkError = error ?? "network ETW unavailable";
+        _networkFailed = true;
+        Events.Emit(new(EngineEventKind.Failed, 0, "", null, "network", null, NetworkError));
     }
 
     private void StopProcessNetwork()
