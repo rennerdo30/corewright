@@ -30,7 +30,7 @@ export function Overview({ onOpen }: { onOpen: (p: Page) => void }) {
   const selected = (kind: string) => devices.data?.devices.find(d => d.id === selection[kind])
   const individual = (kind: string) => !!selection[kind] && selection[kind] !== 'all'
   const picker = (kind: string, all: string) => {
-    const list = devices.data?.devices.filter((d) => d.kind === kind) ?? []
+    const list = devices.data?.devices.filter((d) => d.kind === kind && !(d.kind === 'network' && d.type === 'Virtual')) ?? []
     if (list.length < 2 && !individual(kind)) return undefined // one device: nothing to choose
     return (
       <select className="metric-pick" aria-label={`Show ${all.toLowerCase()} or one device`} value={selection[kind] || 'all'} onChange={(e) => choose(kind, e.target.value)}>
