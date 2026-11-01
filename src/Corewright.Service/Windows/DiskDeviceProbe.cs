@@ -94,7 +94,12 @@ internal static unsafe partial class DiskDeviceProbe
     }
     public static void Sample(DeviceMonitor.State s, long now, long time)
     {
-        if (s.Disk == -1 && now >= s.LastQuery) { s.Disk = Open(s.Path); s.LastQuery = now + 60_000; }
+        if (s.Disk == -1 && now >= s.NextOpenAttemptMs)
+        {
+            s.Disk = Open(s.Path);
+            s.NextOpenAttemptMs = now + 60_000;
+            s.Baseline = false;
+        }
         var v = s.Info.Values;
         v.Read = v.Write = v.Active = null; v.SampledAt = time;
         if (s.Disk == -1) return;

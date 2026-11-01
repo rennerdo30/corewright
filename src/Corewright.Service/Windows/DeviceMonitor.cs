@@ -54,7 +54,7 @@ internal sealed unsafe class DeviceMonitor : IDisposable
         public uint Adapter;
         public bool FanAvailable;
         public nint Disk = -1;
-        public long LastRead, LastWrite, LastIdle, LastQuery, HealthDue;
+        public long LastRead, LastWrite, LastIdle, LastQuery, NextOpenAttemptMs, HealthDue;
         public bool Baseline;
         private long[]? _time;
         private double?[]? _primary, _secondary;
@@ -91,6 +91,9 @@ internal sealed unsafe class DeviceMonitor : IDisposable
         {
             if (Disk != -1) Native.CloseHandle(Disk);
             Disk = -1;
+            Baseline = false;
+            LastRead = LastWrite = LastIdle = LastQuery = 0;
+            NextOpenAttemptMs = HealthDue = 0;
             if (Adapter != 0) GpuDeviceProbe.Close(Adapter);
             Adapter = 0;
         }
