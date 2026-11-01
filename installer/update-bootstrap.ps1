@@ -85,5 +85,17 @@ try {
 } catch {
     # No credentials or bearer tokens are handled by this bootstrap.
     Write-Error $_
+    # The dashboard started us hidden and cannot see this output: leave the reason, and setup's own last log line,
+    # where it can read it (owner, 2026-11-02: "Trusted update failed (exit 1)" said nothing).
+    try {
+        $reason = "$($_.Exception.Message)"
+        $log = Join-Path ([IO.Path]::GetTempPath()) "Corewright-installer-$UpdateVersion.log"
+        if (Test-Path -LiteralPath $log) {
+            $last = Get-Content -LiteralPath $log -Tail 1 -ErrorAction SilentlyContinue
+            if ($last) { $reason += " Setup said: $($last.Trim())" }
+        }
+        $dir = Join-Path $env:ProgramData 'Corewright'
+        if (Test-Path -LiteralPath $dir) { Set-Content -LiteralPath (Join-Path $dir 'update-last-error.txt') -Value $reason -Encoding utf8 }
+    } catch { }
     exit 1
 }

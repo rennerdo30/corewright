@@ -300,6 +300,7 @@ internal sealed class DashboardUpdater(Action<DashboardUpdater.Status> changed) 
         if (encoded.Length > 30000) throw new IOException("The trusted update bootstrap is too large.");
         string powershell = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System),
             @"WindowsPowerShell\v1.0\powershell.exe");
+        var started = DateTimeOffset.UtcNow;
         Progress("installing", "Approve the Windows administrator prompt. The trusted updater will download, verify and install Corewright.");
         using var process = await Task.Run(() => Process.Start(new ProcessStartInfo(powershell,
             "-NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand " + encoded)
@@ -309,7 +310,21 @@ internal sealed class DashboardUpdater(Action<DashboardUpdater.Status> changed) 
         using var wait = CancellationTokenSource.CreateLinkedTokenSource(_closed.Token);
         wait.CancelAfter(TimeSpan.FromMinutes(15));
         await process.WaitForExitAsync(wait.Token);
-        if (process.ExitCode != 0) throw new IOException($"Trusted update failed (exit {process.ExitCode}). Setup was not run unless its protected checksum passed. See the installer log.");
+        if (process.ExitCode != 0)
+        {
+            // The elevated helper leaves its reason (and setup's last log line) next to Corewright's data.
+            string? reason = null;
+            try
+            {
+                var file = new FileInfo(Path.Combine(AppPaths.ServiceDataDirectory, "update-last-error.txt"));
+                if (file is { Exists: true, Length: < 4096 } && file.LastWriteTimeUtc >= started.UtcDateTime.AddSeconds(-5))
+                    reason = File.ReadAllText(file.FullName).Trim();
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
+            throw new IOException(reason is { Length: > 0 }
+                ? $"The update did not install: {reason}"
+                : $"The update did not install (exit {process.ExitCode}). Nothing was changed; the setup log is %TEMP%\\Corewright-installer-{release.Version}.log.");
+        }
         Progress("installed", "Update installed. Reopen Corewright from the tray.");
     }
 
