@@ -12,30 +12,38 @@ internal sealed unsafe partial class ProcessNetworkMonitor : IDisposable
     private readonly Lock _sync = new();
     private readonly Dictionary<int, Counter> _counters = new(1024);
     private readonly List<int> _gone = [];
-    private readonly string _name = "Corewright-Network-" + Environment.ProcessId;
+    // All callers hold NetworkOwnership, so a session with this name can only be abandoned.
+    private const string SessionName = "Corewright-Network";
     private ulong _session, _trace = ulong.MaxValue;
     private GCHandle _self;
     private Thread? _reader;
     private long _sampleMs;
+    private long _stopRetryAfter;
     private volatile bool _running;
     public string? Error { get; private set; }
     public bool Available => _running;
 
-    public ProcessNetworkMonitor()
+    public ProcessNetworkMonitor(NetworkOwnership ownership)
     {
-        if (!Environment.IsPrivilegedProcess) { Error = "needs administrator (needs the installed service)"; return; }
+        if (!ownership.TryAcquire(out var error)) { Error = error; return; }
         try
         {
-            fixed (char* name = _name)
+            fixed (char* name = SessionName)
             {
+                byte* stale = stackalloc byte[1024]; new Span<byte>(stale, 1024).Clear();
+                ((Properties*)stale)->Size = 1024;
+                ((Properties*)stale)->LoggerOffset = (uint)sizeof(Properties);
+                uint stop = ControlTraceW(0, name, (Properties*)stale, 1);
+                if (stop != 0 && stop != 4201) Check(stop); // ERROR_WMI_INSTANCE_NOT_FOUND is already stopped.
                 byte* buffer = stackalloc byte[1024]; new Span<byte>(buffer, 1024).Clear();
                 var props = (Properties*)buffer;
                 props->Size = 1024; props->Flags = 0x20000; props->Clock = 2; props->Guid = Guid.NewGuid();
                 props->BufferKb = 16; props->MinBuffers = 2; props->MaxBuffers = 4;
                 props->Mode = 0x100 | 0x02000000 | 0x10000000; // real time, system logger, shared buffers (not per CPU)
                 props->FlushSeconds = 1; props->LoggerOffset = (uint)sizeof(Properties);
-                _name.AsSpan().CopyTo(new Span<char>(buffer + props->LoggerOffset, _name.Length + 1));
-                Check(StartTraceW(out _session, name, props));
+                SessionName.AsSpan().CopyTo(new Span<char>(buffer + props->LoggerOffset, SessionName.Length + 1));
+                Check(StartTraceW(out ulong session, name, props));
+                _session = session; // Failed StartTrace output is not an owned handle.
                 Check(EnableTraceEx2(_session, in Provider, 1, 4, 0x30, 0, 2000, 0));
                 _self = GCHandle.Alloc(this);
                 var file = new LogFile { Logger = name, Mode = 0x10000100, Callback = &OnEvent, BufferCallback = &OnBuffer, Context = GCHandle.ToIntPtr(_self) };
@@ -103,17 +111,32 @@ internal sealed unsafe partial class ProcessNetworkMonitor : IDisposable
     public void Dispose()
     {
         _running = false;
+        if (Environment.TickCount64 < _stopRetryAfter) return;
         if (_session != 0)
         {
             byte* buffer = stackalloc byte[1024]; new Span<byte>(buffer, 1024).Clear(); ((Properties*)buffer)->Size = 1024;
-            ControlTraceW(_session, null, (Properties*)buffer, 1); _session = 0;
+            ((Properties*)buffer)->LoggerOffset = (uint)sizeof(Properties);
+            uint result = ControlTraceW(_session, null, (Properties*)buffer, 1);
+            if (result is 0 or 4201) _session = 0;
+            else { Error = "network ETW stop failed: " + result; _stopRetryAfter = Environment.TickCount64 + 60_000; }
         }
-        if (_trace != ulong.MaxValue) { CloseTrace(_trace); _trace = ulong.MaxValue; }
+        if (_trace != ulong.MaxValue)
+        {
+            uint result = CloseTrace(_trace);
+            if (result is 0 or 7007) _trace = ulong.MaxValue; // ERROR_CTX_CLOSE_PENDING: consumer will finish.
+            else { Error = "network ETW consumer close failed: " + result; _stopRetryAfter = Environment.TickCount64 + 60_000; }
+        }
         // CloseTrace cancels ProcessTrace; do not free callback context until the consumer has returned.
-        if (_reader is not null && !_reader.Join(3000)) return;
-        if (_reader is null && _self.IsAllocated) _self.Free();
+        if (_reader is { IsAlive: true } && !_reader.Join(3000))
+        {
+            Error = "network ETW consumer did not stop; callback context retained";
+            _stopRetryAfter = Environment.TickCount64 + 60_000;
+            return;
+        }
+        if (_self.IsAllocated) _self.Free();
         _counters.Clear();
     }
+    public bool Stopped => _session == 0 && _trace == ulong.MaxValue && (_reader is null || !_reader.IsAlive);
     [StructLayout(LayoutKind.Sequential)] private struct Properties
     {
         public uint Size, ProviderId; public ulong Historical; public long Timestamp; public Guid Guid; public uint Clock, Flags;

@@ -41,6 +41,8 @@ internal sealed class Monitor : BackgroundService
     private ProcessNetworkMonitor? _processNetwork;
     private long _networkLastUse = long.MinValue / 2;
     private bool _networkFailed;
+    private bool _networkStopReported;
+    private long _networkStopRetry;
     public string? NetworkError { get; private set; }
     public void TouchNetwork() => Interlocked.Exchange(ref _networkLastUse, Environment.TickCount64);
 
@@ -262,7 +264,9 @@ internal sealed class Monitor : BackgroundService
             _actuator.Dispose();
             _gpu?.Dispose();
             _processNetwork?.Dispose();
-            _actuator.Network.Ownership.Dispose();
+            if ((_processNetwork is null || _processNetwork.Stopped) && _actuator.Network.SessionStopped)
+                _actuator.Network.Ownership.Dispose();
+            else _log.LogWarning("Network session cleanup failed; machine lease retained until process exit: {Error}", _processNetwork?.Error);
             _sampler.Dispose();
             _log.LogInformation("Corewright monitor stopped; cleanup failures, if any, are reported above");
         }
@@ -275,27 +279,28 @@ internal sealed class Monitor : BackgroundService
             _sampler.Sample();
             _ctx.NowMs = Environment.TickCount64;
             _actuator.Network.RetryPending(_ctx.NowMs);
+            if (_networkFailed && _processNetwork is { Available: false } && _ctx.NowMs >= _networkStopRetry) StopProcessNetwork();
             bool needNetwork = Engine.Rules.NeedsNetwork || (IsClientActive && _ctx.NowMs - Interlocked.Read(ref _networkLastUse) < 5000);
             if (needNetwork && _processNetwork is null && !_networkFailed)
             {
-                _processNetwork = new ProcessNetworkMonitor();
+                _processNetwork = new ProcessNetworkMonitor(_actuator.Network.Ownership);
                 NetworkError = _processNetwork.Error;
                 if (!_processNetwork.Available)
                 {
                     _networkFailed = true;
                     Events.Emit(new(EngineEventKind.Failed, 0, "", null, "network", null, NetworkError));
-                    _processNetwork.Dispose(); _processNetwork = null;
+                    StopProcessNetwork();
                 }
             }
-            if (_processNetwork is not null && !Engine.Rules.NeedsNetwork && _ctx.NowMs - Interlocked.Read(ref _networkLastUse) > 60_000)
-            { _processNetwork.Dispose(); _processNetwork = null; }
+            if (_processNetwork is { Available: true } && !Engine.Rules.NeedsNetwork && _ctx.NowMs - Interlocked.Read(ref _networkLastUse) > 60_000)
+            { StopProcessNetwork(); }
             if (_processNetwork is not null) _processNetwork.Sample(_sampler.Processes);
             else foreach (var p in _sampler.Processes) { p.NetAvailable = false; p.NetSend = p.NetReceive = 0; }
-            if (_processNetwork is { Available: false } failed)
+            if (_processNetwork is { Available: false } failed && !_networkFailed)
             {
                 NetworkError = failed.Error ?? "network ETW unavailable"; _networkFailed = true;
                 Events.Emit(new(EngineEventKind.Failed, 0, "", null, "network", null, NetworkError));
-                failed.Dispose(); _processNetwork = null;
+                StopProcessNetwork();
                 foreach (var p in _sampler.Processes) p.NetAvailable = false;
             }
 
@@ -362,6 +367,19 @@ internal sealed class Monitor : BackgroundService
             _hNext = (_hNext + 1) % HistoryCapacity;
             if (_hCount < HistoryCapacity) _hCount++;
         }
+    }
+
+    private void StopProcessNetwork()
+    {
+        if (_processNetwork is null) return;
+        _processNetwork.Dispose();
+        if (_processNetwork.Stopped)
+        { _processNetwork = null; _networkStopRetry = 0; _networkStopReported = false; return; }
+        NetworkError = _processNetwork.Error;
+        _networkFailed = true; // Do not report this stop failure again as a consumer failure next tick.
+        if (!_networkStopReported) Events.Emit(new(EngineEventKind.Failed, 0, "", null, "network", null, NetworkError));
+        _networkStopReported = true;
+        _networkStopRetry = Environment.TickCount64 + 60_000;
     }
 
     public void Pause()
