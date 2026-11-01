@@ -13,8 +13,6 @@
     <ProjectReference Include="..\Corewright.Core\Corewright.Core.csproj" />
   </ItemGroup>
   <ItemGroup>
-    <EmbeddedResource Include="..\..\installer\secure-files.cs" LogicalName="Corewright.SecureFiles" />
-    <EmbeddedResource Include="..\..\installer\update-bootstrap.ps1" LogicalName="Corewright.UpdateBootstrap" />
     <None Include="..\..\assets\corewright.ico" Link="corewright.ico" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

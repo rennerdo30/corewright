@@ -42,7 +42,16 @@ var monitor = app.Services.GetRequiredService<Monitor>();
 string token = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32)).TrimEnd('=').Replace('+', '-').Replace('/', '_');
 app.Use(Api.Guard(monitor, Encoding.UTF8.GetBytes(token), options.Port));
 app.UseDefaultFiles();
-app.UseStaticFiles();
+// The start page must always be re-checked, or the window keeps showing an old UI after an update (beta 2 did,
+// 2026-11-02). Asset files carry a content hash in their name, so they may be cached for good.
+app.UseStaticFiles(new StaticFileOptions
+{
+    OnPrepareResponse = ctx =>
+    {
+        bool hashed = ctx.File.Name.Contains('-') && ctx.Context.Request.Path.StartsWithSegments("/assets");
+        ctx.Context.Response.Headers.CacheControl = hashed ? "public, max-age=31536000, immutable" : "no-cache";
+    },
+});
 Api.Map(app, monitor);
 
 string endpointPath = Path.Combine(dataDir, EndpointInfo.FileName);

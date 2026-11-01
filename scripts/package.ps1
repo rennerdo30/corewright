@@ -45,7 +45,7 @@ if (!(Test-Path -LiteralPath (Join-Path $root 'ui/node_modules'))) {
 }
 $publish = Join-Path $root 'artifacts/publish'
 Invoke-Bounded (Join-Path $PSHOME 'pwsh.exe') @('-NoProfile', '-File', (Join-Path $PSScriptRoot 'publish.ps1'), '-Out', $publish) 900
-foreach ($file in 'Corewright.Service.exe', 'Corewright.Tray.exe', 'Corewright.Dashboard.exe', 'Corewright.Dashboard.dll', 'Corewright.Dashboard.runtimeconfig.json', 'appsettings.json', 'corewright.ico', 'wwwroot/index.html') {
+foreach ($file in 'Corewright.Service.exe', 'Corewright.Tray.exe', 'Corewright.Dashboard.exe', 'Corewright.Dashboard.dll', 'Corewright.Dashboard.runtimeconfig.json', 'Corewright.Updater.exe', 'appsettings.json', 'corewright.ico', 'wwwroot/index.html') {
     if (!(Test-Path -LiteralPath (Join-Path $publish $file))) { throw "Publish output lacks $file" }
 }
 $out = Join-Path $root 'artifacts/installer'

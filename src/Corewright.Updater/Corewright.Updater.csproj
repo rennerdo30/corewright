@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    Corewright Updater: the program the admin prompt shows when an update is installed (owner, 2026-11-02: "its weird
+    that the prompt for admin was from powershell"). Installed next to Corewright in Program Files (admin-only), it
+    downloads the release, checks its SHA-256 in an administrator-only folder and runs the setup.
+  -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <AssemblyTitle>Corewright Updater</AssemblyTitle>
+    <Product>Corewright</Product>
+    <ApplicationIcon>..\..\assets\corewright.ico</ApplicationIcon>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <!-- The shared file-safety helper is C# 5 style (DllImport); it stays the single tested copy. -->
+    <NoWarn>$(NoWarn);SYSLIB1054;CA1416</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="..\..\installer\secure-files.cs" Link="SecureFiles.cs" />
+  </ItemGroup>
+</Project>

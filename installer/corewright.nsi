@@ -375,6 +375,15 @@ Function .onInit
   StrCpy $WasTrayRunning $0
 FunctionEnd
 Function .onInstSuccess
+  ; In-app updates run setup silently with /RESTART: reopen the window afterwards (it starts the tray), so the user
+  ; is not left without Corewright after clicking Install update (owner, 2026-11-02).
+  ${GetParameters} $0
+  ClearErrors
+  ${GetOptions} $0 "/RESTART" $1
+  ${IfNot} ${Errors}
+    Call StartApp
+    Goto finished
+  ${EndIf}
   ${If} $IsUpgrade == 1
   ${AndIf} $WasTrayRunning != 0
     IfSilent 0 finished

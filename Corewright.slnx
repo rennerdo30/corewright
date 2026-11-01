@@ -4,5 +4,6 @@
     <Project Path="src/Corewright.Service/Corewright.Service.csproj" />
     <Project Path="src/Corewright.Tray/Corewright.Tray.csproj" />
     <Project Path="src/Corewright.Dashboard/Corewright.Dashboard.csproj" />
+    <Project Path="src/Corewright.Updater/Corewright.Updater.csproj" />
   </Folder>
 </Solution>

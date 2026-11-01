@@ -16,6 +16,8 @@ foreach ($p in 'Corewright.Service', 'Corewright.Tray') {
     if ($LASTEXITCODE) { throw "$p publish failed" }
 }
 dotnet publish (Join-Path $root 'src\Corewright.Dashboard') -c Release -r win-x64 --self-contained false -o $Out -nologo
+# Corewright Updater: the program the admin prompt names when an update installs.
+dotnet publish (Join-Path $root 'src\Corewright.Updater') -c Release -r win-x64 --self-contained false -o $Out -nologo
 if ($LASTEXITCODE) { throw 'Dashboard publish failed' }
 
 Get-ChildItem $Out -Filter 'Corewright.*.exe' | Select-Object Name, @{ n = 'MB'; e = { [math]::Round($_.Length / 1MB, 1) } }

@@ -272,41 +272,17 @@ internal sealed class DashboardUpdater(Action<DashboardUpdater.Status> changed) 
             throw new InvalidDataException("No newer version is available.");
         ValidateAssetUrl(release.SetupUrl);
         ValidateAssetUrl(release.SumsUrl);
-        // Only trusted, installed code is elevated. It independently downloads and
-        // hashes the release in a newly created administrator-only directory.
-        // Never pass an executable path or expected checksum from the user cache.
-        static string Resource(string name)
-        {
-            using var stream = typeof(DashboardUpdater).Assembly.GetManifestResourceStream(name)
-                ?? throw new IOException("The update bootstrap resource is missing.");
-            using var reader = new StreamReader(stream);
-            return reader.ReadToEnd();
-        }
-        string helper = Resource("Corewright.SecureFiles");
-        if (helper.Split('\n').Any(line => line.TrimEnd('\r') == "'@"))
-            throw new IOException("Invalid trusted bootstrap resource delimiter.");
-        string script = "$SecureFilesSource = @'\n" + helper + "\n'@\n" +
-            "$UpdateVersion = '" + release.Version + "';\n" + Resource("Corewright.UpdateBootstrap");
-        // Compress only our embedded code, never downloaded/cached script text.
-        using var packed = new MemoryStream();
-        using (var gzip = new System.IO.Compression.GZipStream(packed, System.IO.Compression.CompressionLevel.SmallestSize, leaveOpen: true))
-            gzip.Write(System.Text.Encoding.UTF8.GetBytes(script));
-        string unpack = "$s=[IO.MemoryStream]::new([Convert]::FromBase64String('" + Convert.ToBase64String(packed.ToArray()) +
-            "'));$g=[IO.Compression.GZipStream]::new($s,[IO.Compression.CompressionMode]::Decompress);" +
-            "$r=[IO.StreamReader]::new($g); & ([scriptblock]::Create($r.ReadToEnd()))";
-        string encoded = Convert.ToBase64String(System.Text.Encoding.Unicode.GetBytes(unpack));
-        // Windows PowerShell's encoded-command limit is the Windows command-line limit.
-        // Fail closed if embedded resources grow beyond it.
-        if (encoded.Length > 30000) throw new IOException("The trusted update bootstrap is too large.");
-        string powershell = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System),
-            @"WindowsPowerShell\v1.0\powershell.exe");
+        // Only trusted, installed code is elevated: Corewright.Updater.exe next to this window in the admin-only
+        // install folder (Installed() checked that). It takes nothing from us but the version; it downloads and
+        // verifies the release itself. The admin prompt names Corewright, not PowerShell (owner, 2026-11-02).
+        string updater = Path.Combine(AppContext.BaseDirectory, "Corewright.Updater.exe");
+        if (!File.Exists(updater)) throw new IOException("Corewright Updater is missing from this installation. Download the setup from GitHub.");
         var started = DateTimeOffset.UtcNow;
-        Progress("installing", "Approve the Windows administrator prompt. The trusted updater will download, verify and install Corewright.");
-        using var process = await Task.Run(() => Process.Start(new ProcessStartInfo(powershell,
-            "-NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand " + encoded)
-            { UseShellExecute = true, Verb = "runas", WindowStyle = ProcessWindowStyle.Hidden }), _closed.Token)
-            ?? throw new IOException("Windows could not start the trusted update bootstrap.");
-        Debug.WriteLine($"Corewright update bootstrap started: PID {process.Id}");
+        Progress("installing", "Approve the Windows administrator prompt from Corewright Updater. It downloads, verifies and installs the update, then reopens Corewright.");
+        using var process = await Task.Run(() => Process.Start(new ProcessStartInfo(updater, $"--version {release.Version}")
+            { UseShellExecute = true, Verb = "runas" }), _closed.Token)
+            ?? throw new IOException("Windows could not start Corewright Updater.");
+        Debug.WriteLine($"Corewright Updater started: PID {process.Id}");
         using var wait = CancellationTokenSource.CreateLinkedTokenSource(_closed.Token);
         wait.CancelAfter(TimeSpan.FromMinutes(15));
         await process.WaitForExitAsync(wait.Token);
