@@ -9,21 +9,6 @@
   --role-example: #6b7280;
 }
 
-/* Device details use the same cards, type ramp and native controls as Overview. */
-.device-selector { width: 100%; min-width: 0; font-size: 12px; padding: 3px 7px; margin: 5px 0; }
-.metric:has(.device-selector) .metric-sub { margin-top: 0; }
-.device-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr)); gap: 12px; }
-.device-heading { display: flex; align-items: flex-start; gap: 12px; min-width: 0; }
-.device-heading .glyph { font-size: 24px; color: var(--accent); padding-top: 3px; }
-.device-heading h4 { margin: 0; font-size: 15px; font-weight: 600; overflow-wrap: anywhere; }
-.device-heading p { margin: 4px 0 0; overflow-wrap: anywhere; }
-.device-live { display: flex; align-items: baseline; gap: 9px; margin: 14px 0 8px; }
-.device-live strong { font-size: 22px; font-weight: 600; }
-.device-details { display: grid; grid-template-columns: 1fr 1fr; gap: 9px 18px; margin: 14px 0 0; }
-.device-details > div { min-width: 0; }
-.device-details dt { font-size: 12px; color: var(--secondary-text); }
-.device-details dd { margin: 2px 0 0; font-size: 13px; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
-.device-filter { display: flex; align-items: center; gap: 7px; font-size: 13px; }
 @media (prefers-color-scheme: dark) {
   :root {
     --role-rule: #6fcf97;
@@ -191,3 +176,58 @@
 .hit-state { justify-self: end; font-size: 12px; color: var(--text-3); }
 .hit-state.live { color: var(--role-rule); font-weight: 600; }
 .hit.failed .hit-state { color: var(--critical); }
+
+/* Overview: device picker inside the card title (PM-40); the cards keep one shape. */
+.metric-title { display: inline-flex; align-items: center; gap: 4px; min-width: 0; }
+.link-title { border: 0; background: none; padding: 0; font: inherit; font-weight: 600; color: var(--text); cursor: default; border-radius: 4px; }
+.link-title .glyph { font-size: 10px; color: var(--secondary-text); }
+.link-title:hover, .link-title:hover .glyph { color: var(--accent); }
+.link-title:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.metric .metric-sub { display: flex; align-items: baseline; gap: 6px; }
+.metric-sub-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.metric-pick { appearance: none; -webkit-appearance: none; border: 0 !important; background: transparent; color: var(--secondary-text); font: inherit; font-size: 12px; font-weight: 400;
+  padding: 0 16px 0 0; margin: 0; max-width: 160px; flex: none; color: var(--text); field-sizing: content; width: auto; text-overflow: ellipsis; border-radius: 4px; cursor: default;
+  background-image: linear-gradient(45deg, transparent 50%, currentColor 50%), linear-gradient(135deg, currentColor 50%, transparent 50%);
+  background-position: right 7px top 55%, right 3px top 55%; background-size: 4px 4px; background-repeat: no-repeat; }
+.metric-pick:hover { background-color: var(--control-hover); color: var(--text); }
+.metric-pick:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.metric-pick option { color: var(--text); background: var(--flyout); }
+.metric-unit { font-size: 12px; font-weight: 400; color: var(--secondary-text); margin-left: 4px; }
+.metric-more { font-size: 11px; padding: 0; color: var(--secondary-text); }
+.metric-more:hover { color: var(--accent); }
+
+/* Devices page */
+.devices { display: flex; flex-direction: column; max-width: 1500px; }
+.pg-toggle { display: inline-flex; align-items: center; gap: 10px; font-size: 13px; }
+.tone-good { --tone: var(--role-rule); }
+.tone-caution { --tone: var(--caution); }
+.tone-critical { --tone: var(--critical); }
+.tone-neutral { --tone: var(--text-3); }
+strong.tone-critical { color: var(--critical); }
+.dev-section h3 { font-size: 14px; font-weight: 600; margin: 14px 0 8px; }
+.dev-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 640px), 1fr)); gap: 12px; }
+.dev-card { padding: 14px 16px 12px; display: flex; flex-direction: column; gap: 12px; }
+.dev-head { display: flex; align-items: flex-start; gap: 12px; }
+.dev-icon { font-size: 20px; width: 36px; height: 36px; flex: none; display: inline-flex; align-items: center; justify-content: center; border-radius: 8px;
+  background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent); }
+.dev-title { flex: 1; min-width: 0; }
+.dev-title h4 { margin: 0; font-size: 15px; line-height: 20px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dev-index { font-size: 12px; font-weight: 400; margin-left: 8px; }
+.dev-facts { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+.chip-static { font-size: 11px; line-height: 18px; padding: 0 7px; border-radius: 4px; background: var(--control); border: 1px solid var(--stroke); color: var(--secondary-text); }
+.dev-verdict { flex: none; font-size: 12px; font-weight: 600; line-height: 22px; padding: 0 10px; border-radius: 999px; color: var(--tone);
+  background: color-mix(in srgb, var(--tone) 14%, transparent); max-width: 50%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dev-body { display: grid; grid-template-columns: minmax(220px, 1fr) minmax(0, 1.6fr); gap: 18px; align-items: start; }
+.dev-value { display: flex; align-items: baseline; gap: 8px; margin-bottom: 4px; }
+.dev-value strong { font: 600 22px/28px 'Segoe UI Variable Display', 'Segoe UI', sans-serif; font-variant-numeric: tabular-nums; }
+.dev-value .secondary { font-size: 12px; }
+.dev-meter { height: 4px; border-radius: 2px; background: var(--control); margin-top: 8px; overflow: hidden; }
+.dev-meter i { display: block; height: 100%; background: var(--chart-4); }
+.dev-stats { display: grid; grid-template-columns: repeat(auto-fill, minmax(112px, 1fr)); gap: 8px 16px; margin: 0; }
+.dev-stats > div { min-width: 0; padding-left: 10px; border-left: 2px solid var(--tone, var(--divider)); }
+.dev-stats dt { font-size: 11px; color: var(--secondary-text); }
+.dev-stats dd { margin: 1px 0 0; font-size: 14px; line-height: 19px; font-weight: 600; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.dev-stats .tone-caution dd, .dev-stats .tone-critical dd { color: var(--tone); }
+.dev-missing { margin: 0; border-top: 1px solid var(--divider); padding-top: 8px; }
+.dev-note { margin-top: 16px; }
+@media (max-width: 760px) { .dev-body { grid-template-columns: 1fr; } }

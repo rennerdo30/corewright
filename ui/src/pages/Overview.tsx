@@ -8,7 +8,7 @@ import { bytes, percent } from '../format'
 import { useDescriptions } from '../host'
 import { usePoll } from '../hooks'
 import type { Device } from '../types'
-import { deviceLabel, deviceSeries, display, unavailable } from './Devices'
+import { deviceLabel, deviceSeries, display } from './Devices'
 
 const rate = (n: number) => (n < 1024 ? `${Math.round(n)} B/s` : `${bytes(n)}/s`)
 const bits = (n: number) => {
@@ -21,18 +21,29 @@ export function Overview({ onOpen }: { onOpen: (p: Page) => void }) {
     try { return JSON.parse(localStorage.getItem('corewright.devices') ?? '{}') ?? {} } catch { return {} }
   })
   const devices = usePoll(() => api.devices(Object.values(selection).filter(id => id !== 'all').join(',')), 1000)
-  useEffect(devices.reload, [selection, devices.reload])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => devices.reload(), [selection])
   const choose = (kind: string, id: string) => {
     const next = { ...selection, [kind]: id }; setSelection(next)
     localStorage.setItem('corewright.devices', JSON.stringify(next))
   }
   const selected = (kind: string) => devices.data?.devices.find(d => d.id === selection[kind])
   const individual = (kind: string) => !!selection[kind] && selection[kind] !== 'all'
-  const selector = (kind: string, label: string) => <select className="device-selector" aria-label={`${label} device`} value={selection[kind] || 'all'} onChange={e => choose(kind, e.target.value)}>
-    <option value="all">All {kind === 'gpu' ? 'GPUs' : label.toLowerCase()}</option>
-    {devices.data?.devices.filter(d => d.kind === kind).map(d => <option key={d.id} value={d.id}>{deviceLabel(d)}</option>)}
-    {individual(kind) && !selected(kind) && <option value={selection[kind]}>Device unavailable</option>}
-  </select>
+  const picker = (kind: string, all: string) => {
+    const list = devices.data?.devices.filter((d) => d.kind === kind) ?? []
+    if (list.length < 2 && !individual(kind)) return undefined // one device: nothing to choose
+    return (
+      <select className="metric-pick" aria-label={`Show ${all.toLowerCase()} or one device`} value={selection[kind] || 'all'} onChange={(e) => choose(kind, e.target.value)}>
+        <option value="all">{all}</option>
+        {list.map((d) => (
+          <option key={d.id} value={d.id}>
+            {deviceLabel(d)}
+          </option>
+        ))}
+        {individual(kind) && !selected(kind) && <option value={selection[kind]}>Device not found</option>}
+      </select>
+    )
+  }
   const sys = usePoll(api.system, 1000)
   const procs = usePoll(api.processes, 2000)
   const topo = usePoll(api.topology, 600_000)
@@ -52,6 +63,15 @@ export function Overview({ onOpen }: { onOpen: (p: Page) => void }) {
   const io = series('disk', disk, s.historyIo), graphics = series('gpu', gpu, s.historyGpu)
   const network = series('network', adapter, s.historyNetReceive.map((v, i) => v + (s.historyNetSend[i] ?? 0)))
   const total = (d?: Device) => d?.values.read == null || d.values.write == null ? undefined : d.values.read + d.values.write
+  const gpus = devices.data?.devices.filter((d) => d.kind === 'gpu') ?? []
+  const vramTotal = individual('gpu') ? gpu?.dedicatedMemory : gpus.reduce((sum, d) => sum + (d.dedicatedMemory ?? 0), 0) || undefined
+  const vramUsed = individual('gpu') ? gpu?.values.dedicatedUsed : s.gpuMemory || undefined
+  const vram =
+    vramUsed == null
+      ? 'video memory not reported'
+      : vramTotal
+        ? `${bytes(vramUsed).replace(/ GB$/, '')} of ${bytes(vramTotal, 0)} VRAM, ${Math.round((100 * vramUsed) / vramTotal)} %`
+        : `${bytes(vramUsed)} VRAM in use`
   const peakCpu = max(s.historyCpu)
   const peakGpu = max(graphics.values), peakIo = max(io.values), peakNet = max(network.values)
   // Round in the unit the label shows (MB/s, Mbps), so the top line reads 100 MB/s, not 95.4 MB/s.
@@ -75,13 +95,39 @@ export function Overview({ onOpen }: { onOpen: (p: Page) => void }) {
         >
           <Spark time={s.historyTime} values={s.historyMemory} colorVar="--chart-2" top={100} topLabel={bytes(s.memoryTotal, 0)} midLabel={bytes(s.memoryTotal / 2, 0)} format={(v) => bytes((v / 100) * s.memoryTotal)} />
         </Metric>
-        <Metric title="Disk" selector={selector('disk', 'disks')} value={individual('disk') ? display(total(disk), rate) : rate(s.ioBytesPerSec)} sub={individual('disk') ? disk ? `${disk.bus} · ${disk.volumes?.join(', ') || unavailable}` : unavailable : 'read and write, all processes'} peak={individual('disk') && !io.values.some(v => v != null) ? unavailable : `peak ${rate(peakIo)} in 5 min`}>
+        <Metric
+          title="Disk"
+          picker={picker('disk', 'All disks')}
+          value={individual('disk') ? display(total(disk), rate) : rate(s.ioBytesPerSec)}
+          sub={individual('disk') ? (disk ? [disk.bus, disk.volumes?.map((v) => v.replace(/\\$/, '')).join(' ')].filter(Boolean).join(', ') : 'device not found') : 'read and write, all disks'}
+          peak={individual('disk') && !io.values.some((v) => v != null) ? '' : `peak ${rate(peakIo)} in 5 min`}
+          onDetails={() => onOpen('devices')}
+        >
           <Spark {...io} colorVar="--chart-3" top={ioTop} topLabel={rate(ioTop)} midLabel={rate(ioTop / 2)} format={rate} />
         </Metric>
-        <Metric title="GPU" selector={selector('gpu', 'GPUs')} value={individual('gpu') ? display(gpu?.values.load, percent) : percent(s.gpu)} sub={individual('gpu') ? `${display(gpu?.values.dedicatedUsed, bytes)} video memory in use` : s.gpuMemory ? `${bytes(s.gpuMemory)} video memory in use` : 'no data yet'} peak={individual('gpu') && !graphics.values.some(v => v != null) ? unavailable : `peak ${pct(peakGpu)} in 5 min`}>
+        <Metric
+          title="GPU"
+          picker={picker('gpu', 'All GPUs')}
+          value={individual('gpu') ? display(gpu?.values.load, percent) : percent(s.gpu)}
+          valueLabel="load"
+          sub={vram}
+          peak={individual('gpu') && !graphics.values.some((v) => v != null) ? '' : `peak ${pct(peakGpu)} in 5 min`}
+          onDetails={() => onOpen('devices')}
+        >
           <Spark {...graphics} colorVar="--chart-4" top={100} topLabel="100 %" midLabel="50 %" format={pct} />
         </Metric>
-        <Metric title="Network" selector={selector('network', 'adapters')} value={individual('network') ? display(total(adapter), bits) : bits(s.netReceive + s.netSend)} sub={individual('network') ? `\u2193 ${display(adapter?.values.read, bits)}   \u2191 ${display(adapter?.values.write, bits)}` : `\u2193 ${bits(s.netReceive)}   \u2191 ${bits(s.netSend)}`} peak={individual('network') && !network.values.some(v => v != null) ? unavailable : `peak ${bits(peakNet)} in 5 min`}>
+        <Metric
+          title="Network"
+          picker={picker('network', 'All adapters')}
+          value={individual('network') ? display(total(adapter), bits) : bits(s.netReceive + s.netSend)}
+          sub={
+            individual('network')
+              ? `\u2193 ${display(adapter?.values.read, bits)}   \u2191 ${display(adapter?.values.write, bits)}`
+              : `\u2193 ${bits(s.netReceive)}   \u2191 ${bits(s.netSend)}`
+          }
+          peak={individual('network') && !network.values.some((v) => v != null) ? '' : `peak ${bits(peakNet)} in 5 min`}
+          onDetails={() => onOpen('devices')}
+        >
           <Spark {...network} colorVar="--chart-5" top={netTop} topLabel={bits(netTop)} midLabel={bits(netTop / 2)} format={bits} />
         </Metric>
       </div>
@@ -122,16 +168,44 @@ export function Overview({ onOpen }: { onOpen: (p: Page) => void }) {
   )
 }
 
-function Metric({ title, value, sub, peak, selector, children }: { title: string; value: string; sub?: string; peak?: string; selector?: React.ReactNode; children: React.ReactNode }) {
+function Metric({
+  title,
+  value,
+  valueLabel,
+  sub,
+  peak,
+  picker,
+  onDetails,
+  children,
+}: {
+  title: string
+  value: string
+  valueLabel?: string
+  sub?: string
+  peak?: string
+  picker?: React.ReactNode
+  onDetails?: () => void
+  children: React.ReactNode
+}) {
   return (
     <section className="card metric">
       <div className="metric-head">
-        <span className="metric-title">{title}</span>
-        <strong>{value}</strong>
+        {onDetails ? (
+          <button className="metric-title link-title" onClick={onDetails} title="Every device, with health and temperatures">
+            {title}
+            <span className="glyph">{''}</span>
+          </button>
+        ) : (
+          <span className="metric-title">{title}</span>
+        )}
+        <strong>
+          {value}
+          {valueLabel && <span className="metric-unit">{valueLabel}</span>}
+        </strong>
       </div>
-      {selector}
       <div className="metric-sub secondary" title={sub}>
-        {sub}
+        {picker}
+        <span className="metric-sub-text">{sub}</span>
       </div>
       {children}
       <div className="metric-foot">
