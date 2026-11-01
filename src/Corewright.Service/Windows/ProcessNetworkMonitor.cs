@@ -10,7 +10,7 @@ internal sealed unsafe partial class ProcessNetworkMonitor : IDisposable
     private static readonly Guid Provider = new("7dd42a49-5329-4832-8dfd-43d979153a88");
     private sealed class Counter(ProcessKey key) { public readonly ProcessKey Key = key; public long Send, Receive; public bool Seen; }
     private readonly Lock _sync = new();
-    private readonly Dictionary<int, Counter> _counters = new(1024);
+    private readonly Dictionary<int, Counter> _counters = [];
     private readonly List<int> _gone = [];
     // All callers hold NetworkOwnership, so a session with this name can only be abandoned.
     private const string SessionName = "Corewright-Network";
@@ -93,8 +93,9 @@ internal sealed unsafe partial class ProcessNetworkMonitor : IDisposable
         lock (_sync)
         {
             foreach (var c in _counters.Values) c.Seen = false;
-            foreach (var p in processes)
+            for (int i = 0; i < processes.Count; i++)
             {
+                var p = processes[i];
                 bool warm = _counters.TryGetValue(p.Key.Pid, out var c) && c.Key == p.Key;
                 if (!warm) _counters[p.Key.Pid] = c = new(p.Key);
                 p.NetAvailable = Available && warm;

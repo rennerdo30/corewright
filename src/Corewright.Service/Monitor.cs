@@ -41,7 +41,7 @@ internal sealed class Monitor : BackgroundService
     private ProcessNetworkMonitor? _processNetwork;
     private long _networkLastUse = long.MinValue / 2;
     private bool _networkFailed;
-    private bool _networkDemand, _networkStopReported;
+    private bool _networkDemand, _networkFieldsActive, _networkStopReported;
     private int _networkVersion = -1;
     private long _networkStopRetry;
     public string? NetworkError { get; private set; }
@@ -301,8 +301,17 @@ internal sealed class Monitor : BackgroundService
             }
             if (_processNetwork is { Available: true } && !ruleDemand && _ctx.NowMs - Interlocked.Read(ref _networkLastUse) > 60_000)
                 StopProcessNetwork();
-            if (_processNetwork is { Available: true } active) active.Sample(_sampler.Processes);
-            else foreach (var p in _sampler.Processes) { p.NetAvailable = false; p.NetSend = p.NetReceive = 0; }
+            if (_processNetwork is { Available: true } active)
+            {
+                active.Sample(_sampler.Processes);
+                _networkFieldsActive = true;
+            }
+            else if (_networkFieldsActive)
+            {
+                for (int i = 0; i < _sampler.Processes.Count; i++)
+                { var p = _sampler.Processes[i]; p.NetAvailable = false; p.NetSend = p.NetReceive = 0; }
+                _networkFieldsActive = false;
+            }
 
             // A service in session 0 cannot see the desktop; the tray reports the foreground process.
             // In console mode the service can read it itself unless the tray reported recently.
