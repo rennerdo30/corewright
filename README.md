@@ -33,6 +33,11 @@ And it stays out of the way: the service idles at **0.01 % CPU and about 17 MB o
 | **Built for integration** | A local HTTP API with a bearer token: read processes and system data, edit rules, push facts such as `obs.recording = true` that rules can react to. |
 | **Native Windows 11 look** | Light and dark theme, your accent colour, Segoe UI Variable and Fluent icons, a title bar drawn into the app, a tray icon with a modern menu. |
 
+<p align="center">
+  <img src="docs/images/autopilot.png" alt="Autopilot: the CPU drawn like its silicon, with each placed process on its cores">
+  <br><b>Autopilot</b>: the CPU drawn like its silicon. Build tools sit on free cores of the weaker CCD, the strongest cores are kept free.
+</p>
+
 <table>
   <tr>
     <td><img src="docs/images/processes.png" alt="Process list with heat-map columns and every rule setting as a column"></td>
@@ -113,4 +118,4 @@ curl -X PUT http://127.0.0.1:47830/api/v1/facts/obs.recording \
 
 ## Status
 
-Pre-release (0.1). Rules, monitoring, Autopilot and the UI work; per-process network usage, CPU Sets and the installer are next. Private project by [rennerdo30](https://github.com/rennerdo30).
+Pre-release (0.1). Rules, monitoring, Autopilot and the UI work; per-process network usage, CPU Sets and the installer are next. A project by [rennerdo30](https://github.com/rennerdo30).

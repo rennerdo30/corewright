@@ -79,7 +79,7 @@ internal sealed class AffinityPlacer(Func<SystemTopology> topology, Func<float[]
                     pl.Mask = grown;
                     pl.Demand = demand;
                     pl.ChangedMs = now;
-                    pl.Why = $"grew to {BitOperations.PopCount(grown)} threads on CCD {pl.Ccd} (demand {demand})";
+                    pl.Why = $"Grew to {BitOperations.PopCount(grown)} threads on CCD {pl.Ccd} because it needed more";
                 }
             }
 
@@ -90,7 +90,7 @@ internal sealed class AffinityPlacer(Func<SystemTopology> topology, Func<float[]
         }
 
         bool moved = _placed.ContainsKey(p.Key);
-        int ccd = CheapestCcd(topo, allowed, demand, load, reserved, exclude: -1, out double cost);
+        int ccd = CheapestCcd(topo, allowed, demand, load, reserved, exclude: -1, out _);
         if (ccd < 0) return (long)allowed;
         ulong mask = Pick(0, topo.CcdMasks[ccd] & allowed, demand, topo, load, reserved);
         _placed[p.Key] = new Placement
@@ -101,8 +101,8 @@ internal sealed class AffinityPlacer(Func<SystemTopology> topology, Func<float[]
             Demand = demand,
             PlacedMs = moved ? _placed[p.Key].PlacedMs : now,
             ChangedMs = now,
-            Why = (moved ? "moved" : "placed") + $" on CCD {ccd}: cheapest for {demand} threads (cost {cost:0})" +
-                  (gameMask != 0 ? ", game CCD kept free" : "") + (strongest != 0 ? ", strongest cores kept free" : ""),
+            Why = (moved ? "Moved" : "Placed") + $" on CCD {ccd}, the least busy place for {demand} threads" +
+                  (gameMask != 0 ? ", away from the game" : "") + (strongest != 0 ? ", off your strongest cores" : "") + ".",
         };
         return (long)mask;
     }

@@ -1,0 +1,141 @@
+/*
+ * Round 4 (PM-33, PM-34): one contrast system for every page, role colours, the die map and the Autopilot page.
+ * Three surfaces that are clearly apart (frame, page, card), visible strokes, secondary text that is easy to read.
+ */
+:root {
+  --bg: #e9e9e9;
+  --layer-alt: #f4f4f4;
+  --layer: #ffffff;
+  --layer-raised: #f7f7f7;
+  --control: #ffffff;
+  --control-hover: #f6f6f6;
+  --stroke: rgba(0, 0, 0, 0.11);
+  --stroke-card: rgba(0, 0, 0, 0.11);
+  --stroke-control: rgba(0, 0, 0, 0.14);
+  --divider: rgba(0, 0, 0, 0.1);
+  --text-2: rgba(0, 0, 0, 0.72);
+  --secondary-text: rgba(0, 0, 0, 0.72);
+  --text-3: rgba(0, 0, 0, 0.52);
+  --flyout: #ffffff;
+  --silicon: #eef0f3;
+  --role-game: var(--accent);
+  --role-build: #b26b00;
+  --role-background: #0b7f95;
+  --role-balance: #4d63d6;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #191919;
+    --layer-alt: #212121;
+    --layer: #2c2c2c;
+    --layer-raised: #353535;
+    --control: rgba(255, 255, 255, 0.085);
+    --control-hover: rgba(255, 255, 255, 0.12);
+    --stroke: rgba(255, 255, 255, 0.1);
+    --stroke-card: rgba(255, 255, 255, 0.1);
+    --stroke-control: rgba(255, 255, 255, 0.12);
+    --divider: rgba(255, 255, 255, 0.11);
+    --text-2: rgba(255, 255, 255, 0.8);
+    --secondary-text: rgba(255, 255, 255, 0.8);
+    --text-3: rgba(255, 255, 255, 0.56);
+    --flyout: #383838;
+    --silicon: #1d1f22;
+    --role-build: #e8a33d;
+    --role-background: #4fb6c9;
+    --role-balance: #8ea1ff;
+  }
+}
+
+/* Role colours, used the same way on every page. */
+.role-game { --role: var(--role-game); }
+.role-build { --role: var(--role-build); }
+.role-background { --role: var(--role-background); }
+.role-balance { --role: var(--role-balance); }
+
+/* Cards and setting rows: a visible edge on every surface. */
+.card, .setting-card, .setting-row, .crow, .block, .expander { border-color: var(--stroke-card); }
+.setting-desc, .rule-desc, .muted, .secondary { color: var(--secondary-text); }
+input:not([type='checkbox']), select, textarea { border-color: var(--stroke-control); border-bottom-color: var(--text-3); }
+.seg { border-color: var(--stroke-control); }
+.seg button { color: var(--secondary-text); }
+.seg button.on { background: var(--layer-raised); color: var(--text); box-shadow: 0 0 0 1px var(--stroke-control); }
+.seg.levels button.on { background: var(--accent); color: var(--on-accent); box-shadow: none; }
+
+/* Settings groups: one header per feature, its details indented below, groups clearly apart. */
+.section h3, .ap-groups h3 { font-size: 14px; font-weight: 600; margin: 22px 0 8px; color: var(--text); }
+.card-group { display: flex; flex-direction: column; gap: 0; border: 1px solid var(--stroke-card); border-radius: var(--radius); overflow: hidden; }
+.card-group > .setting-card, .card-group > .setting-row { margin: 0; border: 0; border-radius: 0; border-top: 1px solid var(--divider); }
+.card-group > :first-child { border-top: 0; }
+.group { background: var(--layer); border: 1px solid var(--stroke-card); border-radius: var(--radius); margin-bottom: 10px; overflow: hidden; }
+.group-head { display: flex; align-items: center; gap: 16px; padding: 14px 16px; cursor: default; min-height: 72px; }
+.group-head:hover { background: var(--control-hover); }
+.group-head:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.group-icon { width: 36px; height: 36px; flex: none; display: inline-flex; align-items: center; justify-content: center; border-radius: 8px; font-size: 18px;
+  background: color-mix(in srgb, var(--role, var(--accent)) 18%, transparent); color: var(--role, var(--accent)); }
+.group-chevron { font-size: 12px; color: var(--secondary-text); width: 16px; }
+.group-body > .setting-row { margin: 0; border: 0; border-radius: 0; border-top: 1px solid var(--divider); background: var(--layer-alt); padding-left: 68px; min-height: 64px; }
+.group.off .group-head .setting-title { color: var(--secondary-text); }
+.groups-off { opacity: 0.55; pointer-events: none; }
+.list-row { align-items: flex-start; }
+
+/* Settings page */
+.settings .section { max-width: 920px; }
+
+/* Autopilot page */
+.autopilot { display: flex; flex-direction: column; gap: 14px; max-width: 1500px; }
+.ap-hero { display: flex; flex-direction: column; gap: 6px; }
+.ap-switch { display: flex; align-items: center; gap: 18px; }
+.ap-switch .page-title { margin: 0; font-size: 24px; line-height: 32px; }
+.ap-status { margin: 0; max-width: 90ch; font-size: 15px; line-height: 24px; color: var(--secondary-text); }
+.ap-status strong { color: var(--text); font-weight: 600; }
+.ap-saved { color: var(--text-3); font-size: 13px; }
+.count { display: inline-flex; align-items: center; gap: 6px; color: var(--text); white-space: nowrap; }
+.count i { width: 8px; height: 8px; border-radius: 50%; background: var(--role); display: inline-block; }
+.ap-map { padding: 14px; }
+.ap-tables { padding: 0; overflow: hidden; }
+.ap-tabs { display: flex; align-items: center; gap: 14px; padding: 12px 14px; border-bottom: 1px solid var(--divider); flex-wrap: wrap; }
+.ap-empty { padding: 18px 16px; color: var(--secondary-text); }
+.ap-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.ap-table th { text-align: left; font-size: 12px; font-weight: 600; color: var(--secondary-text); padding: 8px 14px; border-bottom: 1px solid var(--divider); }
+.ap-table th.num, .ap-table td.num { text-align: right; }
+.ap-table td { padding: 8px 14px; border-bottom: 1px solid var(--divider); white-space: nowrap; }
+.ap-table tr:last-child td { border-bottom: 0; }
+.ap-table td.why { white-space: normal; max-width: 520px; }
+.decision { color: var(--secondary-text); }
+.decision.on { color: var(--role-background); font-weight: 600; }
+
+/* Die map: the CPU drawn like silicon. */
+.die { display: flex; flex-direction: column; gap: 10px; }
+.die-chiplets { display: grid; grid-template-columns: repeat(auto-fit, minmax(380px, 1fr)); gap: 12px; }
+.chiplet { background: var(--silicon); border: 1px solid var(--stroke); border-radius: 10px; padding: 10px; }
+.chiplet.game { border-color: var(--role-game); box-shadow: 0 0 0 1px var(--role-game), 0 0 24px color-mix(in srgb, var(--role-game) 22%, transparent); }
+.chiplet-head { display: flex; align-items: baseline; gap: 12px; margin-bottom: 8px; }
+.chiplet-name { font-weight: 600; }
+.chiplet-cache { display: inline-flex; gap: 8px; align-items: baseline; color: var(--secondary-text); font-size: 12px; }
+.vcache { color: var(--text); }
+.game-tag { color: var(--role-game); font-weight: 600; }
+.chiplet-load { margin-left: auto; font: 600 18px/22px 'Segoe UI Variable Display', 'Segoe UI', sans-serif; font-variant-numeric: tabular-nums; }
+.die .core-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
+.die .core { position: relative; background: var(--layer); border: 1px solid var(--stroke); border-radius: 6px; padding: 6px; min-height: 84px; display: flex; flex-direction: column; gap: 4px; }
+.die .core.best { border-color: color-mix(in srgb, #f7c948 60%, transparent); }
+.die .core.kept { background-image: repeating-linear-gradient(135deg, color-mix(in srgb, var(--text) 7%, transparent) 0 5px, transparent 5px 10px); }
+.die .core-head { display: flex; align-items: center; justify-content: space-between; font-size: 12px; }
+.lanes { display: grid; grid-template-columns: repeat(auto-fit, minmax(0, 1fr)); gap: 4px; }
+.lane { position: relative; height: 40px; border-radius: 4px; background: var(--control); border: 1px solid var(--stroke); overflow: hidden; }
+.lane-fill { position: absolute; left: 0; right: 0; bottom: 0; background: color-mix(in srgb, var(--chart-1) 72%, transparent); transition: height 0.5s ease; }
+.lane-id { position: absolute; top: 2px; left: 4px; font-size: 10px; color: var(--secondary-text); }
+.lane-load { position: absolute; bottom: 2px; right: 4px; font-size: 11px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.tokens { display: flex; flex-wrap: wrap; gap: 3px; }
+.token { font-size: 11px; line-height: 16px; padding: 0 6px 0 5px; border-radius: 4px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  border-left: 3px solid var(--role, var(--text-3)); background: color-mix(in srgb, var(--role, var(--text-3)) 16%, transparent); }
+.token.more { border-left-color: var(--text-3); }
+.die-legend { display: flex; flex-wrap: wrap; gap: 16px; font-size: 12px; color: var(--secondary-text); }
+.legend-item { display: inline-flex; align-items: center; gap: 6px; }
+.legend-item i { width: 12px; height: 12px; border-radius: 3px; display: inline-block; background: var(--role, transparent); }
+.legend-item.kept i { background-image: repeating-linear-gradient(135deg, var(--text-3) 0 2px, transparent 2px 4px); border: 1px solid var(--stroke); }
+@media (prefers-reduced-motion: reduce) { .lane-fill { transition: none; } }
+
+/* Overview map card */
+.ov-map { padding: 14px; }
+.ov-map .card-head { margin-bottom: 10px; }
