@@ -3,6 +3,29 @@
 Release notes for every Corewright version, newest first. The release workflow publishes the section of a version
 as its GitHub release notes.
 
+## 0.1.0-beta.3
+
+### New
+
+- **Devices shows the processor and memory:** CCDs with L3 cache and V-Cache, how busy each CCD is, the fastest
+  cores; memory in use and free, and every installed module with slot, size, type and speed. A hint appears when a
+  memory kit runs below its rated speed (EXPO or XMP off in the BIOS).
+- **Overview cards open their section on Devices** when you click the card title.
+
+### Changed
+
+- **Updates ask for administrator rights as "Corewright Updater"** instead of Windows PowerShell, and **Corewright
+  reopens after an update** instead of staying closed.
+- **Devices comes after Processes** in the navigation.
+- **A failed update says why** (for example another Corewright still running) instead of "exit 1".
+
+### Fixed
+
+- **The window showed the previous version's interface after an update** until it was reloaded. The start page is
+  now always checked for changes.
+- **Virtual network adapters** (VPN, Hyper-V, WSL) no longer fill the Devices page and the Overview network picker;
+  a switch shows them.
+
 ## 0.1.0-beta.2
 
 The first public beta.
