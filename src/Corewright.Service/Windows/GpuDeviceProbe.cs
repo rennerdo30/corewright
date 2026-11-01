@@ -22,13 +22,33 @@ internal static unsafe partial class GpuDeviceProbe
                     var getDesc = (delegate* unmanaged[Stdcall]<nint, void*, int>)(*(nint**)adapter)[10];
                     if (getDesc(adapter, desc) < 0 || (*(uint*)(desc + 304) & 2) != 0) continue;
                     ulong luid = *(ulong*)(desc + 296);
-                    list.Add(new(new(GpuMonitor.Id(luid), "gpu", new string((char*)desc), Index: (int)i, DedicatedMemory: *(long*)(desc + 272), SharedMemory: *(long*)(desc + 288))) { Luid = luid });
+                    uint count = PhysicalCount(luid);
+                    string name = new((char*)desc);
+                    for (uint physical = 0; physical < count; physical++)
+                    {
+                        // DXGI capacities describe the logical adapter, not each member of an LDA chain.
+                        list.Add(new(new(GpuMonitor.Id(luid, physical), "gpu",
+                            count == 1 ? name : $"{name} (physical {physical})", Index: list.Count,
+                            DedicatedMemory: count == 1 ? *(long*)(desc + 272) : null,
+                            SharedMemory: count == 1 ? *(long*)(desc + 288) : null)) { Luid = luid, PhysicalIndex = physical });
+                    }
                 }
                 finally { Release(adapter); }
             }
         }
         finally { Release(factory); }
         return list;
+    }
+    private static uint PhysicalCount(ulong luid)
+    {
+        var open = new OpenAdapter { Luid = luid };
+        if (D3DKMTOpenAdapterFromLuid(&open) < 0) return 1;
+        try
+        {
+            uint count = 0;
+            return Query(open.Handle, 30, &count, 4) >= 0 && count is > 0 and <= 64 ? count : 1;
+        }
+        finally { Close(open.Handle); }
     }
     public static void Sample(DeviceMonitor.State s, GpuMonitor? gpu, long time)
     {
@@ -47,9 +67,11 @@ internal static unsafe partial class GpuDeviceProbe
             if (D3DKMTOpenAdapterFromLuid(&open) < 0) return;
             s.Adapter = open.Handle;
             new Span<byte>(data, 64).Clear();
+            *(uint*)data = s.PhysicalIndex;
             s.FanAvailable = Query(s.Adapter, 63, data, 40) >= 0 && *(uint*)(data + 24) > 0;
         }
         new Span<byte>(data, 64).Clear();
+        *(uint*)data = s.PhysicalIndex;
         if (Query(s.Adapter, 62, data, 64) >= 0)
         {
             uint temp = *(uint*)(data + 56), fan = *(uint*)(data + 48), power = *(uint*)(data + 52);
@@ -59,6 +81,7 @@ internal static unsafe partial class GpuDeviceProbe
             health.PowerPercent = power > 0 && power < 10000 ? power / 10.0 : null;
         }
         new Span<byte>(data, 64).Clear(); // Node 0; no scan through engines each tick.
+        *(uint*)(data + 4) = s.PhysicalIndex;
         if (Query(s.Adapter, 61, data, 56) >= 0 && *(ulong*)(data + 8) > 0)
             health.EngineClockMhz = *(ulong*)(data + 8) / 1e6;
         health.SampledAt = time;

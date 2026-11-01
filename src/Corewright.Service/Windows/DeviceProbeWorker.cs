@@ -50,7 +50,7 @@ internal sealed class DeviceProbeWorker : IDisposable
                     bool active = ClientActive();
                     if (active)
                     {
-                        _devices.RefreshProbes(_clientActive);
+                        if (_devices.RefreshProbes(_clientActive)) { _gpu?.Dispose(); _gpu = null; }
                         if (ClientActive()) { _gpu ??= new(); _gpu.Sample(); }
                     }
                     active = ClientActive();

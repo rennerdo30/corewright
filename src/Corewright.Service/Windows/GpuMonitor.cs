@@ -26,7 +26,9 @@ internal sealed class GpuReadings
         _byPid.Clear();
         if (source is null) { Adapters = []; return; }
         foreach (var entry in source.ProcessReadings) _byPid.Add(entry.Key, entry.Value);
-        if (Adapters.Length != source.Adapters.Length)
+        bool changed = Adapters.Length != source.Adapters.Length;
+        for (int i = 0; !changed && i < Adapters.Length; i++) changed = Adapters[i].Id != source.Adapters[i].Id;
+        if (changed)
             Adapters = [.. source.Adapters.Select(a => new GpuAdapterDto(a.Id))];
         for (int i = 0; i < Adapters.Length; i++)
         {

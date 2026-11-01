@@ -55,6 +55,7 @@ internal sealed unsafe class DeviceMonitor : IDisposable
         public int ResetVersion;
         public string Path = "";
         public ulong Luid;
+        public uint PhysicalIndex;
         public uint Adapter;
         public bool FanAvailable;
         public nint Disk = -1;
@@ -141,20 +142,21 @@ internal sealed unsafe class DeviceMonitor : IDisposable
         Interlocked.Exchange(ref _networkDirty, 1);
     }
     public void Refresh() => _worker?.Request(true);
-    internal void RefreshProbes(Func<bool> clientActive)
+    internal bool RefreshProbes(Func<bool> clientActive)
     {
         long now = Environment.TickCount64;
         int generation = Volatile.Read(ref _inventoryGeneration);
-        if (generation == _refreshedGeneration || now < _inventoryRetryMs) return;
+        if (generation == _refreshedGeneration || now < _inventoryRetryMs) return false;
         var disks = DiskDeviceProbe.Inventory(clientActive);
-        if (!clientActive()) return;
+        if (!clientActive()) return false;
         var gpus = GpuDeviceProbe.Inventory(clientActive);
-        if (!clientActive()) return;
+        if (!clientActive()) return false;
         _disks = Reconcile(_disks, disks);
         _gpus = Reconcile(_gpus, gpus);
         _inventoryAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         if (disks is not null && gpus is not null) { _refreshedGeneration = generation; _inventoryRetryMs = 0; }
         else _inventoryRetryMs = now + 60_000; // Only failed enumerations retry, while demanded.
+        return true;
     }
     private static List<State> Reconcile(List<State> old, List<State>? found)
     {
