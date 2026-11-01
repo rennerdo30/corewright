@@ -87,6 +87,8 @@ before replacement is restored immediately on failure. This runs again on upgrad
 The existing bearer-token policy is
 unchanged: local users can read the service token. Per-user tokens and tighter
 token ACLs remain a known limitation, as recorded in `CLAUDE.md`.
+This is a **public-release blocker**, tracked as PM-37. The concrete event-driven,
+NativeAOT-compatible migration is described in [SERVICE-TOKEN-DESIGN.md](SERVICE-TOKEN-DESIGN.md).
 
 For development, `build.bat` detects an installed service, packages the current
 source, and runs setup silently with one UAC prompt. It updates the installed
