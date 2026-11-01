@@ -8,6 +8,35 @@ export interface Status {
   rulesVersion: number
   activeRules: number
   foregroundPid: number
+  autopilot: boolean
+  game?: { pid: number; name: string; reason?: string } | null
+  dataDirectory: string
+}
+
+export interface AppSettings {
+  version: number
+  autopilot: {
+    enabled: boolean
+    gameMode: {
+      enabled: boolean
+      gamePriority: string
+      gameGpuPriority: string
+      placement: string
+      moveBackground: boolean
+      backgroundPriority: string
+      games: string[]
+      notGames: string[]
+      keepResponsive: string[]
+    }
+    balance: {
+      enabled: boolean
+      cpuPercent: number
+      sustainSeconds: number
+      releaseSeconds: number
+      priority: string
+      exclusions: string[]
+    }
+  }
 }
 
 export interface SystemInfo {

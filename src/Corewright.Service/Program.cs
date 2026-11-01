@@ -30,8 +30,9 @@ builder.Services.ConfigureHttpJsonOptions(o => o.SerializerOptions.TypeInfoResol
 builder.Services.AddSingleton(options);
 builder.Services.AddSingleton<EventBuffer>();
 builder.Services.AddSingleton(sp => new RuleStore(dataDir, sp.GetRequiredService<ILogger<RuleStore>>()));
-builder.Services.AddSingleton(sp => new Monitor(options, sp.GetRequiredService<RuleStore>(),
-    sp.GetRequiredService<EventBuffer>(), sp.GetRequiredService<ILogger<Monitor>>()) { IsWindowsService = isService });
+builder.Services.AddSingleton(sp => new SettingsStore(dataDir, sp.GetRequiredService<ILogger<SettingsStore>>()));
+builder.Services.AddSingleton(sp => new Monitor(options, sp.GetRequiredService<RuleStore>(), sp.GetRequiredService<SettingsStore>(),
+    sp.GetRequiredService<EventBuffer>(), sp.GetRequiredService<ILogger<Monitor>>()) { IsWindowsService = isService, DataDirectory = dataDir });
 builder.Services.AddHostedService(sp => sp.GetRequiredService<Monitor>());
 
 var app = builder.Build();

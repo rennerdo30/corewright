@@ -100,4 +100,21 @@ internal static unsafe partial class Win32
 
     [StructLayout(LayoutKind.Sequential)]
     public struct POINT { public int X, Y; }
+
+    public const uint WM_TIMER = 0x0113;
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct RECT { public int Left, Top, Right, Bottom; }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct MONITORINFO { public uint Size; public RECT Monitor; public RECT Work; public uint Flags; }
+
+    [LibraryImport("user32.dll")] public static partial nuint SetTimer(nint hwnd, nuint id, uint ms, nint proc);
+    [LibraryImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] public static partial bool KillTimer(nint hwnd, nuint id);
+    [LibraryImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] public static partial bool GetWindowRect(nint hwnd, out RECT rect);
+    [LibraryImport("user32.dll")] public static partial nint MonitorFromWindow(nint hwnd, uint flags);
+    [LibraryImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] public static partial bool GetMonitorInfoW(nint monitor, MONITORINFO* info);
+    [LibraryImport("user32.dll")] public static partial int GetClassNameW(nint hwnd, char* name, int size);
+    /// <summary>QUNS_RUNNING_D3D_FULL_SCREEN = 3: an exclusive full-screen Direct3D app runs.</summary>
+    [LibraryImport("shell32.dll")] public static partial int SHQueryUserNotificationState(out int state);
 }

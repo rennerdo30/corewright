@@ -138,6 +138,26 @@ internal static unsafe partial class Native
     [LibraryImport("user32.dll")]
     public static partial nint GetForegroundWindow();
 
+    [StructLayout(LayoutKind.Sequential)]
+    public struct RECT { public int Left, Top, Right, Bottom; }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct MONITORINFO { public uint Size; public RECT Monitor; public RECT Work; public uint Flags; }
+
+    [LibraryImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static partial bool GetWindowRect(nint window, out RECT rect);
+
+    [LibraryImport("user32.dll")]
+    public static partial nint MonitorFromWindow(nint window, uint flags);
+
+    [LibraryImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static partial bool GetMonitorInfoW(nint monitor, MONITORINFO* info);
+
+    [LibraryImport("user32.dll")]
+    public static partial int GetClassNameW(nint window, char* name, int size);
+
     [LibraryImport("user32.dll")]
     public static partial uint GetWindowThreadProcessId(nint window, out uint pid);
 

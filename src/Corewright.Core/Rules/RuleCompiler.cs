@@ -210,6 +210,13 @@ public static class RuleCompiler
                     "isFalse" => static (p, x) => p.Key.Pid != x.ForegroundPid,
                     _ => Error($"operator '{op}' does not apply to isForeground (use isTrue or isFalse)"),
                 };
+            case "isGame":
+                return op switch
+                {
+                    "isTrue" => static (p, x) => IsGame(p, x),
+                    "isFalse" => static (p, x) => !IsGame(p, x),
+                    _ => Error($"operator '{op}' does not apply to isGame (use isTrue or isFalse)"),
+                };
             case "fact":
                 return CompileFact(c, errors);
         }
@@ -257,6 +264,9 @@ public static class RuleCompiler
         if (pred is null) return null;
         return (_, x) => x.Facts.TryGetValue(key, out var v) && pred(v);
     }
+
+    private static bool IsGame(ProcessInfo p, EvalContext x) =>
+        x.GamePid != 0 && (p.Key.Pid == x.GamePid || (x.GameName is { } n && p.Name.Equals(n, StringComparison.OrdinalIgnoreCase)));
 
     public static bool IsTruthy(string v) =>
         v.Equals("true", StringComparison.OrdinalIgnoreCase) || v == "1" ||

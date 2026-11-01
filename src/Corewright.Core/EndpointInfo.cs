@@ -62,4 +62,5 @@ public static class AppPaths
     WriteIndented = true)]
 [JsonSerializable(typeof(EndpointInfo))]
 [JsonSerializable(typeof(RuleSet))]
+[JsonSerializable(typeof(Corewright.Core.Autopilot.AppSettings))]
 public sealed partial class CoreJson : JsonSerializerContext;

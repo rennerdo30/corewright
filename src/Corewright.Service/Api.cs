@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json.Serialization;
+using Corewright.Core.Autopilot;
 using Corewright.Core.Engine;
 using Corewright.Core.Import;
 using Corewright.Core.Rules;
@@ -9,7 +10,7 @@ using Corewright.Service.Windows;
 namespace Corewright.Service;
 
 public sealed record StatusDto(string Version, string Mode, bool Elevated, bool Paused, int IntervalMs, int ProcessCount,
-    int RulesVersion, int ActiveRules, int ForegroundPid);
+    int RulesVersion, int ActiveRules, int ForegroundPid, bool Autopilot, GameDto? Game, string DataDirectory);
 
 public sealed record CoresDto(int LogicalProcessors, bool Hybrid, string PerformanceCores, string EfficiencyCores);
 
@@ -44,7 +45,11 @@ public sealed record EventsDto(long Last, EventDto[] Events);
 
 public sealed record FactValueDto(string? Value);
 
-public sealed record ForegroundDto(int Pid);
+public sealed record ForegroundDto(int Pid, bool Fullscreen = false);
+
+public sealed record GameDto(int Pid, string Name, string? Reason);
+
+public sealed record SettingsResultDto(bool Ok, RuleErrorDto[] Errors, AppSettings Settings);
 
 /// <summary>IniText null = read Process Lasso's config from its default locations on this PC.</summary>
 public sealed record ImportRequestDto(string? IniText, bool Apply);
@@ -64,6 +69,8 @@ public sealed record ImportResponseDto(bool Applied, string? Source, Rule[] Rule
 [JsonSerializable(typeof(Dictionary<string, string>))]
 [JsonSerializable(typeof(FactValueDto))]
 [JsonSerializable(typeof(ForegroundDto))]
+[JsonSerializable(typeof(AppSettings))]
+[JsonSerializable(typeof(SettingsResultDto))]
 [JsonSerializable(typeof(ImportRequestDto))]
 [JsonSerializable(typeof(ImportResponseDto))]
 internal sealed partial class ApiJson : JsonSerializerContext;
@@ -80,7 +87,9 @@ internal static class Api
             lock (m.Sync)
                 return TypedResults.Ok(new StatusDto(version, m.IsWindowsService ? "service" : "console",
                     Environment.IsPrivilegedProcess, m.Engine.Paused, m.IntervalMs, m.Sampler.Processes.Count,
-                    m.Engine.Version, m.Engine.Rules.Rules.Length, m.Context.ForegroundPid));
+                    m.Engine.Version, m.Engine.Rules.Rules.Count(r => !r.Id.StartsWith(AutopilotRules.IdPrefix, StringComparison.Ordinal)),
+                    m.Context.ForegroundPid, m.Settings.Autopilot.Enabled,
+                    m.Game.Game is { } g ? new GameDto(g.Pid, m.Game.GameName ?? "", m.Game.Reason) : null, m.DataDirectory));
         });
 
         api.MapGet("/system", () =>
@@ -182,7 +191,7 @@ internal static class Api
 
         api.MapPut("/session/foreground", (ForegroundDto body) =>
         {
-            m.ReportForeground(body.Pid);
+            m.ReportForeground(body.Pid, body.Fullscreen);
             return TypedResults.NoContent();
         });
 
@@ -213,6 +222,18 @@ internal static class Api
             };
             var errors = m.ReplaceRules(next);
             var dto = new ImportResponseDto(errors.Count == 0, source, [.. result.Rules], [.. result.Notes], replaced, [.. errors.Select(ToDto)]);
+            return errors.Count == 0 ? TypedResults.Ok(dto) : TypedResults.BadRequest(dto);
+        });
+
+        api.MapGet("/settings", () =>
+        {
+            lock (m.Sync) return TypedResults.Ok(m.Settings);
+        });
+
+        api.MapPut("/settings", IResult (AppSettings settings) =>
+        {
+            var errors = m.ReplaceSettings(settings);
+            var dto = new SettingsResultDto(errors.Count == 0, [.. errors.Select(ToDto)], m.Settings);
             return errors.Count == 0 ? TypedResults.Ok(dto) : TypedResults.BadRequest(dto);
         });
 

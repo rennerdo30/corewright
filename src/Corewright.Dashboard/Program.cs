@@ -296,6 +296,13 @@ internal sealed partial class MainForm : Form
                 case "close":
                     Close();
                     break;
+                case "autostart-get":
+                    PostAutostart();
+                    break;
+                case "autostart-set":
+                    SetAutostart(root.TryGetProperty("enabled", out var en) && en.GetBoolean());
+                    PostAutostart();
+                    break;
                 case "reveal":
                     if (root.TryGetProperty("path", out var pathEl) && pathEl.GetString() is { } path && File.Exists(path))
                         Process.Start(new ProcessStartInfo("explorer.exe", $"/select,\"{path}\"") { UseShellExecute = false })?.Dispose();
@@ -391,6 +398,41 @@ internal sealed partial class MainForm : Form
     [LibraryImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static partial bool DestroyIcon(nint icon);
+
+    // ---- Start with Windows: the per-user Run value the installer also writes (HKCU ...\Run, "Corewright") ----
+
+    private const string RunKey = @"Software\Microsoft\Windows\CurrentVersion\Run";
+    private const string RunValue = "Corewright";
+
+    /// <summary>The tray next to this dashboard (installed or published). Development builds do not register autostart.</summary>
+    private static string? TrayPath()
+    {
+        string path = Path.Combine(AppContext.BaseDirectory, "Corewright.Tray.exe");
+        return File.Exists(path) ? path : null;
+    }
+
+    private void PostAutostart()
+    {
+        string? tray = TrayPath();
+        using var key = Registry.CurrentUser.OpenSubKey(RunKey);
+        bool enabled = key?.GetValue(RunValue) is string v && v.Length > 0;
+        _web.CoreWebView2?.PostWebMessageAsJson(JsonSerializer.Serialize(new Dictionary<string, object?>
+        {
+            ["type"] = "autostart",
+            ["enabled"] = enabled,
+            ["available"] = tray is not null,
+            ["note"] = tray is null ? "Only available in an installed or published Corewright (start.bat or the installer)." : null,
+        }));
+    }
+
+    private static void SetAutostart(bool enabled)
+    {
+        string? tray = TrayPath();
+        if (tray is null) return;
+        using var key = Registry.CurrentUser.CreateSubKey(RunKey);
+        if (enabled) key.SetValue(RunValue, $"\"{tray}\"");
+        else key.DeleteValue(RunValue, throwOnMissingValue: false);
+    }
 
     private async Task OnResizedAsync()
     {

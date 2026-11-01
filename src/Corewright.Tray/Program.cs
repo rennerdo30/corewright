@@ -22,6 +22,8 @@ internal static unsafe class Program
     private static nint _icon;
     private static uint _taskbarCreated;
     private static int _lastForeground;
+    private static bool _lastFullscreen;
+    private const nuint RecheckTimer = 1;
     private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(2) };
 
     [STAThread]
@@ -92,7 +94,14 @@ internal static unsafe class Program
         }
         if (msg == WM_FOREGROUND)
         {
-            SendForeground((int)w);
+            SendForeground((int)w, l != 0);
+            return 0;
+        }
+        if (msg == WM_TIMER && (nuint)w == RecheckTimer)
+        {
+            // One-shot: borderless games often go full screen a moment after they take focus.
+            KillTimer(hwnd, RecheckTimer);
+            ReportForeground(GetForegroundWindow(), force: true);
             return 0;
         }
         if (msg == _taskbarCreated && _taskbarCreated != 0)
@@ -112,17 +121,35 @@ internal static unsafe class Program
     private static void OnWinEvent(nint hook, uint ev, nint hwnd, int idObject, int idChild, uint thread, uint time) =>
         ReportForeground(hwnd);
 
-    private static void ReportForeground(nint hwnd)
+    private static void ReportForeground(nint hwnd, bool force = false)
     {
         if (hwnd == 0) return;
         GetWindowThreadProcessId(hwnd, out uint pid);
-        if (pid == 0 || pid == (uint)_lastForeground) return;
+        bool fullscreen = IsFullscreen(hwnd);
+        bool changedProcess = pid != (uint)_lastForeground;
+        if (pid == 0 || (!changedProcess && fullscreen == _lastFullscreen)) return;
         _lastForeground = (int)pid;
-        PostMessageW(_hwnd, WM_FOREGROUND, (nint)pid, 0);
+        _lastFullscreen = fullscreen;
+        PostMessageW(_hwnd, WM_FOREGROUND, (nint)pid, fullscreen ? 1 : 0);
+        if (changedProcess && !force) SetTimer(_hwnd, RecheckTimer, 3000, 0);
     }
 
-    private static void SendForeground(int pid) =>
-        _ = Task.Run(() => Call(HttpMethod.Put, "/api/v1/session/foreground", $"{{\"pid\":{pid}}}"));
+    /// <summary>Full screen = exclusive D3D, or the window covers its whole monitor (borderless); never the desktop or taskbar.</summary>
+    private static bool IsFullscreen(nint hwnd)
+    {
+        if (SHQueryUserNotificationState(out int state) == 0 && state == 3) return true;
+        char* cls = stackalloc char[64];
+        int n = GetClassNameW(hwnd, cls, 64);
+        var name = new ReadOnlySpan<char>(cls, n);
+        if (name.SequenceEqual("Progman") || name.SequenceEqual("WorkerW") || name.SequenceEqual("Shell_TrayWnd")) return false;
+        if (!GetWindowRect(hwnd, out var r)) return false;
+        var info = new MONITORINFO { Size = (uint)sizeof(MONITORINFO) };
+        if (!GetMonitorInfoW(MonitorFromWindow(hwnd, 2), &info)) return false;
+        return r.Left <= info.Monitor.Left && r.Top <= info.Monitor.Top && r.Right >= info.Monitor.Right && r.Bottom >= info.Monitor.Bottom;
+    }
+
+    private static void SendForeground(int pid, bool fullscreen) =>
+        _ = Task.Run(() => Call(HttpMethod.Put, "/api/v1/session/foreground", $"{{\"pid\":{pid},\"fullscreen\":{(fullscreen ? "true" : "false")}}}"));
 
     private static void AddIcon()
     {

@@ -7,9 +7,10 @@ import { Integrations } from './pages/Integrations'
 import { Overview } from './pages/Overview'
 import { Processes } from './pages/Processes'
 import { Rules } from './pages/Rules'
+import { Settings } from './pages/Settings'
 import type { Rule } from './types'
 
-export type Page = 'overview' | 'processes' | 'rules' | 'activity' | 'integrations'
+export type Page = 'overview' | 'processes' | 'rules' | 'activity' | 'integrations' | 'settings'
 
 // Segoe Fluent Icons code points: Home, BulletedList, Filter, History, Link.
 const NAV: { id: Page; label: string; glyph: string }[] = [
@@ -23,7 +24,7 @@ const NAV: { id: Page; label: string; glyph: string }[] = [
 export function App() {
   const [page, setPageState] = useState<Page>(() => {
     const h = location.hash.slice(1) as Page
-    return NAV.some((n) => n.id === h) ? h : 'overview'
+    return NAV.some((n) => n.id === h) || h === 'settings' ? h : 'overview'
   })
   const setPage = (p: Page) => {
     setPageState(p)
@@ -83,6 +84,10 @@ export function App() {
           </button>
         ))}
         {!collapsed && <div className="nav-resize" onPointerDown={startNavResize} title="Drag to resize" />}
+        <button className={`nav-item settings-item ${page === 'settings' ? 'active' : ''}`} onClick={() => setPage('settings')} title={collapsed ? 'Settings' : undefined}>
+          <span className="glyph">{'\uE713'}</span>
+          <span className="nav-label">Settings</span>
+        </button>
         <div className="nav-footer">
           {collapsed ? (
             s && (
@@ -117,6 +122,7 @@ export function App() {
         {page === 'rules' && <Rules draft={draftRule} onDraftConsumed={() => setDraftRule(undefined)} />}
         {page === 'activity' && <Activity />}
         {page === 'integrations' && <Integrations />}
+        {page === 'settings' && <Settings />}
       </main>
       </div>
     </div>

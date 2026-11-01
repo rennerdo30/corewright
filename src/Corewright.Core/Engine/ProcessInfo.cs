@@ -66,6 +66,10 @@ public sealed class EvalContext
     public IReadOnlyDictionary<string, string> Facts { get; set; } = NoFacts;
     public int ForegroundPid { get; set; }
 
+    /// <summary>The detected game (Autopilot game mode); 0 when none. Every process with the same exe name counts.</summary>
+    public int GamePid { get; set; }
+    public string? GameName { get; set; }
+
     /// <summary>Monotonic milliseconds (Environment.TickCount64).</summary>
     public long NowMs { get; set; }
 }
