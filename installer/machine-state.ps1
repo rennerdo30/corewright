@@ -39,25 +39,7 @@ public static class InstallerSecurity {
         } finally { CloseHandle(token); }
     }
     public static void Prepare() { Enable("SeBackupPrivilege"); Enable("SeRestorePrivilege"); }
-    public static void Secure(string path, bool inherit) {
-        // Open the object itself, never follow reparse points. Deny simultaneous
-        // write/delete handles while checking and applying the protected descriptor.
-        using (SafeFileHandle h = CreateFile(path, 0xE0000, 1, IntPtr.Zero, 3, 0x02200000, IntPtr.Zero)) {
-            if (h.IsInvalid) throw new Win32Exception();
-            Info info; if (!GetFileInformationByHandle(h, out info)) throw new Win32Exception();
-            if ((info.Attributes & 0x400)!=0 || info.Links>1) throw new InvalidOperationException("Reparse points and hard links are not allowed in Corewright data.");
-            IntPtr sd;
-            string flags = inherit ? "OICI" : "";
-            string sddl = "O:BAG:BAD:P(A;"+flags+";FA;;;SY)(A;"+flags+";FA;;;BA)(A;"+flags+";0x1200a9;;;BU)";
-            if (!ConvertStringSecurityDescriptorToSecurityDescriptor(sddl, 1, out sd, IntPtr.Zero)) throw new Win32Exception();
-            try {
-                IntPtr owner, dacl; bool present, ignored;
-                if (!GetSecurityDescriptorOwner(sd, out owner, out ignored) || !GetSecurityDescriptorDacl(sd, out present, out dacl, out ignored)) throw new Win32Exception();
-                uint error = SetSecurityInfo(h, 1, 0x80000005, owner, IntPtr.Zero, dacl, IntPtr.Zero);
-                if (error!=0) throw new Win32Exception((int)error);
-            } finally { LocalFree(sd); }
-        }
-    }
+
 }
 '@
     if ($Action -eq 'SameUser') {
@@ -74,20 +56,13 @@ public static class InstallerSecurity {
         exit 0
     }
     [InstallerSecurity]::Prepare()
-    if (!(Test-Path -LiteralPath $DataDirectory)) { [IO.Directory]::CreateDirectory($DataDirectory) | Out-Null }
-    function Protect-Tree([string]$Path) {
-        # Seal without propagation before enumerating untrusted children; only
-        # enable inheritance after every child has been opened without following links.
-        [InstallerSecurity]::Secure($Path, $false)
-        if ([IO.Directory]::Exists($Path)) {
-            foreach ($child in [IO.Directory]::EnumerateFileSystemEntries($Path)) { Protect-Tree $child }
-        }
-        [InstallerSecurity]::Secure($Path, $true)
-    }
-    Protect-Tree $DataDirectory
-    Write-Output 'Corewright data owner and protected ACL applied (SYSTEM/Administrators full; Users read/execute).'
+    Add-Type -TypeDefinition ([IO.File]::ReadAllText((Join-Path $PSScriptRoot 'secure-files.cs')))
+    $preserved = [SecureFiles]::ReplaceMachineData($DataDirectory)
+    if ($preserved) { Write-Output "Previous Corewright data preserved at $preserved" }
+    Write-Output 'Corewright data migrated into freshly created protected objects.'
     exit 0
 } catch {
     Write-Output "Installer security check failed: $($_.Exception.Message)"
+    if (('SecureFiles' -as [type]) -and ![SecureFiles]::MachinePathReady) { exit 3 }
     exit 1
 }

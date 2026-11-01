@@ -69,6 +69,7 @@ Var FilesReplaced
 Var ManifestHandle
 Var ManifestSize
 Var ServiceTouched
+Var DataPathUnsafe
 
 !macro FAIL text
   DetailPrint "ERROR: ${text}"
@@ -247,6 +248,7 @@ Function ${prefix}RestoreService
   ${If} $ServiceWasRunning == 1
   ${AndIf} $ServiceTouched == 1
   ${AndIf} $FilesReplaced != 1
+  ${AndIf} $DataPathUnsafe != 1
     StrCpy $Countdown 60
     ${Do}
       Call ${prefix}QueryService
@@ -303,9 +305,11 @@ FunctionEnd
   StrCpy $FilesReplaced 0
   StrCpy $ServiceWasRunning 0
   StrCpy $ServiceTouched 0
+  StrCpy $DataPathUnsafe 0
   InitPluginsDir
   SetOutPath "$PLUGINSDIR"
   File /oname=machine-state.ps1 "machine-state.ps1"
+  File /oname=secure-files.cs "secure-files.cs"
   SetOutPath "$TEMP"
   nsExec::ExecToLog /TIMEOUT=30000 '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\machine-state.ps1" -Action SameUser'
   Pop $SameUser
@@ -476,13 +480,23 @@ FunctionEnd
 
 Section "Corewright"
   Call PrepareFiles
-  ; Secure the entire data tree on every upgrade before LocalSystem uses it.
+  ; Stop before snapshotting mutable data. Every machine object is recreated;
+  ; rewriting ACLs cannot revoke WRITE_DAC handles held on the previous tree.
+  Call StopService
+  StrCpy $DataPathUnsafe 1 ; timeout/crash cannot certify the path for service restart
   nsExec::ExecToLog /TIMEOUT=30000 '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\machine-state.ps1" -Action SecureData -DataDirectory "$DataDir"'
   Pop $0
-  ${If} $0 != 0
-    !insertmacro FAIL "Corewright data ownership/ACL validation failed. The service was left running."
+  ${If} $0 == 0
+  ${OrIf} $0 == 1 ; helper certifies that the previous path is still intact
+    StrCpy $DataPathUnsafe 0
   ${EndIf}
-  Call StopService
+  ${If} $0 == 3
+    StrCpy $DataPathUnsafe 1
+    !insertmacro FAIL "Machine data swap was interrupted. The service stays stopped; recover the preserved data before retrying."
+  ${EndIf}
+  ${If} $0 != 0
+    !insertmacro FAIL "Corewright data migration failed. Original data and any fresh copy were preserved."
+  ${EndIf}
   ; The service binary cannot be probed while the service runs. If another
   ; handle still locks it now, the failure callback restores the original service.
   ${If} ${FileExists} "$INSTDIR\Corewright.Service.exe"

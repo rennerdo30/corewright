@@ -70,10 +70,16 @@ upgrades never change Run values and restart the tray unelevated if it was runni
 Fresh installs default to autostart on. Upgrades from an older installation without
 defaults conservatively leave unregistered users off.
 
-Before the service starts, setup rejects reparse points/junctions and hard links
-in its ProgramData tree, sets ownership to Administrators, and reapplies protected
-ACLs: SYSTEM and Administrators full control, Users read/execute, no inherited
-write grants. This runs again on upgrades. The existing bearer-token policy is
+Before the service starts, setup stops the old service and creates an entirely new
+ProgramData tree with protected ACLs at creation: SYSTEM and Administrators full
+control, Users read/execute. It copies old data through pinned, non-reparse,
+single-link file handles into newly created objects. It preserves the entire old
+tree as `%ProgramData%\Corewright-preserved-<random>` and renames the new tree into
+place without replacement. Held handles on the old objects cannot rewrite the
+new objects' ACLs. No user data is deleted. Failures retain the original and any
+fresh copy for recovery; link/ACL/path validation failures abort. A service stopped
+before replacement is restored immediately on failure. This runs again on upgrades.
+The existing bearer-token policy is
 unchanged: local users can read the service token. Per-user tokens and tighter
 token ACLs remain a known limitation, as recorded in `CLAUDE.md`.
 

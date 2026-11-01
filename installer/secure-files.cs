@@ -10,6 +10,7 @@ using Microsoft.Win32.SafeHandles;
 
 public static class SecureFiles
 {
+    public static bool MachinePathReady = true;
     const uint ReadAttributes = 0x80, ReadControl = 0x20000;
     const uint OpenReparsePoint = 0x00200000, BackupSemantics = 0x02000000;
     [StructLayout(LayoutKind.Sequential)]
@@ -81,7 +82,144 @@ public static class SecureFiles
         finally { Marshal.FreeHGlobal(unicode); Marshal.FreeHGlobal(text); }
     }
 
+    [DllImport("kernel32.dll", SetLastError=true)]
+    static extern bool SetFileInformationByHandle(SafeFileHandle handle, int kind, IntPtr data, uint size);
+    [StructLayout(LayoutKind.Sequential, CharSet=CharSet.Unicode)]
+    struct RenameInfo { public uint Flags; public IntPtr Root; public uint Length; public char First; }
 
+
+    static Info Information(SafeFileHandle handle)
+    {
+        Info info;
+        if (!GetFileInformationByHandle(handle, out info)) throw new Win32Exception();
+        return info;
+    }
+
+    static void Rename(SafeFileHandle handle, string destination)
+    {
+        // The Win32 wrapper resolves relative names against its current directory.
+        // Supply an absolute name and a terminating NUL as required by FileName,
+        // with FileNameLength excluding the terminator. The parent is pinned.
+        byte[] name = System.Text.Encoding.Unicode.GetBytes(Path.GetFullPath(destination));
+        int offset = (int)Marshal.OffsetOf(typeof(RenameInfo), "First");
+        int size = offset + name.Length + 2;
+        IntPtr buffer = Marshal.AllocHGlobal(size);
+        try
+        {
+            Marshal.Copy(new byte[size], 0, buffer, size); // ReplaceIfExists = false, RootDirectory = NULL
+            Marshal.WriteInt32(buffer, (int)Marshal.OffsetOf(typeof(RenameInfo), "Length"), name.Length);
+            Marshal.Copy(name, 0, IntPtr.Add(buffer, offset), name.Length);
+            if (!SetFileInformationByHandle(handle, 3, buffer, (uint)size)) throw new Win32Exception();
+        }
+        finally { Marshal.FreeHGlobal(buffer); }
+    }
+
+    [DllImport("kernel32.dll", SetLastError=true)]
+    static extern bool GetFileInformationByHandleEx(SafeFileHandle handle, int kind, IntPtr data, uint size);
+
+    static IEnumerable<string> Children(SafeFileHandle directory)
+    {
+        const int size = 65536;
+        IntPtr buffer = Marshal.AllocHGlobal(size);
+        try
+        {
+            int kind = 11; // FileIdBothDirectoryRestartInfo, then FileIdBothDirectoryInfo
+            while (GetFileInformationByHandleEx(directory, kind, buffer, size))
+            {
+                kind = 10;
+                int offset = 0;
+                while (true)
+                {
+                    // FILE_ID_BOTH_DIR_INFO has its UTF-16 name at byte 104.
+                    int length = Marshal.ReadInt32(buffer, offset + 60);
+                    int next = Marshal.ReadInt32(buffer, offset);
+                    if (length < 0 || (length & 1) != 0 || offset > size - 104 - length)
+                        throw new IOException("Invalid directory information.");
+                    string name = Marshal.PtrToStringUni(IntPtr.Add(buffer, offset + 104), length / 2);
+                    if (name != "." && name != "..") yield return name;
+                    if (next == 0) break;
+                    if (next < 104 || next > size - offset - 104) throw new IOException("Invalid directory offset.");
+                    offset += next;
+                }
+            }
+            int error = Marshal.GetLastWin32Error();
+            if (error != 18) throw new Win32Exception(error); // ERROR_NO_MORE_FILES
+        }
+        finally { Marshal.FreeHGlobal(buffer); }
+    }
+
+    static void CopyTree(SafeFileHandle source, SafeFileHandle destination)
+    {
+        foreach (string name in Children(source))
+        {
+            using (SafeFileHandle handle = OpenRelative(source, name, 0x80000000, false, false, IntPtr.Zero))
+            {
+                if ((Information(handle).Attributes & 0x10) != 0)
+                {
+                    using (SafeFileHandle target = NewDirectory(destination, name, true, 0x80000000)) CopyTree(handle, target);
+                }
+                else
+                {
+                    using (FileStream input = new FileStream(handle, FileAccess.Read))
+                    using (SafeFileHandle target = NewProtectedObject(destination, name, true, 0x40000000, false))
+                    using (FileStream output = new FileStream(target, FileAccess.Write))
+                        input.CopyTo(output);
+                }
+            }
+        }
+    }
+
+    public static string ReplaceMachineData(string directory)
+    {
+        string full = Path.GetFullPath(directory);
+        string expected = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "Corewright");
+        if (!String.Equals(full, expected, StringComparison.OrdinalIgnoreCase)) throw new IOException("Unexpected machine data directory.");
+        string parent = Path.GetDirectoryName(full);
+        using (PinnedPath ancestors = new PinnedPath(parent, true, 0))
+        {
+            string fresh = full + "-fresh-" + Guid.NewGuid().ToString("N");
+            string backup = full + "-preserved-" + Guid.NewGuid().ToString("N");
+            // Request DELETE on this handle so the object can be renamed without
+            // reopening its pathname. Other handles cannot rename/write it.
+            using (SafeFileHandle replacement = NewDirectory(ancestors.Leaf, Path.GetFileName(fresh), true, 0x10000 | 0x80000000))
+            {
+                uint attributes = GetFileAttributes(full);
+                if (attributes == UInt32.MaxValue)
+                {
+                    int error = Marshal.GetLastWin32Error();
+                    if (error != 2 && error != 3) throw new Win32Exception(error);
+                    Rename(replacement, full); // Fails if anyone created the name in the meantime.
+                    return null;
+                }
+                using (SafeFileHandle original = OpenRelative(ancestors.Leaf, Path.GetFileName(full), 0x10000 | 0x80000000, false, false, IntPtr.Zero))
+                {
+                    if ((Information(original).Attributes & 0x10) == 0) throw new IOException("Machine data must be a directory.");
+                    CopyTree(original, replacement);
+                    // Old WRITE_DAC handles can change only the preserved objects;
+                    // no old object or security descriptor becomes trusted machine data.
+                    Rename(original, backup);
+                    MachinePathReady = false;
+                    try
+                    {
+                        Rename(replacement, full);
+                        MachinePathReady = true;
+                    }
+                    catch
+                    {
+                        // A low-privilege creator may win the name in the gap.
+                        // Never overwrite it or start SYSTEM against that object.
+                        try { Rename(original, full); MachinePathReady = true; }
+                        catch { }
+                        throw;
+                    }
+                }
+                return backup;
+            }
+        }
+    }
+
+    [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)]
+    static extern uint GetFileAttributes(string path);
 
     static bool Trusted(string sid)
     {
