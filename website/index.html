@@ -1,0 +1,240 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Corewright: a Windows process manager with a real rule engine</title>
+  <meta name="description" content="Corewright decides CPU, I/O, GPU and memory priority, core placement, efficiency mode and memory caps for every Windows process with rules you can read, and puts the original values back when no rule wants them.">
+  <meta name="color-scheme" content="light dark">
+  <meta name="theme-color" content="#e8ebf1" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#12151d" media="(prefers-color-scheme: dark)">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self'; style-src 'self'; script-src 'self'; base-uri 'none'; form-action 'none'">
+  <link rel="canonical" href="https://corewright.renner.dev/">
+  <link rel="icon" href="/favicon.ico" sizes="any">
+  <link rel="icon" href="assets/corewright-mark.svg" type="image/svg+xml">
+  <link rel="manifest" href="site.webmanifest">
+  <meta property="og:title" content="Corewright">
+  <meta property="og:description" content="A Windows process manager with a real rule engine and an Autopilot that knows your CPU.">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://corewright.renner.dev/">
+  <meta property="og:image" content="https://corewright.renner.dev/assets/autopilot.png">
+  <link rel="stylesheet" href="style.css">
+  <script src="site.js" defer></script>
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+
+  <header class="top">
+    <a class="brand" href="#top" aria-label="Corewright home">
+      <img src="assets/corewright-mark.svg" width="28" height="28" alt="">
+      <span>Corewright</span>
+    </a>
+    <nav aria-label="Sections">
+      <a href="#rules">Rules</a>
+      <a href="#autopilot">Autopilot</a>
+      <a href="#api">API</a>
+      <a href="#download">Download</a>
+      <a class="nav-gh" href="https://github.com/rennerdo30/corewright">GitHub</a>
+    </nav>
+  </header>
+
+  <main id="main">
+    <section class="hero" id="top" aria-labelledby="hero-title">
+      <div class="hero-copy">
+        <h1 id="hero-title">Every process on the right&nbsp;core.</h1>
+        <p class="lede">Corewright is a process manager for Windows with a real rule engine. Priority, cores, I/O, GPU, memory and efficiency mode are decided by rules you can read, and put back the moment no rule wants them.</p>
+        <div class="cta">
+          <a class="btn btn-primary" href="#download">Get Corewright</a>
+          <a class="btn" href="https://github.com/rennerdo30/corewright">View the source</a>
+        </div>
+        <p class="status-note"><span class="pill">Pre-release 0.1</span> Free and open source. No installer yet; build it from source.</p>
+      </div>
+
+      <figure class="package" aria-labelledby="die-caption">
+        <div class="substrate">
+          <div class="die-grid" aria-hidden="true">
+          <div class="ccd" data-ccd="0">
+            <div class="ccd-head"><span class="ccd-name">CCD 0</span><span class="ccd-cache">96 MB L3, 3D V-Cache</span><span class="ccd-load" data-ccd-load>0 %</span></div>
+            <div class="cores">
+              <div class="core" data-core="0"><span class="core-name">Core 0</span><span class="t" data-t="0"><i>0</i></span><span class="t" data-t="1"><i>1</i></span></div>
+              <div class="core" data-core="1"><span class="core-name">Core 1</span><span class="t" data-t="2"><i>2</i></span><span class="t" data-t="3"><i>3</i></span></div>
+              <div class="core" data-core="2"><span class="core-name">Core 2</span><span class="rank rank-second" title="Second fastest core of this CCD">•</span><span class="t" data-t="4"><i>4</i></span><span class="t" data-t="5"><i>5</i></span></div>
+              <div class="core" data-core="3"><span class="core-name">Core 3</span><span class="t" data-t="6"><i>6</i></span><span class="t" data-t="7"><i>7</i></span></div>
+              <div class="core" data-core="4"><span class="core-name">Core 4</span><span class="rank rank-first" title="Fastest core of this CCD">★</span><span class="t" data-t="8"><i>8</i></span><span class="t" data-t="9"><i>9</i></span></div>
+              <div class="core" data-core="5"><span class="core-name">Core 5</span><span class="rank rank-first" title="Fastest core of this CCD">★</span><span class="t" data-t="10"><i>10</i></span><span class="t" data-t="11"><i>11</i></span></div>
+              <div class="core" data-core="6"><span class="core-name">Core 6</span><span class="t" data-t="12"><i>12</i></span><span class="t" data-t="13"><i>13</i></span></div>
+              <div class="core" data-core="7"><span class="core-name">Core 7</span><span class="t" data-t="14"><i>14</i></span><span class="t" data-t="15"><i>15</i></span></div>
+            </div>
+            <p class="ccd-tag" data-ccd-tag></p>
+          </div>
+          <div class="ccd" data-ccd="1">
+            <div class="ccd-head"><span class="ccd-name">CCD 1</span><span class="ccd-cache">96 MB L3, 3D V-Cache</span><span class="ccd-load" data-ccd-load>0 %</span></div>
+            <div class="cores">
+              <div class="core" data-core="8"><span class="core-name">Core 8</span><span class="rank rank-second" title="Second fastest core of this CCD">•</span><span class="t" data-t="16"><i>16</i></span><span class="t" data-t="17"><i>17</i></span></div>
+              <div class="core" data-core="9"><span class="core-name">Core 9</span><span class="rank rank-first" title="Fastest core of this CCD">★</span><span class="t" data-t="18"><i>18</i></span><span class="t" data-t="19"><i>19</i></span></div>
+              <div class="core" data-core="10"><span class="core-name">Core 10</span><span class="t" data-t="20"><i>20</i></span><span class="t" data-t="21"><i>21</i></span></div>
+              <div class="core" data-core="11"><span class="core-name">Core 11</span><span class="t" data-t="22"><i>22</i></span><span class="t" data-t="23"><i>23</i></span></div>
+              <div class="core" data-core="12"><span class="core-name">Core 12</span><span class="t" data-t="24"><i>24</i></span><span class="t" data-t="25"><i>25</i></span></div>
+              <div class="core" data-core="13"><span class="core-name">Core 13</span><span class="t" data-t="26"><i>26</i></span><span class="t" data-t="27"><i>27</i></span></div>
+              <div class="core" data-core="14"><span class="core-name">Core 14</span><span class="t" data-t="28"><i>28</i></span><span class="t" data-t="29"><i>29</i></span></div>
+              <div class="core" data-core="15"><span class="core-name">Core 15</span><span class="t" data-t="30"><i>30</i></span><span class="t" data-t="31"><i>31</i></span></div>
+            </div>
+            <p class="ccd-tag" data-ccd-tag></p>
+          </div>
+            <div class="iod"><span>I/O die</span><span class="iod-note">16 cores, 32 threads</span></div>
+          </div>
+        </div>
+        <div class="scenes" role="group" aria-label="Show what Corewright does when">
+          <button type="button" data-scene="desktop" aria-pressed="true">Desktop</button>
+          <button type="button" data-scene="game" aria-pressed="false">Game starts</button>
+          <button type="button" data-scene="build" aria-pressed="false">Build starts</button>
+          <button type="button" data-scene="hog" aria-pressed="false">CPU hog</button>
+          <button type="button" data-scene="exit" aria-pressed="false">Game exits</button>
+        </div>
+        <figcaption id="die-caption" aria-live="off">Nothing to do. Corewright looks once every two seconds and otherwise stays asleep. <span class="legend-inline">★ marks the fastest core of each CCD, • the second fastest.</span></figcaption>
+        <ul class="legend" aria-label="Colours in the core map">
+          <li><span class="sw sw-game"></span>Game</li>
+          <li><span class="sw sw-build"></span>Build tool</li>
+          <li><span class="sw sw-bg"></span>Background</li>
+          <li><span class="sw sw-held"></span>Held back</li>
+          <li><span class="sw sw-free"></span>Kept free</li>
+        </ul>
+      </figure>
+    </section>
+
+    <section class="band" id="rules" aria-labelledby="rules-title">
+      <div class="split">
+        <div class="prose">
+          <h2 id="rules-title">Rules that own a setting, and give it back</h2>
+          <p>Tools like Process Lasso set fixed values per process. Corewright decides with rules: conditions on anything you see in the process list, such as name, path, command line, parent, CPU or memory use, the foreground window, or facts pushed by other apps.</p>
+          <p>Each setting of each process belongs to the highest-priority rule that sets it, so different rules can own different settings of the same program. The first time Corewright changes a setting it remembers the original value. When no rule claims that setting any more, the original goes back. Pausing, editing rules or stopping the service reverts everything.</p>
+          <p>Sustain and release times keep rules from flapping, and the Explain view shows for every process which rule set what and which rules were overruled.</p>
+        </div>
+        <div class="ledger" role="group" aria-labelledby="ledger-title">
+          <p class="ledger-title" id="ledger-title"><strong>game.exe</strong>, explained</p>
+          <table>
+            <thead>
+              <tr><th scope="col">Setting</th><th scope="col">Owned by</th><th scope="col">Now</th><th scope="col">Original</th></tr>
+            </thead>
+            <tbody>
+              <tr><th scope="row">CPU priority</th><td>Your rule <q>Games high</q></td><td class="set">High</td><td>Normal</td></tr>
+              <tr><th scope="row">Cores</th><td>Autopilot game mode</td><td class="set">CCD 0</td><td>All</td></tr>
+              <tr><th scope="row">I/O priority</th><td>Your rule <q>Games high</q></td><td class="set">High</td><td>Normal</td></tr>
+              <tr><th scope="row">Efficiency mode</th><td class="none">No rule</td><td>Windows decides</td><td></td></tr>
+            </tbody>
+          </table>
+          <p class="ledger-foot">When the game exits or a rule stops matching, the original column is written back.</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="band" id="settings" aria-labelledby="settings-title">
+      <h2 id="settings-title">Eight settings, one engine</h2>
+      <dl class="spec">
+        <div><dt>CPU priority</dt><dd>Idle to high; realtime only when a rule explicitly allows it. A program that keeps changing it back is left alone after three tries.</dd></div>
+        <div><dt>Cores</dt><dd>All cores, P-cores or E-cores, a list like <code>0-7,16</code>, or CPU-aware tokens such as <code>vcache-ccd</code> and <code>best-cores:4</code>.</dd></div>
+        <div><dt>I/O priority</dt><dd>Very low to high, so a backup or indexer cannot stall your disk.</dd></div>
+        <div><dt>GPU priority</dt><dd>The scheduling class Windows uses for the GPU. The effect depends on the driver and hardware-accelerated GPU scheduling.</dd></div>
+        <div><dt>Memory priority</dt><dd>Which pages Windows trims first when memory gets tight.</dd></div>
+        <div><dt>Efficiency mode</dt><dd>EcoQoS on or off; turning it back over hands control to Windows again.</dd></div>
+        <div><dt>Hard memory cap</dt><dd>A job-object commit limit. Allocations above it fail, and child processes get the same cap.</dd></div>
+        <div><dt>Soft RAM cap</dt><dd>A working-set limit: Windows pages out instead of failing allocations.</dd></div>
+      </dl>
+      <p class="aside">Critical system processes such as <code>csrss</code>, <code>lsass</code> and <code>dwm</code> are never touched. A process is identified by its ID and creation time, so a reused process ID can never hit the wrong program.</p>
+    </section>
+
+    <section class="band" id="autopilot" aria-labelledby="autopilot-title">
+      <h2 id="autopilot-title">Autopilot knows your CPU</h2>
+      <p class="intro">Corewright reads your processor once at start: the CCDs from their L3 cache groups, 3D V-Cache from the cache size, physical cores and SMT threads, P- and E-cores, and the strongest cores from the CPPC ranking, the same ★ and • Ryzen Master shows. Autopilot uses that picture to place work. It never writes to a process itself; it generates low-priority rules, so your own rules always win. It is off until you turn it on.</p>
+      <figure class="shot shot-wide">
+        <img src="assets/autopilot.png" width="1600" height="1100" loading="lazy" alt="Corewright's Autopilot page: two CCDs drawn as a die map with every core and thread, two build tools placed on cores 14 and 15 of CCD 1, the strongest cores marked and kept free, and a table explaining why each process runs where it does.">
+        <figcaption>Two build tools placed on free cores of CCD 1. The strongest cores stay free, and the table says why each process runs where it does.</figcaption>
+      </figure>
+      <ul class="modes">
+        <li><h3>Game mode</h3><p>Finds games in your game libraries (Steam, Epic, GOG, Xbox and others), by full screen with Direct3D or Vulkan loaded, or from your own list. The game gets priority and its CCD: the V-Cache CCD on single V-Cache parts, otherwise the fastest one. Busy background work moves off it.</p></li>
+        <li><h3>Sticky placement</h3><p>Background work is placed once on the cheapest CCD and stays there so its caches stay warm. It only moves when a game claims the CCD or its cores stay saturated while another CCD idles.</p></li>
+        <li><h3>Balancing</h3><p>Like ProBalance, but built on the rule engine: background programs that stay above a CPU threshold get lower priority until they calm down. The window you use and Windows services are never touched.</p></li>
+        <li><h3>Build tools</h3><p>Compilers, linkers and shader compilers carry heavy load but are not latency critical. They run below normal with low I/O priority on free cores, without efficiency mode, so builds stay fast.</p></li>
+      </ul>
+    </section>
+
+    <section class="band" id="depth" aria-labelledby="depth-title">
+      <h2 id="depth-title">Task Manager depth, rules in plain language</h2>
+      <div class="pair">
+        <figure class="shot">
+          <img src="assets/processes.png" width="1600" height="1000" loading="lazy" alt="The process list with heat-map columns for CPU, memory and I/O, and a column for every setting a rule can change.">
+          <figcaption>Apps, tree and list views, every Task Manager column, GPU per process, and every setting a rule can change as its own column.</figcaption>
+        </figure>
+        <figure class="shot">
+          <img src="assets/rules.png" width="1600" height="1000" loading="lazy" alt="The rule editor in Windows Settings style, with conditions written as sentences and a card for each setting.">
+          <figcaption>Conditions read like sentences; each setting is a card. Right-click any process to save an "always" setting.</figcaption>
+        </figure>
+      </div>
+    </section>
+
+    <section class="band trio" aria-label="Import, integration and footprint">
+      <article id="import">
+        <h2>Bring your Process Lasso setup</h2>
+        <p>One click imports your <code>prolasso.ini</code>, including command-line patterns. Anything Corewright cannot express yet is listed, never silently dropped. Re-importing replaces only the previous import and keeps your own rules.</p>
+      </article>
+      <article id="api">
+        <h2>A local API for your other apps</h2>
+        <p>A plain HTTP API on <code>127.0.0.1</code> with a bearer token that changes at every start. Read processes and system data, edit rules, or push facts that rules react to:</p>
+        <pre><code>curl -X PUT http://127.0.0.1:47830/api/v1/facts/obs.recording \
+  -H "Authorization: Bearer &lt;token&gt;" \
+  -H "Content-Type: application/json" -d '{"value":"true"}'</code></pre>
+      </article>
+      <article id="footprint">
+        <h2>Small enough to forget</h2>
+        <table class="meter">
+          <caption>Measured on the NativeAOT build</caption>
+          <tbody>
+            <tr><th scope="row">Service, idle</th><td><b>0.01 %</b> CPU</td><td><b>17 MB</b></td></tr>
+            <tr><th scope="row">Tray icon</th><td>no timers</td><td><b>5 MB</b></td></tr>
+            <tr><th scope="row">Window</th><td colspan="2">only while open, then it exits</td></tr>
+          </tbody>
+        </table>
+        <p>Expensive data such as GPU counters and per-thread load is only collected while the window is open.</p>
+      </article>
+    </section>
+
+    <section class="band native" aria-labelledby="native-title">
+      <div class="split split-rev">
+        <figure class="shot">
+          <img src="assets/settings.png" width="1600" height="1000" loading="lazy" alt="The Settings page with Autopilot game mode and balancing switches, start with Windows, and the service status.">
+        </figure>
+        <div class="prose">
+          <h2 id="native-title">Looks like it came with Windows 11</h2>
+          <p>Light and dark theme, your accent colour, Segoe UI Variable and Fluent icons, a title bar drawn into the app, and a tray icon with a modern menu. Settings save as you change them, the way Windows Settings does.</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="band download" id="download" aria-labelledby="download-title">
+      <h2 id="download-title">Get Corewright</h2>
+      <p class="intro">Corewright is a pre-release, version 0.1. Rules, monitoring, Autopilot and the window work today. There is no installer or binary release yet; it is in progress, together with per-process network usage and CPU Sets for machines with more than 64 threads.</p>
+      <div class="dl-grid">
+        <div class="dl">
+          <h3>Build from source</h3>
+          <p>Needs Windows 11 (Windows 10 works), the .NET 10 SDK, Node.js and the Visual Studio C++ build tools.</p>
+          <pre><code>git clone https://github.com/rennerdo30/corewright
+cd corewright
+build.bat</code></pre>
+          <p><code>build.bat</code> builds everything and starts the service, the tray icon and the window. Tray icon, then Exit Corewright, stops it and reverts every change.</p>
+        </div>
+        <div class="dl">
+          <h3>Releases</h3>
+          <p>Installers will be published on GitHub as soon as the first release is ready.</p>
+          <p class="cta"><a class="btn btn-primary" href="https://github.com/rennerdo30/corewright/releases">Releases on GitHub</a></p>
+          <p class="cta"><a class="btn" href="https://github.com/rennerdo30/corewright">Source code</a></p>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="foot">
+    <p><img src="assets/corewright-mark.svg" width="20" height="20" alt=""> Corewright, a project by <a href="https://github.com/rennerdo30">rennerdo30</a>.</p>
+    <p><a href="privacy.html">Privacy</a> <a href="https://github.com/rennerdo30/corewright">GitHub</a> <a href="mailto:support@renner.dev">support@renner.dev</a></p>
+  </footer>
+</body>
+</html>
