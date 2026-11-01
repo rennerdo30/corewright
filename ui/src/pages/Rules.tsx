@@ -2,8 +2,11 @@ import { useEffect, useMemo, useState } from 'react'
 import { api, ApiError } from '../api'
 import { describeCondition } from '../components/ConditionBuilder'
 import { LassoImport } from '../components/LassoImport'
+import { Dot, PageHeader, plural } from '../components/PageHeader'
 import { RuleEditor, summarizeActions } from '../components/RuleEditor'
 import { newId } from '../format'
+import { usePoll } from '../hooks'
+import { OWNER_LABELS, ownerOf, type Owner } from '../roles'
 import type { Rule, RuleError, RuleSet, RulesResult } from '../types'
 
 const emptyRule = (): Rule => ({
@@ -18,13 +21,7 @@ const emptyRule = (): Rule => ({
   actions: { cpuPriority: 'belowNormal' },
 })
 
-/** Where a rule came from, shown as a small badge in the list. */
-function sourceOf(r: Rule): string | undefined {
-  if (r.id.startsWith('lasso-')) return 'Lasso'
-  if (r.id.startsWith('quick-')) return 'Quick'
-  if (r.id.startsWith('example-')) return 'Example'
-  return undefined
-}
+const GROUP_ORDER: Owner[] = ['rule', 'quick', 'lasso', 'example']
 
 export function Rules({ draft, onDraftConsumed }: { draft?: Rule; onDraftConsumed: () => void }) {
   const [saved, setSaved] = useState<RuleSet>()
@@ -35,6 +32,14 @@ export function Rules({ draft, onDraftConsumed }: { draft?: Rule; onDraftConsume
   const [saving, setSaving] = useState(false)
   const [importing, setImporting] = useState(false)
   const [filter, setFilter] = useState('')
+  const procs = usePoll(() => api.processes(), 3000)
+
+  // How many running processes each rule shapes right now (it owns at least one of their settings).
+  const live = useMemo(() => {
+    const m = new Map<string, number>()
+    for (const p of procs.data ?? []) for (const id of new Set((p.applied ?? []).map((a) => a.ruleId))) m.set(id, (m.get(id) ?? 0) + 1)
+    return m
+  }, [procs.data])
 
   useEffect(() => {
     api.rules().then((r) => {
@@ -106,48 +111,88 @@ export function Rules({ draft, onDraftConsumed }: { draft?: Rule; onDraftConsume
     setMessage('Process Lasso rules imported and active.')
   }
 
+  const enabled = set.rules.filter((r) => r.enabled).length
+  const activeRules = set.rules.filter((r) => live.has(r.id))
+  const shaped = new Set((procs.data ?? []).filter((p) => p.applied?.some((a) => !a.ruleId.startsWith('autopilot-'))).map((p) => p.pid)).size
+  const groups = GROUP_ORDER.map((o) => ({ owner: o, rules: ordered.filter((r) => ownerOf(r.id) === o) })).filter((g) => g.rules.length > 0)
+
   return (
-    <div className="page split">
+    <div className="page split rules-page">
       <div className="rules-list">
-        <div className="toolbar">
-          <h1>Rules</h1>
-          <div className="spacer" />
-          <button className="btn subtle" onClick={() => setImporting(true)} disabled={dirty} title={dirty ? 'Save or discard your changes first' : 'Import from Process Lasso'}>
-            <span className="glyph">{'\uE8B5'}</span> Import
-          </button>
-          <button className="btn primary" onClick={add}>
-            <span className="glyph">{'\uE710'}</span> New rule
-          </button>
-        </div>
+        <PageHeader
+          title="Rules"
+          actions={
+            <>
+              <button className="btn subtle" onClick={() => setImporting(true)} disabled={dirty} title={dirty ? 'Save or discard your changes first' : 'Import from Process Lasso'}>
+                <span className="glyph">{''}</span> Import
+              </button>
+              <button className="btn primary" onClick={add}>
+                <span className="glyph">{''}</span> New rule
+              </button>
+            </>
+          }
+        >
+          {set.rules.length === 0 ? (
+            <>No rules yet. Create one, or import your Process Lasso settings.</>
+          ) : (
+            <>
+              {enabled === set.rules.length ? <>{plural(enabled, 'rule')}, all on.</> : <>{enabled} of {plural(set.rules.length, 'rule')} on.</>}{' '}
+              {activeRules.length === 0 ? (
+                <>None of them matches a running process right now.</>
+              ) : (
+                <>
+                  {plural(activeRules.length, 'is', 'are')} shaping {plural(shaped, 'process', 'processes')} right now.
+                </>
+              )}{' '}
+              Autopilot adds its own rules below yours.
+            </>
+          )}
+        </PageHeader>
         <div className="list-search">
           <div className="search-box">
-            <span className="glyph">{'\uE721'}</span>
+            <span className="glyph">{''}</span>
             <input placeholder="Find a rule" value={filter} onChange={(e) => setFilter(e.target.value)} />
           </div>
         </div>
         {importing && <LassoImport onClose={() => setImporting(false)} onImported={reloadAfterImport} />}
-        <ul className="rule-items">
-          {ordered.map((r) => {
-            const errs = errors.filter((e) => e.ruleId === r.id)
-            const source = sourceOf(r)
-            return (
-              <li key={r.id} className={`${r.id === selectedId ? 'sel' : ''} ${r.enabled ? '' : 'off'}`} onClick={() => setSelectedId(r.id)}>
-                <div className="rule-text">
-                  <div className="rule-name">
-                    {r.name || 'Untitled rule'}
-                    {source && <span className="tag">{source}</span>}
-                    {errs.length > 0 && <span className="tag danger">{errs.length} error{errs.length > 1 ? 's' : ''}</span>}
-                  </div>
-                  <div className="rule-desc">{summarizeActions(r.actions) || 'no settings'}</div>
-                </div>
-                <label className="switch" onClick={(e) => e.stopPropagation()} title={r.enabled ? 'Turn off' : 'Turn on'}>
-                  <input type="checkbox" checked={r.enabled} onChange={(e) => updateRule({ ...r, enabled: e.target.checked })} />
-                  <span />
-                </label>
-              </li>
-            )
-          })}
-        </ul>
+        <div className="rule-items">
+          {groups.map((g) => (
+            <section key={g.owner} className={`rule-group role-${g.owner}`}>
+              <div className="rule-group-head">
+                <Dot role={g.owner}>{OWNER_LABELS[g.owner]}</Dot>
+                <span className="secondary tiny">{g.rules.length}</span>
+              </div>
+              <ul>
+                {g.rules.map((r) => {
+                  const errs = errors.filter((e) => e.ruleId === r.id)
+                  const n = live.get(r.id) ?? 0
+                  return (
+                    <li key={r.id} className={`${r.id === selectedId ? 'sel' : ''} ${r.enabled ? '' : 'off'}`} onClick={() => setSelectedId(r.id)}>
+                      <div className="rule-text">
+                        <div className="rule-name">
+                          {r.name.replace(/^(Example|Quick|Process Lasso): /, '') || 'Untitled rule'}
+                          {errs.length > 0 && <span className="tag danger">{errs.length} error{errs.length > 1 ? 's' : ''}</span>}
+                        </div>
+                        <div className="rule-desc">{summarizeActions(r.actions) || 'no settings'}</div>
+                      </div>
+                      <span className={`rule-live ${n ? 'on' : ''}`} title={n ? `Owns settings of ${plural(n, 'running process', 'running processes')}` : 'Matches no running process'}>
+                        {n ? n : ''}
+                      </span>
+                      <span className="rule-prio" title="Priority: higher wins">
+                        {r.priority}
+                      </span>
+                      <label className="switch" onClick={(e) => e.stopPropagation()} title={r.enabled ? 'Turn off' : 'Turn on'}>
+                        <input type="checkbox" checked={r.enabled} onChange={(e) => updateRule({ ...r, enabled: e.target.checked })} />
+                        <span />
+                      </label>
+                    </li>
+                  )
+                })}
+              </ul>
+            </section>
+          ))}
+          {groups.length === 0 && set.rules.length > 0 && <div className="ap-empty">No rule matches “{filter}”.</div>}
+        </div>
         {(dirty || message) && (
           <div className="savebar">
             {message && !dirty && <span className="secondary tiny">{message}</span>}

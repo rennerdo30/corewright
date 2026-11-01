@@ -2,11 +2,13 @@ import { useVirtualizer } from '@tanstack/react-virtual'
 import { useMemo, useRef, useState } from 'react'
 import { api } from '../api'
 import { ContextMenu, type MenuEntry } from '../components/ContextMenu'
+import { Dot, PageHeader, joinAnd, plural } from '../components/PageHeader'
 import { buildProcessMenu } from '../components/processMenu'
 import { bytes, newId, percent } from '../format'
 import { iconUrl, isHost, levelLabel, post, useDescriptions } from '../host'
 import { usePoll } from '../hooks'
 import { quickRule, setQuick } from '../quick'
+import { isAutopilot, ownerOf } from '../roles'
 import type { ExplainRule, ProcessRow, Rule, RuleSet, Topology } from '../types'
 import { COLUMN_GROUPS, COLUMNS, type ColumnDef } from './processColumns'
 
@@ -241,8 +243,10 @@ export function Processes({ onCreateRule }: { onCreateRule: (r: Rule) => void })
   return (
     <div className="page split dense">
       <div className="split-main proc-wrap">
+        <PageHeader title="Processes">
+          <ProcessSummary rows={procs.data} />
+        </PageHeader>
         <div className="toolbar">
-          <h2 className="page-title">Processes</h2>
           <div className="search-box">
             <span className="glyph">{'\uE721'}</span>
             <input placeholder="Search by name, PID or path" value={search} onChange={(e) => setSearch(e.target.value)} />
@@ -332,11 +336,15 @@ export function Processes({ onCreateRule }: { onCreateRule: (r: Rule) => void })
                               {label(p)}
                               {group && <span className="pcount"> ({l.items.length})</span>}
                             </span>
-                            {l.items.some((x) => x.applied?.length) && (
-                              <span className="managed" title="Corewright manages this process">
-                                {'\uE9F5'}
-                              </span>
-                            )}
+                            {(() => {
+                              const a = l.items.flatMap((x) => x.applied ?? [])
+                              if (!a.length) return null
+                              return (
+                                <span className={`managed role-${ownerOf(a[0].ruleId)}`} title={`Managed by ${[...new Set(a.map((x) => x.ruleName))].join(', ')}`}>
+                                  {'\uE9F5'}
+                                </span>
+                              )
+                            })()}
                             {p.foreground && !group && <span className="tag">foreground</span>}
                           </div>
                         )
@@ -349,7 +357,7 @@ export function Processes({ onCreateRule }: { onCreateRule: (r: Rule) => void })
                       return (
                         <div
                           key={c.id}
-                          className={`pc ${c.num ? 'num' : ''} ${c.heat ? 'heat' : ''} ${quiet ? 'quiet' : ''} ${managedSlot ? 'set-by-rule' : ''}`}
+                          className={`pc ${c.num ? 'num' : ''} ${c.heat ? 'heat' : ''} ${quiet ? 'quiet' : ''} ${managedSlot ? `set-by-rule role-${ownerOf(managedSlot.ruleId)}` : ''}`}
                           style={heat(level)}
                           title={managedSlot ? `${display}, set by ${managedSlot.ruleName}` : display}
                         >
@@ -542,3 +550,30 @@ function ruleFor(p: ProcessRow): Rule {
 }
 
 export type { Topology }
+
+/** "312 processes. Your rules manage 12 of them and Autopilot 4. You are using Code." */
+function ProcessSummary({ rows }: { rows?: ProcessRow[] }) {
+  if (!rows) return <>Reading processes…</>
+  let byRules = 0
+  let byAutopilot = 0
+  for (const p of rows) {
+    const owners = (p.applied ?? []).map((a) => ownerOf(a.ruleId))
+    if (owners.some((o) => !isAutopilot(o))) byRules++
+    else if (owners.length) byAutopilot++
+  }
+  const fg = rows.find((p) => p.foreground)
+  const parts: React.ReactNode[] = []
+  if (byRules) parts.push(<Dot key="r" role="rule">your rules manage {byRules}</Dot>)
+  if (byAutopilot) parts.push(<Dot key="a" role="background">Autopilot {byAutopilot}</Dot>)
+  return (
+    <>
+      {plural(rows.length, 'process', 'processes')} running.{' '}
+      {parts.length ? <>Of these, {joinAnd(parts)}. </> : <>None of them is managed right now. </>}
+      {fg ? (
+        <>
+          In front: <strong>{fg.name.replace(/\.exe$/i, '')}</strong>.
+        </>
+      ) : null}
+    </>
+  )
+}
