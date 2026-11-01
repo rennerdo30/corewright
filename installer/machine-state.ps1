@@ -58,8 +58,10 @@ public static class InstallerSecurity {
     [InstallerSecurity]::Prepare()
     Add-Type -TypeDefinition ([IO.File]::ReadAllText((Join-Path $PSScriptRoot 'secure-files.cs')))
     if ($Action -eq 'MigrateUser') {
-        $copied = [SecureFiles]::CopyMissing((Join-Path $SourceDirectory 'rules.json'), (Join-Path $DataDirectory 'rules.json'))
-        if ($copied) { Write-Output 'Console rules migrated through validated non-reparse handles.' }
+        foreach ($name in 'rules.json', 'settings.json', 'background-stats.json', 'background-stats-v2.json') {
+            $copied = [SecureFiles]::CopyMissing((Join-Path $SourceDirectory $name), (Join-Path $DataDirectory $name))
+            if ($copied) { Write-Output "Console $name migrated through validated non-reparse handles." }
+        }
         exit 0
     }
     $preserved = [SecureFiles]::ReplaceMachineData($DataDirectory)

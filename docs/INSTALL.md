@@ -56,10 +56,11 @@ Silent setup aborts if one is still running. The tray receives `WM_CLOSE` at its
 applications to exit. Close Corewright in other signed-in sessions too. Setup
 never kills applications to release files.
 
-Rules for the service live in `%ProgramData%\Corewright`. If `rules.json` is
-absent there, setup copies the installing user's
-`%LOCALAPPDATA%\Corewright\rules.json`, leaving the original in place. Existing
-machine rules are never overwritten. Migration happens only when the elevated
+Rules and settings for the service live in `%ProgramData%\Corewright`. Setup
+copies `rules.json`, `settings.json`, `background-stats.json` and `background-stats-v2.json` from the installing
+user's `%LOCALAPPDATA%\Corewright` only when each destination is absent, leaving
+every original in place. Existing machine data is never overwritten.
+Migration happens only when the elevated
 token's SID matches the interactive session user obtained through WTS; otherwise
 it is skipped and logged, rather than reading the credential-prompt administrator's
 profile. Back up and copy rules explicitly under administrator control in that case.
