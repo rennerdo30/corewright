@@ -100,7 +100,7 @@ Network (next phase): egress throttling and DSCP marking through QoS policies in
 
 ## Development loop
 
-- Owner start: `start.bat` (publishes on first run, starts the service elevated in a minimized console, the tray and the dashboard). Tray → "Exit Corewright" stops a console-mode service through `POST /api/v1/app/shutdown` (refused for an installed service) and closes the dashboard.
+- Owner start: `start.bat` rebuilds (through `build.bat --no-start`) when `scripts\is-stale.ps1` finds sources newer than the published service, then starts the service elevated in a minimized console, the tray and the dashboard. `build.bat` = `scripts\stop.ps1` → `scripts\publish.ps1` → start (owner, 2026-11-02). `stop.ps1` uses each component's own exit path (dashboard event, tray `WM_CLOSE`, service API) and never kills by name; agents do not run it against the owner's instance. Tray → "Exit Corewright" stops a console-mode service through `POST /api/v1/app/shutdown` (refused for an installed service) and closes the dashboard.
 - An agent's test service never uses the owner's port 47830 or data folder: set `Corewright__Port` and `Corewright__DataDirectory` for the process, and `COREWRIGHT_ENDPOINT_FILE` for the Vite dev proxy.
 
 - Service: `dotnet watch --project src/Corewright.Service` (console mode, not elevated).

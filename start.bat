@@ -1,15 +1,16 @@
 @echo off
 setlocal
-rem Corewright: builds on first run, starts the service, the tray and the dashboard.
-rem Close the minimized "Corewright.Service" window to stop it; every change it made is reverted.
+rem Corewright: starts the service, the tray and the dashboard. Rebuilds first when the sources are newer than the build.
+rem Tray -> "Exit Corewright" stops everything again; every change Corewright made is reverted.
 
 set "ROOT=%~dp0"
 set "BIN=%ROOT%artifacts\publish"
 
-if exist "%BIN%\Corewright.Service.exe" goto :service
-echo Building Corewright for the first time, this takes a minute...
-powershell -NoProfile -ExecutionPolicy Bypass -File "%ROOT%scripts\publish.ps1"
-if errorlevel 1 goto :fail
+if /I "%~1"=="--skip-check" goto :service
+powershell -NoProfile -ExecutionPolicy Bypass -File "%ROOT%scripts\is-stale.ps1"
+if not errorlevel 1 goto :service
+call "%ROOT%build.bat" --no-start
+if errorlevel 1 exit /b 1
 
 :service
 rem Installed as a Windows service? Then just make sure it runs.
@@ -29,8 +30,3 @@ timeout /t 2 /nobreak >nul
 start "" "%BIN%\Corewright.Tray.exe"
 start "" "%BIN%\Corewright.Dashboard.exe"
 exit /b 0
-
-:fail
-echo Build failed, see the output above.
-pause
-exit /b 1
