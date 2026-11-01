@@ -284,7 +284,9 @@ internal sealed class Monitor : BackgroundService
             _stopping = true;
             lock (Sync)
             {
-                Engine.RevertAll();
+                Engine.RevertAll(stopping: true, onUnrestored: e =>
+                    _log.LogWarning("Unrestored process {Pid} ({Process}), {Slot}, original {Value}: {Message}",
+                        e.Pid, e.Process, e.Slot, e.Value, e.Message));
                 _background?.Save();
             }
             _actuator.Dispose();

@@ -41,9 +41,11 @@ public sealed record ExplainEntry(
 /// that sets a slot owns it; a slot nobody owns any more is restored to the value it had before the engine
 /// first wrote it. Not thread-safe; the caller serializes access.
 /// </summary>
-public sealed class RuleEngine(IActuator actuator, IEngineEventSink sink)
+public sealed class RuleEngine(IActuator actuator, IEngineEventSink sink, Func<long>? nowMs = null)
 {
     private const int MaxDriftReapply = 3;
+    private const int RestoreRetryMs = 60_000;
+    private readonly Func<long> _nowMs = nowMs ?? (static () => Environment.TickCount64);
 
     private readonly Dictionary<ProcessKey, ProcState> _states = [];
     private readonly List<ProcessKey> _gone = [];
@@ -76,7 +78,7 @@ public sealed class RuleEngine(IActuator actuator, IEngineEventSink sink)
     {
         _ctx = ctx;
         _tick++;
-        if (!Paused)
+        if (!Paused || _states.Count != 0)
         {
             bool haveRules = _set.Rules.Length > 0;
             for (int i = 0; i < processes.Count; i++)
@@ -85,12 +87,22 @@ public sealed class RuleEngine(IActuator actuator, IEngineEventSink sink)
                 if (p.IsProtected) continue;
                 if (!_states.TryGetValue(p.Key, out var st))
                 {
-                    if (!haveRules) continue;
+                    if (Paused || !haveRules) continue;
                     st = new ProcState(p.Key, p.Name);
                     _states.Add(p.Key, st);
                 }
                 st.Seen = _tick;
-                EvaluateProcess(p, st, ctx);
+                if (Paused || st.Releasing)
+                {
+                    for (int s = 0; s < Slots.Count; s++)
+                        if (st.Owned[s]) Revert(st, s);
+                    if (!HasOwned(st))
+                    {
+                        actuator.Forget(st.Key);
+                        _states.Remove(st.Key);
+                    }
+                }
+                else EvaluateProcess(p, st, ctx);
             }
         }
 
@@ -121,15 +133,42 @@ public sealed class RuleEngine(IActuator actuator, IEngineEventSink sink)
         sink.Emit(new EngineEvent(EngineEventKind.Info, 0, "", null, null, null, "rules resumed"));
     }
 
-    public void RevertAll()
+    /// <summary>Retains failed restores for the sampler to retry. Shutdown reports the remaining ownership.</summary>
+    public void RevertAll(bool stopping = false, Action<EngineEvent>? onUnrestored = null)
     {
         foreach (var st in _states.Values)
         {
+            st.Releasing = true;
             for (int s = 0; s < Slots.Count; s++)
-                if (st.IsApplied[s]) Revert(st, s);
-            actuator.Forget(st.Key);
+                if (st.Owned[s]) Revert(st, s);
+            if (!HasOwned(st))
+            {
+                actuator.Forget(st.Key);
+                _gone.Add(st.Key);
+            }
+            else if (stopping)
+            {
+                // The slot's failure event was emitted once. This summary reports what survives shutdown.
+                for (int s = 0; s < Slots.Count; s++)
+                    if (st.Owned[s])
+                    {
+                        var e = new EngineEvent(EngineEventKind.Info, st.Key.Pid, st.Name,
+                            st.AppliedRule[s]?.Name, Slots.Name((Slot)s), Slots.FormatValue((Slot)s, st.Original[s]),
+                            "shutdown: original value could not be restored; ownership remains unresolved");
+                        sink.Emit(e);
+                        onUnrestored?.Invoke(e); // Report inline; the bounded Activity ring may overwrite older entries.
+                    }
+            }
         }
-        _states.Clear();
+        foreach (var key in _gone) _states.Remove(key);
+        _gone.Clear();
+    }
+
+    private static bool HasOwned(ProcState st)
+    {
+        for (int s = 0; s < Slots.Count; s++)
+            if (st.Owned[s]) return true;
+        return false;
     }
 
     public List<AppliedSlot> GetApplied(ProcessKey key)
@@ -300,7 +339,7 @@ public sealed class RuleEngine(IActuator actuator, IEngineEventSink sink)
             return;
         }
 
-        if (st.IsApplied[s] && st.Applied[s] == value && ((st.RevertFailed | st.Pending) & (1 << s)) == 0)
+        if (st.IsApplied[s] && st.Applied[s] == value && (st.Pending & (1 << s)) == 0)
         {
             st.AppliedRule[s] = rule;
             if (slot == Slot.CpuPriority && p.BasePriority != 0 &&
@@ -316,7 +355,7 @@ public sealed class RuleEngine(IActuator actuator, IEngineEventSink sink)
         }
 
         if (st.Failed[s] && st.FailedValue[s] == value) return;
-        if ((st.Pending & (1 << s)) != 0 && (_ctx?.NowMs ?? Environment.TickCount64) < st.ApplyRetry[s]) return;
+        if ((st.Pending & (1 << s)) != 0 && _nowMs() < st.ApplyRetry[s]) return;
 
         if (!st.Owned[s])
         {
@@ -342,8 +381,8 @@ public sealed class RuleEngine(IActuator actuator, IEngineEventSink sink)
             st.Applied[s] = value;
             st.AppliedRule[s] = rule;
             st.Failed[s] = false;
-            st.RevertFailed &= ~(1 << s);
             st.Pending &= ~(1 << s);
+            // Reapply does not complete an unresolved restore. Keep its deadline and once-only report.
             sink.Emit(new EngineEvent(EngineEventKind.Applied, p.Key.Pid, p.Name, rule!.Name, Slots.Name(slot),
                 Slots.FormatValue(slot, value), null));
         }
@@ -366,29 +405,36 @@ public sealed class RuleEngine(IActuator actuator, IEngineEventSink sink)
 
     private void Revert(ProcState st, int s)
     {
+        long now = _nowMs();
+        if (now < st.RestoreRetry[s]) return;
         var slot = (Slot)s;
-        bool network = slot is Slot.NetworkBlocked or Slot.UploadLimit or Slot.NetworkPriority;
         bool reported = (st.RevertFailed & (1 << s)) != 0;
         var result = actuator.Write(st.Key, slot, st.Original[s], out var err);
         bool ok = result.Status == WriteStatus.Succeeded;
         if (result.Status == WriteStatus.Deferred)
         {
             st.Pending |= 1 << s;
+            st.ApplyRetry[s] = 0; // A rematch may replace the pending release, without performing backend I/O.
+            st.RestoreRetry[s] = Math.Max(now + RestoreRetryMs, result.RetryAfterMs);
             return;
         }
         if (ok || !reported)
             sink.Emit(new EngineEvent(ok ? EngineEventKind.Reverted : EngineEventKind.Failed, st.Key.Pid, st.Name,
                 st.AppliedRule[s]?.Name, Slots.Name(slot), Slots.FormatValue(slot, st.Original[s]),
                 ok ? null : $"revert failed: {err}"));
-        if (!ok && network)
+        if (!ok)
         {
             st.RevertFailed |= 1 << s;
-            return; // Keep confirmed enforcement until release, or transfer it to actuator.Forget.
+            st.Pending |= 1 << s;
+            st.ApplyRetry[s] = 0;
+            st.RestoreRetry[s] = now + RestoreRetryMs;
+            return; // Every slot keeps ownership and its first original until confirmed restoration or exit.
         }
         st.RevertFailed &= ~(1 << s);
         st.IsApplied[s] = false;
         st.Owned[s] = false;
         st.Pending &= ~(1 << s);
+        st.RestoreRetry[s] = 0;
         st.AppliedRule[s] = null;
     }
 
@@ -401,6 +447,7 @@ public sealed class RuleEngine(IActuator actuator, IEngineEventSink sink)
         public int DriftCount;
         public int RevertFailed;
         public int Pending;
+        public bool Releasing;
 
         // Per rule (resized when the rule set changes).
         public byte[] StaticCache = [];
@@ -412,6 +459,7 @@ public sealed class RuleEngine(IActuator actuator, IEngineEventSink sink)
         public readonly bool[] IsApplied = new bool[Slots.Count];
         public readonly bool[] Owned = new bool[Slots.Count];
         public readonly long[] ApplyRetry = new long[Slots.Count];
+        public readonly long[] RestoreRetry = new long[Slots.Count];
         public readonly long[] Applied = new long[Slots.Count];
         public readonly long[] Original = new long[Slots.Count];
         public readonly CompiledRule?[] AppliedRule = new CompiledRule?[Slots.Count];
