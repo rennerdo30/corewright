@@ -96,7 +96,7 @@ Network (next phase): egress throttling and DSCP marking through QoS policies in
 - `src/Corewright.Dashboard`: WinForms + WebView2 host; injects the token and loads the UI.
 - `ui/`: React + TypeScript + Vite; builds into `src/Corewright.Service/wwwroot` (ignored by Git).
 - No test project yet (see Tests).
-- .NET 10 SDK, Node 26; all binaries build into `artifacts/bin/<Configuration>/`.
+- .NET 10 SDK, Node 26. Each project builds into its own `bin/` (a shared output folder broke incremental builds: MSBuild's incremental clean deleted `Corewright.Core.dll`); `scripts/publish.ps1` puts everything together in `artifacts/publish/`.
 
 ## Development loop
 

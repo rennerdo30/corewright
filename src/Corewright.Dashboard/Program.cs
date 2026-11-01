@@ -30,35 +30,51 @@ internal static class Program
 }
 
 /// <summary>
-/// Hosts the UI in WebView2 with a native Windows 11 frame. Suspends the page while minimized and ends the
-/// process on close, so the dashboard costs nothing when nobody looks at it.
+/// Hosts the UI in WebView2 like a modern Windows 11 app: no system caption bar; the page draws its own title area
+/// (drag region through WebView2's non-client region support) and the window buttons, which call back into the host.
+/// The page is suspended while minimized and the process ends on close, so the dashboard costs nothing when unused.
 /// </summary>
 internal sealed partial class MainForm : Form
 {
+    private const int WM_NCCALCSIZE = 0x0083, WM_NCHITTEST = 0x0084, HTCLIENT = 1, HTTOP = 12;
+    private const int SM_CXPADDEDBORDER = 92, SM_CYSIZEFRAME = 33;
+
     private readonly WebView2 _web = new() { Dock = DockStyle.Fill };
     private readonly EventWaitHandle _show = new(false, EventResetMode.AutoReset, Program.ShowEvent);
     private readonly EventWaitHandle _exit = new(false, EventResetMode.ManualReset, Program.ExitEvent);
     private readonly RegisteredWaitHandle _showWait;
     private readonly RegisteredWaitHandle _exitWait;
+    private static readonly string PlacementFile = Path.Combine(AppPaths.UserDataDirectory, "dashboard-window.json");
 
     public MainForm()
     {
         Text = "Corewright";
-        Width = 1400;
-        Height = 900;
-        MinimumSize = new Size(960, 620);
-        StartPosition = FormStartPosition.CenterScreen;
         var iconPath = Path.Combine(AppContext.BaseDirectory, "corewright.ico");
         if (File.Exists(iconPath)) Icon = new Icon(iconPath);
         ApplyTheme();
         Controls.Add(_web);
+        RestorePlacement();
 
         _showWait = ThreadPool.RegisterWaitForSingleObject(_show, (_, _) => BeginInvoke(BringToFront), null, -1, false);
         _exitWait = ThreadPool.RegisterWaitForSingleObject(_exit, (_, _) => BeginInvoke(Close), null, -1, true);
         SystemEvents.UserPreferenceChanged += OnUserPreferenceChanged;
 
+        HandleCreated += (_, _) =>
+        {
+            // Recalculate the frame now that WM_NCCALCSIZE removes the caption.
+            SetWindowPos(Handle, 0, 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0004 | 0x0020);
+            UpdateResizeBand();
+        };
         Load += async (_, _) => await InitAsync();
-        Resize += async (_, _) => await OnResizedAsync();
+        Resize += async (_, _) =>
+        {
+            UpdateResizeBand();
+            PostWindowState();
+            await OnResizedAsync();
+        };
+        Activated += (_, _) => PostWindowState();
+        Deactivate += (_, _) => PostWindowState();
+        FormClosing += (_, _) => SavePlacement();
         FormClosed += (_, _) =>
         {
             SystemEvents.UserPreferenceChanged -= OnUserPreferenceChanged;
@@ -79,30 +95,109 @@ internal sealed partial class MainForm : Form
             BeginInvoke(ApplyTheme);
     }
 
-    // ---- Native Windows 11 frame -------------------------------------------------------------
+    // ---- Frame without a caption bar -----------------------------------------------------------
+
+    /// <summary>Thin strip above the page so the top edge can still be dragged to resize (the page covers the rest).</summary>
+    private int ResizeBand => WindowState == FormWindowState.Maximized ? 0 : Math.Max(4, DeviceDpi * 4 / 96);
+
+    private void UpdateResizeBand()
+    {
+        int band = ResizeBand;
+        if (Padding.Top != band) Padding = new Padding(0, band, 0, 0);
+    }
+
+    protected override unsafe void WndProc(ref Message m)
+    {
+        if (m.Msg == WM_NCCALCSIZE && m.WParam != 0)
+        {
+            // Let Windows compute the normal frame, then give the caption area to the client.
+            // Left, right and bottom keep their (invisible) resize borders, rounded corners and shadow.
+            var rect = (RECT*)m.LParam;
+            int top = rect->Top;
+            base.WndProc(ref m);
+            rect->Top = top;
+            if (WindowState == FormWindowState.Maximized)
+                rect->Top += GetSystemMetricsForDpi(SM_CYSIZEFRAME, (uint)DeviceDpi) + GetSystemMetricsForDpi(SM_CXPADDEDBORDER, (uint)DeviceDpi);
+            m.Result = 0;
+            return;
+        }
+        base.WndProc(ref m);
+        if (m.Msg == WM_NCHITTEST && m.Result == HTCLIENT && WindowState != FormWindowState.Maximized)
+        {
+            var pt = PointToClient(new Point((short)(m.LParam & 0xFFFF), (short)((m.LParam >> 16) & 0xFFFF)));
+            if (pt.Y < ResizeBand) m.Result = HTTOP;
+        }
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct RECT { public int Left, Top, Right, Bottom; }
+
+    [LibraryImport("user32.dll")]
+    private static partial int GetSystemMetricsForDpi(int index, uint dpi);
+
+    [LibraryImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static partial bool SetWindowPos(nint hwnd, nint after, int x, int y, int cx, int cy, uint flags);
+
+    // ---- Window size and position --------------------------------------------------------------
+
+    private sealed record Placement(int X, int Y, int Width, int Height, bool Maximized);
+
+    /// <summary>First launch: about 70 % × 78 % of the monitor's work area, centred. Later: the last placement if still visible.</summary>
+    private void RestorePlacement()
+    {
+        StartPosition = FormStartPosition.Manual;
+        var screen = Screen.FromPoint(Cursor.Position).WorkingArea;
+        int scale(int v) => (int)(v * (DeviceDpi / 96.0));
+        MinimumSize = new Size(scale(900), scale(600));
+
+        try
+        {
+            if (File.Exists(PlacementFile) &&
+                JsonSerializer.Deserialize<Placement>(File.ReadAllText(PlacementFile)) is { } p &&
+                Screen.AllScreens.Any(s => s.WorkingArea.IntersectsWith(new Rectangle(p.X + 40, p.Y, p.Width - 80, 40))))
+            {
+                Bounds = new Rectangle(p.X, p.Y, Math.Max(p.Width, MinimumSize.Width), Math.Max(p.Height, MinimumSize.Height));
+                if (p.Maximized) WindowState = FormWindowState.Maximized;
+                return;
+            }
+        }
+        catch (Exception e) when (e is IOException or JsonException or UnauthorizedAccessException) { }
+
+        int w = Math.Clamp((int)(screen.Width * 0.70), Math.Min(scale(1100), screen.Width), scale(1600));
+        int h = Math.Clamp((int)(screen.Height * 0.78), Math.Min(scale(720), screen.Height), scale(1000));
+        Bounds = new Rectangle(screen.X + (screen.Width - w) / 2, screen.Y + (screen.Height - h) / 2, w, h);
+    }
+
+    private void SavePlacement()
+    {
+        try
+        {
+            var b = WindowState == FormWindowState.Normal ? Bounds : RestoreBounds;
+            Directory.CreateDirectory(Path.GetDirectoryName(PlacementFile)!);
+            File.WriteAllText(PlacementFile, JsonSerializer.Serialize(new Placement(b.X, b.Y, b.Width, b.Height, WindowState == FormWindowState.Maximized)));
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
+    }
+
+    // ---- Theme -----------------------------------------------------------------------------------
 
     private static bool IsDarkTheme() =>
         Registry.GetValue(@"HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize", "AppsUseLightTheme", 1) is int v && v == 0;
 
-    /// <summary>Title bar and window background in the Windows 11 base colours, so frame and page read as one surface.</summary>
     private void ApplyTheme()
     {
         bool dark = IsDarkTheme();
         var bg = dark ? Color.FromArgb(0x20, 0x20, 0x20) : Color.FromArgb(0xF3, 0xF3, 0xF3);
         BackColor = bg;
         _web.DefaultBackgroundColor = bg;
-        if (!IsHandleCreated) HandleCreated += (_, _) => ApplyFrame(dark, bg);
-        else ApplyFrame(dark, bg);
-    }
-
-    private void ApplyFrame(bool dark, Color bg)
-    {
-        int on = dark ? 1 : 0;
-        DwmSetWindowAttribute(Handle, 20, ref on, 4);                       // DWMWA_USE_IMMERSIVE_DARK_MODE
-        int caption = bg.R | (bg.G << 8) | (bg.B << 16);                    // COLORREF 0x00BBGGRR
-        DwmSetWindowAttribute(Handle, 35, ref caption, 4);                  // DWMWA_CAPTION_COLOR
-        int text = dark ? 0x00FFFFFF : 0x001A1A1A;
-        DwmSetWindowAttribute(Handle, 36, ref text, 4);                     // DWMWA_TEXT_COLOR
+        void Frame()
+        {
+            int on = dark ? 1 : 0;
+            DwmSetWindowAttribute(Handle, 20, ref on, 4); // DWMWA_USE_IMMERSIVE_DARK_MODE: dark border and system menu
+        }
+        if (IsHandleCreated) Frame();
+        else HandleCreated += (_, _) => Frame();
     }
 
     [LibraryImport("dwmapi.dll")]
@@ -128,48 +223,169 @@ internal sealed partial class MainForm : Form
         var core = _web.CoreWebView2;
         core.Settings.IsStatusBarEnabled = false;
         core.Settings.IsZoomControlEnabled = false;
+        core.Settings.IsNonClientRegionSupportEnabled = true; // CSS app-region: drag becomes the window caption
 #if !DEBUG
         core.Settings.AreDevToolsEnabled = false;
         core.Settings.AreDefaultContextMenusEnabled = false;
 #endif
         core.WebMessageReceived += OnWebMessage;
+        core.NavigationCompleted += (_, _) => PostWindowState();
+        core.AddWebResourceRequestedFilter($"https://{HostName}/*", CoreWebView2WebResourceContext.All);
+        core.WebResourceRequested += OnHostResource;
 
         var ep = EndpointInfo.TryReadAny();
+        var boot = new Dictionary<string, object>
+        {
+            ["token"] = ep?.Token ?? "",
+            ["accent"] = AccentPalette(),
+            ["host"] = "dashboard",
+        };
+        // Token and theme go to the page in memory only; nothing appears in a URL.
+        await core.AddScriptToExecuteOnDocumentCreatedAsync("window.__COREWRIGHT__ = " + JsonSerializer.Serialize(boot) + ";");
+
         if (ep is null)
         {
             bool dark = IsDarkTheme();
             core.NavigateToString(
-                $"<html><body style='background:{(dark ? "#202020" : "#f3f3f3")};color:{(dark ? "#fff" : "#1a1a1a")};" +
-                "font:14px \"Segoe UI Variable Text\",\"Segoe UI\";padding:40px'>" +
-                "<h2 style='font-weight:600'>The Corewright service is not running</h2>" +
-                "<p>Start it with start.bat, then reopen this window.</p></body></html>");
+                $"<html><body style='margin:0;background:{(dark ? "#202020" : "#f3f3f3")};color:{(dark ? "#fff" : "#1a1a1a")};" +
+                "font:14px \"Segoe UI Variable Text\",\"Segoe UI\"'>" +
+                "<div style='app-region:drag;height:40px;display:flex;justify-content:flex-end'>" +
+                "<button onclick=\"chrome.webview.postMessage({type:'close'})\" style='app-region:no-drag;width:46px;border:0;" +
+                "background:none;color:inherit;font-family:\"Segoe Fluent Icons\";font-size:10px'>&#xE8BB;</button></div>" +
+                "<div style='padding:24px 40px'><h2 style='font-weight:600'>The Corewright service is not running</h2>" +
+                "<p>Start it with start.bat, then reopen this window.</p></div></body></html>");
             return;
         }
-
-        // Token and theme go to the page in memory only; nothing appears in a URL.
-        var boot = new Dictionary<string, object> { ["token"] = ep.Token, ["accent"] = AccentPalette(), ["host"] = "dashboard" };
-        await core.AddScriptToExecuteOnDocumentCreatedAsync(
-            "window.__COREWRIGHT__ = " + JsonSerializer.Serialize(boot) + ";");
 
         string url = Environment.GetEnvironmentVariable("COREWRIGHT_UI_URL") is { Length: > 0 } dev ? dev : ep.Url + "/";
         core.Navigate(url);
     }
 
-    /// <summary>Host actions the page cannot do itself. Only "reveal" exists, and only for an existing file.</summary>
+    private void PostWindowState()
+    {
+        var core = _web.CoreWebView2;
+        if (core is null) return;
+        core.PostWebMessageAsJson(JsonSerializer.Serialize(new Dictionary<string, object>
+        {
+            ["type"] = "window",
+            ["maximized"] = WindowState == FormWindowState.Maximized,
+            ["active"] = ActiveForm == this,
+        }));
+    }
+
+    /// <summary>Host actions the page cannot do itself: window buttons, and "reveal" for an existing file.</summary>
     private void OnWebMessage(object? sender, CoreWebView2WebMessageReceivedEventArgs e)
     {
         try
         {
             using var doc = JsonDocument.Parse(e.WebMessageAsJson);
             var root = doc.RootElement;
-            if (root.TryGetProperty("type", out var type) && type.GetString() == "reveal" &&
-                root.TryGetProperty("path", out var pathEl) && pathEl.GetString() is { } path && File.Exists(path))
+            switch (root.TryGetProperty("type", out var type) ? type.GetString() : null)
             {
-                Process.Start(new ProcessStartInfo("explorer.exe", $"/select,\"{path}\"") { UseShellExecute = false })?.Dispose();
+                case "minimize":
+                    WindowState = FormWindowState.Minimized;
+                    break;
+                case "maximize":
+                    WindowState = WindowState == FormWindowState.Maximized ? FormWindowState.Normal : FormWindowState.Maximized;
+                    break;
+                case "close":
+                    Close();
+                    break;
+                case "reveal":
+                    if (root.TryGetProperty("path", out var pathEl) && pathEl.GetString() is { } path && File.Exists(path))
+                        Process.Start(new ProcessStartInfo("explorer.exe", $"/select,\"{path}\"") { UseShellExecute = false })?.Dispose();
+                    break;
             }
         }
         catch (JsonException) { }
     }
+
+    // ---- Icons and friendly names (served by the dashboard, so the service pays nothing) ----------
+
+    private const string HostName = "corewright.host";
+    private readonly Dictionary<string, byte[]?> _icons = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, string> _descriptions = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// https://corewright.host/icon?path=… returns the exe's icon as PNG; /describe?path=… returns its file description
+    /// ("Google Chrome") like Task Manager. Only existing .exe files are read; results are cached for the window's lifetime.
+    /// </summary>
+    private void OnHostResource(object? sender, CoreWebView2WebResourceRequestedEventArgs e)
+    {
+        var uri = new Uri(e.Request.Uri);
+        var query = System.Web.HttpUtility.ParseQueryString(uri.Query);
+        string? path = query["path"];
+        var env = _web.CoreWebView2.Environment;
+        const string cors = "Access-Control-Allow-Origin: *\r\nCache-Control: max-age=86400\r\n";
+
+        if (path is null || !path.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) || !File.Exists(path))
+        {
+            e.Response = env.CreateWebResourceResponse(null, 404, "Not Found", cors);
+            return;
+        }
+
+        if (uri.AbsolutePath == "/icon")
+        {
+            if (!_icons.TryGetValue(path, out var png))
+            {
+                png = ExtractIconPng(path, query["size"] is { } s && int.TryParse(s, out int px) ? Math.Clamp(px, 16, 64) : 32);
+                _icons[path] = png;
+            }
+            e.Response = png is null
+                ? env.CreateWebResourceResponse(null, 404, "Not Found", cors)
+                : env.CreateWebResourceResponse(new MemoryStream(png), 200, "OK", cors + "Content-Type: image/png");
+            return;
+        }
+
+        if (uri.AbsolutePath == "/describe")
+        {
+            if (!_descriptions.TryGetValue(path, out var text))
+            {
+                try { text = FileVersionInfo.GetVersionInfo(path).FileDescription?.Trim() ?? ""; }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { text = ""; }
+                _descriptions[path] = text;
+            }
+            var bytes = System.Text.Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new Dictionary<string, string> { ["description"] = text }));
+            e.Response = env.CreateWebResourceResponse(new MemoryStream(bytes), 200, "OK", cors + "Content-Type: application/json");
+            return;
+        }
+
+        e.Response = env.CreateWebResourceResponse(null, 404, "Not Found", cors);
+    }
+
+    private static byte[]? ExtractIconPng(string path, int size)
+    {
+        nint large = 0, small = 0;
+        try
+        {
+            // The large (32 px) icon scaled down looks better than the 16 px one at 150 % and 200 % scaling.
+            if (ExtractIconExW(path, 0, ref large, ref small, 1) == 0 || (large == 0 && small == 0)) return null;
+            using var icon = Icon.FromHandle(large != 0 ? large : small);
+            using var bmp = new Bitmap(size, size, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+            using (var g = Graphics.FromImage(bmp))
+            {
+                g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
+                g.Clear(Color.Transparent);
+                g.DrawIcon(icon, new Rectangle(0, 0, size, size));
+            }
+            using var ms = new MemoryStream();
+            bmp.Save(ms, System.Drawing.Imaging.ImageFormat.Png);
+            return ms.ToArray();
+        }
+        catch (Exception ex) when (ex is ArgumentException or ExternalException) { return null; }
+        finally
+        {
+            if (large != 0) DestroyIcon(large);
+            if (small != 0) DestroyIcon(small);
+        }
+    }
+
+    [LibraryImport("shell32.dll", StringMarshalling = StringMarshalling.Utf16)]
+    private static partial uint ExtractIconExW(string file, int index, ref nint large, ref nint small, uint count);
+
+    [LibraryImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static partial bool DestroyIcon(nint icon);
 
     private async Task OnResizedAsync()
     {

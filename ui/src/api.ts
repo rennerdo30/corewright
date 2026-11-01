@@ -3,7 +3,13 @@ import type { EngineEvent, Explain, ImportResponse, ProcessRow, RuleSet, RulesRe
 declare global {
   interface Window {
     __COREWRIGHT__?: { token?: string; accent?: string[]; host?: string }
-    chrome?: { webview?: { postMessage: (message: unknown) => void } }
+    chrome?: {
+      webview?: {
+        postMessage: (message: unknown) => void
+        addEventListener: (type: 'message', listener: (e: { data: unknown }) => void) => void
+        removeEventListener: (type: 'message', listener: (e: { data: unknown }) => void) => void
+      }
+    }
   }
 }
 

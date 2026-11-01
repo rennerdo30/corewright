@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { api } from './api'
-import { Logo } from './components/Logo'
+import { TitleBar } from './components/TitleBar'
 import { usePoll } from './hooks'
 import { Activity } from './pages/Activity'
 import { Integrations } from './pages/Integrations'
@@ -45,12 +45,10 @@ export function App() {
   }
 
   return (
-    <div className="shell">
+    <div className="app">
+      <TitleBar />
+      <div className="shell">
       <aside className="nav">
-        <div className="brand">
-          <Logo size={22} />
-          <span>Corewright</span>
-        </div>
         {NAV.map((n) => (
           <button key={n.id} className={`nav-item ${page === n.id ? 'active' : ''}`} onClick={() => setPage(n.id)}>
             <span className="glyph">{n.glyph}</span>
@@ -86,6 +84,7 @@ export function App() {
         {page === 'activity' && <Activity />}
         {page === 'integrations' && <Integrations />}
       </main>
+      </div>
     </div>
   )
 }

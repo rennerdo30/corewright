@@ -197,6 +197,13 @@ internal static unsafe class Program
     private static void OpenDashboard()
     {
         string exe = Path.Combine(AppContext.BaseDirectory, "Corewright.Dashboard.exe");
+        if (!File.Exists(exe))
+        {
+            // Development build: src/Corewright.Tray/bin/<cfg>/<tfm>/ → src/Corewright.Dashboard/bin/<cfg>/<tfm>/
+            var dir = new DirectoryInfo(AppContext.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar));
+            if (dir.Parent?.Parent?.Parent?.Parent is { } src)
+                exe = Path.Combine(src.FullName, "Corewright.Dashboard", "bin", dir.Parent!.Name, dir.Name, "Corewright.Dashboard.exe");
+        }
         if (!File.Exists(exe)) return;
         // The dashboard is single-instance and brings its own window to the front.
         using var p = Process.Start(new ProcessStartInfo(exe) { UseShellExecute = false, WorkingDirectory = AppContext.BaseDirectory });
