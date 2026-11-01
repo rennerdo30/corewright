@@ -35,9 +35,8 @@ internal sealed class Monitor : BackgroundService
 
     // History ring.
     private readonly NetworkSampler _network = new();
+    public DeviceMonitor Devices { get; } = new();
     private readonly CoreUsageSampler _cores = new();
-    private GpuMonitor? _gpu;
-    private long _gpuLastUse;
     private ProcessNetworkMonitor? _processNetwork;
     private long _networkLastUse = long.MinValue / 2;
     private bool _networkFailed;
@@ -61,6 +60,7 @@ internal sealed class Monitor : BackgroundService
         _options = options;
         _store = store;
         _log = log;
+        Devices.Start(Sync, log);
         Events = events;
         Engine = new RuleEngine(_actuator, events);
         _actuator.Network.Start(events);
@@ -152,7 +152,7 @@ internal sealed class Monitor : BackgroundService
     public NetworkSampler Network => _network;
     public NetworkPolicies NetworkPolicies => _actuator.Network;
     public CoreUsageSampler Cores => _cores;
-    public GpuMonitor? Gpu => _gpu;
+    public GpuReadings Gpu => Devices.Gpu;
     public RuleSet RuleSet { get; private set; }
     public ProcessSampler Sampler => _sampler;
     public EvalContext Context => _ctx;
@@ -290,7 +290,7 @@ internal sealed class Monitor : BackgroundService
                 _background?.Save();
             }
             _actuator.Dispose();
-            _gpu?.Dispose();
+            Devices.Dispose();
             _processNetwork?.Dispose();
             if ((_processNetwork is null || _processNetwork.Stopped) && _actuator.Network.SessionStopped)
                 _actuator.Network.Ownership.Dispose();
@@ -360,7 +360,9 @@ internal sealed class Monitor : BackgroundService
 
             // PM-12: long-term observation; a changed classification rebuilds the rule set (at most once a minute).
             _background ??= new BackgroundClassifier(DataDirectory);
-            if (_background.Observe(_sampler.Processes, _ctx.ForegroundPid, Topology.LogicalCount, _ctx.NowMs,
+            // As a service the foreground comes from the tray: known once it reported, unknown after it said goodbye (pid 0).
+            bool foregroundKnown = !IsWindowsService || (_reportedForegroundMs != 0 && _reportedForegroundPid > 0);
+            if (_background.Observe(_sampler.Processes, _ctx.ForegroundPid, foregroundKnown, Topology.LogicalCount, _ctx.NowMs,
                     Settings.Autopilot.Background, Settings.Autopilot.GameMode, Topology)
                 && Settings.Autopilot.Enabled && Settings.Autopilot.Background.Enabled)
             {
@@ -380,30 +382,21 @@ internal sealed class Monitor : BackgroundService
             Engine.Evaluate(_sampler.Processes, _ctx);
 
             // Cheap system counters always; the costly ones (GPU counters, per-thread load) only while someone watches.
-            _network.Sample();
+            Devices.BeginSample(IsClientActive);
+            _network.Sample(Devices, IsClientActive);
             _cores.Sample(); // one call; the placer needs per-thread load for dynamic placement
             _placer.Prune(_sampler.IsAlive);
-            if (IsClientActive)
-            {
-                _gpu ??= new GpuMonitor();
-                _gpu.Sample();
-                _gpuLastUse = _ctx.NowMs;
-            }
-            else
+            if (!IsClientActive)
             {
                 Details.DropIfIdle();
-                if (_gpu is not null && _ctx.NowMs - _gpuLastUse > 60_000)
-                {
-                    _gpu.Dispose();
-                    _gpu = null;
-                }
             }
 
+            Devices.Sample(_ctx.NowMs);
             _hTime[_hNext] = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
             _hCpu[_hNext] = (float)_sampler.SystemCpuPercent;
             _hMem[_hNext] = _sampler.MemoryTotal == 0 ? 0 : (float)(100.0 * _sampler.MemoryUsed / _sampler.MemoryTotal);
             _hIo[_hNext] = (float)_sampler.TotalIoBytesPerSec;
-            _hGpu[_hNext] = (float)(_gpu?.Utilization ?? 0);
+            _hGpu[_hNext] = (float)Gpu.Utilization;
             _hNetRx[_hNext] = (float)_network.ReceiveBytesPerSec;
             _hNetTx[_hNext] = (float)_network.SendBytesPerSec;
             _hNext = (_hNext + 1) % HistoryCapacity;

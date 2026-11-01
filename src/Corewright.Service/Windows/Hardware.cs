@@ -211,9 +211,11 @@ internal sealed unsafe partial class NetworkSampler
     public double ReceiveBytesPerSec { get; private set; }
     public double SendBytesPerSec { get; private set; }
 
-    public void Sample()
+    public void Sample(DeviceMonitor? devices = null, bool active = false)
     {
         if (GetIfTable2(out nint table) != 0) return;
+        long stamp = System.Diagnostics.Stopwatch.GetTimestamp();
+        double elapsed = _lastTs == 0 ? 0 : (double)(stamp - _lastTs) / System.Diagnostics.Stopwatch.Frequency;
         long inOctets = 0, outOctets = 0;
         try
         {
@@ -222,6 +224,7 @@ internal sealed unsafe partial class NetworkSampler
             for (uint i = 0; i < n; i++)
             {
                 byte* r = rows + i * RowSize;
+                devices?.ObserveNetwork(r, active, elapsed);
                 // MIB_IF_ROW2: InterfaceAndOperStatusFlags@1152 (bit0 HardwareInterface), OperStatus@1156 (1 = up),
                 // InOctets@1208, OutOctets@1280 (row size 1352).
                 if ((r[1152] & 1) == 0 || *(int*)(r + 1156) != 1) continue;
@@ -233,6 +236,7 @@ internal sealed unsafe partial class NetworkSampler
         {
             FreeMibTable(table);
         }
+        devices?.EndNetworkInventory();
         long now = System.Diagnostics.Stopwatch.GetTimestamp();
         if (_lastTs != 0)
         {

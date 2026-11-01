@@ -233,6 +233,7 @@ public static class RuleCompiler
         switch (field)
         {
             case "cpu": return Num(p => p.CpuPercent);
+            case "ageSeconds": return Num(p => (DateTime.UtcNow.ToFileTimeUtc() - p.Key.CreateTime) / 10_000_000.0);
             case "workingSetMb": return Num(p => p.WorkingSet / 1048576.0);
             case "privateMb": return Num(p => p.PrivateBytes / 1048576.0);
             case "ioMBps": return Num(p => p.IoBytesPerSec / 1048576.0);

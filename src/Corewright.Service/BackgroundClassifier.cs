@@ -65,7 +65,8 @@ internal sealed class BackgroundClassifier
     public BackgroundClassifier(string dataDirectory)
     {
         // Version 2 keys by program identity; the version 1 file (keyed by exe name) stays untouched next to it.
-        _path = Path.Combine(dataDirectory, "background-stats-v2.json");
+        // v3: statistics learned without foreground data (tray missing) were wrong; v2 is kept next to it, unused.
+        _path = Path.Combine(dataDirectory, "background-stats-v3.json");
         _stats = Load(_path);
     }
 
@@ -75,7 +76,7 @@ internal sealed class BackgroundClassifier
     public ProcessKey ForegroundRoot { get; private set; }
 
     /// <summary>Accumulates one tick. Returns true when the classification changed (the caller rebuilds the rules).</summary>
-    public bool Observe(IReadOnlyList<ProcessInfo> processes, int foregroundPid, int logical, long nowMs,
+    public bool Observe(IReadOnlyList<ProcessInfo> processes, int foregroundPid, bool foregroundKnown, int logical, long nowMs,
         BackgroundSettings settings, GameModeSettings game, SystemTopology topo)
     {
         _byPid.Clear();
@@ -97,7 +98,9 @@ internal sealed class BackgroundClassifier
 
         double dt = _lastTickMs == 0 ? 0 : Math.Min(10, (nowMs - _lastTickMs) / 1000.0);
         _lastTickMs = nowMs;
-        if (dt <= 0) return false;
+        // Without foreground reports (the service learns them from the tray) every program would look "never in
+        // front" and the user's own apps would be classified as background (2026-11-02). Learn nothing then.
+        if (dt <= 0 || !foregroundKnown) return false;
 
         _coresThisTick.Clear();
         _serviceThisTick.Clear();

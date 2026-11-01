@@ -76,6 +76,8 @@ internal static unsafe class Program
         }
 
         if (hook != 0) UnhookWinEvent(hook);
+        // Tell the service the foreground is unknown from now on, so it does not learn from a stale window.
+        Call(HttpMethod.Put, "/api/v1/session/foreground", "{\"pid\":0,\"fullscreen\":false}");
         RemoveIcon();
         return 0;
     }
