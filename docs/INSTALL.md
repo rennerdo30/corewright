@@ -35,10 +35,15 @@ Run the newer setup over the existing installation, or use **Settings → Update
 → Check now → Install update**. The dashboard checks published stable GitHub
 Releases when it opens, at most once per 24 hours; **Check now** checks immediately.
 There is no background polling when the dashboard is closed. Downloads use no
-GitHub token. The setup and `SHA256SUMS.txt` go into a fresh folder below
-`%LOCALAPPDATA%\Corewright\updates\<version>`. SHA-256 is verified immediately
-before setup is launched with administrator consent. Failed verification never
-runs the setup. Development copies offer a GitHub download link instead.
+GitHub token. After administrator consent, an in-memory bootstrap embedded in the
+installed dashboard independently downloads setup and its checksum from the fixed
+Corewright release URL. No user-cache executable, script or checksum is elevated.
+It creates a fresh administrator-only `%ProgramFiles%\Corewright-update-<random>`
+directory with its ACL applied at creation. It checks every ancestor without
+following reparse points, validates administrator control and holds the path and
+setup handles against write/delete sharing through hashing and execution. Failed
+verification never runs setup. The protected stage is kept for diagnosis; an
+administrator can remove it afterwards. Development copies offer a GitHub download link instead.
 The last check is stored in `%LOCALAPPDATA%\Corewright\update-check.json`.
 
 Setup performs process and file-lock preflights before stopping the service, then

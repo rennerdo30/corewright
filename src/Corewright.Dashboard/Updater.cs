@@ -2,7 +2,6 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.Net;
 using System.Reflection;
-using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using Corewright.Core;
@@ -216,53 +215,44 @@ internal sealed class DashboardUpdater(Action<DashboardUpdater.Status> changed) 
             throw new InvalidDataException("No newer version is available.");
         ValidateAssetUrl(release.SetupUrl);
         ValidateAssetUrl(release.SumsUrl);
-        string name = $"Corewright-{release.Version}-setup.exe";
-        string folder = Path.Combine(AppPaths.UserDataDirectory, "updates", release.Version, Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(folder);
-        string setup = Path.Combine(folder, name);
-        using var client = Client();
-        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(_closed.Token);
-        timeout.CancelAfter(TimeSpan.FromMinutes(10));
-        Progress("downloading", "Downloading update checksums…");
-        using var sumsResponse = await client.GetAsync(release.SumsUrl, HttpCompletionOption.ResponseHeadersRead, timeout.Token);
-        sumsResponse.EnsureSuccessStatusCode();
-        byte[] sums = await ReadBoundedAsync(sumsResponse, 65536, timeout.Token);
-        await File.WriteAllBytesAsync(Path.Combine(folder, "SHA256SUMS.txt"), sums, timeout.Token);
-        string[] hashes = System.Text.Encoding.UTF8.GetString(sums).Split('\n')
-            .Select(line => Regex.Match(line.TrimEnd('\r'), @"^([0-9a-fA-F]{64}) [ *](.+)$"))
-            .Where(match => match.Success && match.Groups[2].Value == name).Select(match => match.Groups[1].Value).ToArray();
-        if (hashes.Length != 1) throw new InvalidDataException("The setup checksum is missing or duplicated.");
-        Progress("downloading", "Downloading Corewright setup…");
-        using (var response = await client.GetAsync(release.SetupUrl, HttpCompletionOption.ResponseHeadersRead, timeout.Token))
+        // Only trusted, installed code is elevated. It independently downloads and
+        // hashes the release in a newly created administrator-only directory.
+        // Never pass an executable path or expected checksum from the user cache.
+        static string Resource(string name)
         {
-            response.EnsureSuccessStatusCode();
-            await using var input = await response.Content.ReadAsStreamAsync(timeout.Token);
-            await using var output = new FileStream(setup, FileMode.CreateNew, FileAccess.Write, FileShare.None, 65536, useAsync: true);
-            byte[] bytes = new byte[65536];
-            long total = 0;
-            int count;
-            while ((count = await input.ReadAsync(bytes, timeout.Token)) > 0)
-            {
-                total += count;
-                if (total > 256 * 1024 * 1024) throw new InvalidDataException("The setup exceeds the 256 MB download limit.");
-                await output.WriteAsync(bytes.AsMemory(0, count), timeout.Token);
-            }
+            using var stream = typeof(DashboardUpdater).Assembly.GetManifestResourceStream(name)
+                ?? throw new IOException("The update bootstrap resource is missing.");
+            using var reader = new StreamReader(stream);
+            return reader.ReadToEnd();
         }
-        Progress("verifying", "Verifying SHA-256…");
-        // Deny writes and deletion between the final hash and process creation.
-        await using var verified = new FileStream(setup, FileMode.Open, FileAccess.Read, FileShare.Read, 65536, useAsync: true);
-        byte[] digest = await SHA256.HashDataAsync(verified, timeout.Token);
-        if (!CryptographicOperations.FixedTimeEquals(digest, Convert.FromHexString(hashes[0])))
-            throw new InvalidDataException("SHA-256 mismatch. The downloaded setup was not run. Check again or download from GitHub.");
-        timeout.Token.ThrowIfCancellationRequested();
-        Progress("installing", "Approve the Windows administrator prompt. Setup will close Corewright and restart the tray.");
-        using var process = await Task.Run(() => Process.Start(new ProcessStartInfo(setup, "/S") { UseShellExecute = true, Verb = "runas" }), timeout.Token)
-            ?? throw new IOException("Windows could not start the verified setup.");
-        Debug.WriteLine($"Corewright setup started: PID {process.Id}");
+        string helper = Resource("Corewright.SecureFiles");
+        if (helper.Split('\n').Any(line => line.TrimEnd('\r') == "'@"))
+            throw new IOException("Invalid trusted bootstrap resource delimiter.");
+        string script = "$SecureFilesSource = @'\n" + helper + "\n'@\n" +
+            "$UpdateVersion = '" + release.Version + "';\n" + Resource("Corewright.UpdateBootstrap");
+        // Compress only our embedded code, never downloaded/cached script text.
+        using var packed = new MemoryStream();
+        using (var gzip = new System.IO.Compression.GZipStream(packed, System.IO.Compression.CompressionLevel.SmallestSize, leaveOpen: true))
+            gzip.Write(System.Text.Encoding.UTF8.GetBytes(script));
+        string unpack = "$s=[IO.MemoryStream]::new([Convert]::FromBase64String('" + Convert.ToBase64String(packed.ToArray()) +
+            "'));$g=[IO.Compression.GZipStream]::new($s,[IO.Compression.CompressionMode]::Decompress);" +
+            "$r=[IO.StreamReader]::new($g); & ([scriptblock]::Create($r.ReadToEnd()))";
+        string encoded = Convert.ToBase64String(System.Text.Encoding.Unicode.GetBytes(unpack));
+        // Windows PowerShell's encoded-command limit is the Windows command-line limit.
+        // Fail closed if embedded resources grow beyond it.
+        if (encoded.Length > 30000) throw new IOException("The trusted update bootstrap is too large.");
+        string powershell = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System),
+            @"WindowsPowerShell\v1.0\powershell.exe");
+        Progress("installing", "Approve the Windows administrator prompt. The trusted updater will download, verify and install Corewright.");
+        using var process = await Task.Run(() => Process.Start(new ProcessStartInfo(powershell,
+            "-NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand " + encoded)
+            { UseShellExecute = true, Verb = "runas", WindowStyle = ProcessWindowStyle.Hidden }), _closed.Token)
+            ?? throw new IOException("Windows could not start the trusted update bootstrap.");
+        Debug.WriteLine($"Corewright update bootstrap started: PID {process.Id}");
         using var wait = CancellationTokenSource.CreateLinkedTokenSource(_closed.Token);
-        wait.CancelAfter(TimeSpan.FromSeconds(180));
+        wait.CancelAfter(TimeSpan.FromMinutes(15));
         await process.WaitForExitAsync(wait.Token);
-        if (process.ExitCode != 0) throw new IOException($"Setup failed (exit {process.ExitCode}). See the installer log.");
+        if (process.ExitCode != 0) throw new IOException($"Trusted update failed (exit {process.ExitCode}). Setup was not run unless its protected checksum passed. See the installer log.");
         Progress("installed", "Update installed. Reopen Corewright from the tray.");
     }
 
