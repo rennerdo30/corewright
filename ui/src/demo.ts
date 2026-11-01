@@ -279,7 +279,7 @@ const settings: AppSettings = {
     },
     balance: { enabled: true, cpuPercent: 8, sustainSeconds: 2, releaseSeconds: 6, priority: 'belowNormal', exclusions: [] },
     buildTools: { enabled: true, priority: 'belowNormal', ioPriority: 'low', programs: ['cl.exe', 'link.exe', 'MSBuild.exe', 'clang.exe', 'rustc.exe', 'cargo.exe', 'ninja.exe', 'dxc.exe'] },
-    background: { enabled: true, minObservedMinutes: 60, maxForegroundPercent: 1, singleCoreLoad: 1.2, keepBestCoresFree: 4, priority: 'belowNormal', exclusions: [] },
+    background: { enabled: true, minObservedMinutes: 60, includeServices: true, maxForegroundPercent: 1, singleCoreLoad: 1.2, keepBestCoresFree: 4, priority: 'belowNormal', exclusions: [] },
   },
 }
 
@@ -292,12 +292,14 @@ const placements: Placement[] = [
 ]
 
 const background: BackgroundRow[] = [
-  { name: 'OneDrive.exe', observedMinutes: 2210, foregroundPercent: 0, averageCores: 0.4, peakCores: 2.1, service: false, verdict: 'Background, single-threaded', affinity: '20-23', reason: 'never in front in 37 h' },
-  { name: 'CloudBackup.exe', observedMinutes: 1460, foregroundPercent: 0, averageCores: 1.6, peakCores: 5.8, service: false, verdict: 'Background, multi-threaded', affinity: '18-19', reason: 'never in front in 24 h' },
-  { name: 'Spotify.exe', observedMinutes: 980, foregroundPercent: 0.6, averageCores: 0.1, peakCores: 0.9, service: false, verdict: 'Background, light', reason: 'in front 0.6 % of the time' },
-  { name: 'Discord.exe', observedMinutes: 2400, foregroundPercent: 4.2, averageCores: 0.3, peakCores: 1.4, service: false, verdict: 'Interactive', reason: 'in front 4.2 % of the time' },
-  { name: 'firefox.exe', observedMinutes: 1900, foregroundPercent: 31, averageCores: 0.6, peakCores: 4.2, service: false, verdict: 'Interactive', reason: 'in front 31 % of the time' },
-  { name: 'steam.exe', observedMinutes: 2400, foregroundPercent: 2.1, averageCores: 0.2, peakCores: 1.1, service: false, verdict: 'Interactive', reason: 'in front 2.1 % of the time' },
+  { name: 'OneDrive.exe', program: 'c:\\program files\\microsoft onedrive\\onedrive.exe', observedMinutes: 2210, foregroundPercent: 0, averageCores: 0.4, peakCores: 2.1, p95Cores: 0.8, service: false, verdict: 'Background: placed', affinity: 'auto', reason: 'never in front in 37 h' },
+  { name: 'python.exe (render_batch.py)', program: 'python.exe (render_batch.py)', observedMinutes: 380, foregroundPercent: 0, averageCores: 5.2, peakCores: 7.8, p95Cores: 6, service: false, verdict: 'Background: placed, lower priority', affinity: 'auto', reason: 'never in front, bursts to 6 cores' },
+  { name: 'svchost.exe (wuauserv)', program: 'svchost.exe (wuauserv)', observedMinutes: 1460, foregroundPercent: 0, averageCores: 0.6, peakCores: 3.9, p95Cores: 3, service: true, verdict: 'Background: placed, lower priority', affinity: 'auto', reason: 'Windows Update' },
+  { name: 'CloudBackup.exe', program: 'c:\\program files\\cloudbackup\\cloudbackup.exe', observedMinutes: 1460, foregroundPercent: 0, averageCores: 1.6, peakCores: 5.8, p95Cores: 4, service: false, verdict: 'Background: placed, lower priority', affinity: 'auto', reason: 'never in front in 24 h' },
+  { name: 'node.exe (vite.js)', program: 'node.exe (vite.js)', observedMinutes: 600, foregroundPercent: 18, averageCores: 0.3, peakCores: 2.2, p95Cores: 1.5, service: false, verdict: 'Interactive: in front recently', reason: 'runs in the terminal you use' },
+  { name: 'svchost.exe (audiosrv)', program: 'svchost.exe (audiosrv)', observedMinutes: 2400, foregroundPercent: 0, averageCores: 0.1, peakCores: 0.4, p95Cores: 0.15, service: true, verdict: 'Left alone: latency critical', reason: 'audio' },
+  { name: 'Discord.exe', program: 'c:\\users\\alex\\appdata\\local\\discord\\app-1.0.9200\\discord.exe', observedMinutes: 2400, foregroundPercent: 4.2, averageCores: 0.3, peakCores: 1.4, p95Cores: 0.8, service: false, verdict: 'Interactive', reason: 'in front 4.2 % of the time' },
+  { name: 'firefox.exe', program: 'c:\\program files\\mozilla firefox\\firefox.exe', observedMinutes: 1900, foregroundPercent: 31, averageCores: 0.6, peakCores: 4.2, p95Cores: 2, service: false, verdict: 'Interactive', reason: 'in front 31 % of the time' },
 ]
 
 let seq = 0

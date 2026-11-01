@@ -136,3 +136,4 @@
 .ap-groups h3 { margin-top: 4px; }
 .ap-scroll { max-height: 340px; overflow: auto; }
 .ap-scroll .ap-table th { position: sticky; top: 0; z-index: 1; background: var(--layer); }
+.decision.crit { color: var(--caution); }

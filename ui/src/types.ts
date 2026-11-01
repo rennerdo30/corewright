@@ -45,6 +45,7 @@ export interface AppSettings {
     background: {
       enabled: boolean
       minObservedMinutes: number
+      includeServices: boolean
       maxForegroundPercent: number
       singleCoreLoad: number
       keepBestCoresFree: number
@@ -55,7 +56,11 @@ export interface AppSettings {
 }
 
 export interface BackgroundRow {
+  /** What the user sees: "python.exe (train.py)". */
   name: string
+  /** Identity key (rule field "program"). */
+  program: string
+  p95Cores: number
   observedMinutes: number
   foregroundPercent: number
   averageCores: number

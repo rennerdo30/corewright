@@ -6,83 +6,125 @@ using Corewright.Core.Rules;
 
 namespace Corewright.Service;
 
-/// <summary>Long-term statistics per program (exe name), kept across restarts in background-stats.json.</summary>
+/// <summary>Long-term statistics per program (see <see cref="ProgramIdentity"/>), kept across restarts. All time
+/// counters age with a half-life, so what a program did last week weighs less than what it does today.</summary>
 public sealed class ProgramStats
 {
+    public string Display { get; set; } = "";
     public double ObservedSeconds { get; set; }
     public double ForegroundSeconds { get; set; }
     /// <summary>Sum of (cores in use × seconds); divided by ObservedSeconds gives the average load in cores.</summary>
     public double CoreSeconds { get; set; }
+    /// <summary>Seconds spent in each load band (<see cref="BackgroundClassifier.Bands"/>), for the 95th percentile.</summary>
+    public double[] Profile { get; set; } = new double[BackgroundClassifier.Bands.Length];
     public double PeakCores { get; set; }
     public bool Service { get; set; }
+    /// <summary>Unix seconds when the program (or its app) was last in front; 0 = never.</summary>
+    public long LastForeground { get; set; }
     public long LastSeen { get; set; }
 }
 
-public sealed record BackgroundRowDto(string Name, double ObservedMinutes, double ForegroundPercent, double AverageCores, double PeakCores,
-    bool Service, string Verdict, string? Affinity, string Reason);
+public sealed record BackgroundRowDto(string Name, string Program, double ObservedMinutes, double ForegroundPercent, double AverageCores,
+    double PeakCores, double P95Cores, bool Service, string Verdict, string? Affinity, string Reason);
 
-[JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase, WriteIndented = true)]
+[JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase, WriteIndented = false)]
 [JsonSerializable(typeof(Dictionary<string, ProgramStats>))]
 internal sealed partial class StatsJson : JsonSerializerContext;
 
 /// <summary>
-/// Observes every program over hours (one dictionary update per process per tick, no system calls) and classifies
-/// clear background programs: never interactive (foreground share below the limit), not a service, observed long
-/// enough. Single-threaded ones get one physical core, filled from the last core backwards and never one of the
-/// strongest cores; multi-threaded ones get lower priority and the cores outside the strongest ones.
+/// Background placement, version 2 (owner, 2026-11-02: "is our background rule really that easy?? we need to make this
+/// way better!"). Decides per program, not per exe name:
+/// <list type="bullet">
+/// <item>Identity: exe path, or for hosts what they run (python.exe (train.py), svchost.exe (wuauserv)).</item>
+/// <item>In front means the whole app: the foreground process and everything with the same app root (Electron
+/// helpers, browser tabs, a terminal's children). Anything in front in the last 30 minutes is interactive.</item>
+/// <item>Statistics age (3-day half-life); a load profile gives the 95th percentile, so bursts count.</item>
+/// <item>Services are judged like everything else, except latency-critical ones (audio, input, drivers, network core).</item>
+/// </list>
+/// Cost: one dictionary update per process per tick; identity and app root once per process lifetime.
 /// </summary>
 internal sealed class BackgroundClassifier
 {
-    private const int MaxPrograms = 2000;
+    /// <summary>Upper edges of the load bands, in cores.</summary>
+    internal static readonly double[] Bands = [0.05, 0.25, 0.5, 1, 2, 4, 8, double.MaxValue];
+    private static readonly double[] BandMid = [0.02, 0.15, 0.4, 0.8, 1.5, 3, 6, 12];
+
+    private const int MaxPrograms = 3000;
+    private const double HalfLifeSeconds = 3 * 86400;
+    private const long RecentForegroundSeconds = 30 * 60;
+
     private readonly string _path;
     private readonly Dictionary<string, ProgramStats> _stats;
-    private readonly HashSet<string> _seenThisTick = new(StringComparer.OrdinalIgnoreCase);
-    private readonly Dictionary<string, double> _coresThisTick = new(StringComparer.OrdinalIgnoreCase);
-    private long _lastTickMs, _lastSaveMs, _lastClassifyMs;
+    private readonly Dictionary<int, ProcessInfo> _byPid = [];
+    private readonly Dictionary<string, double> _coresThisTick = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, bool> _serviceThisTick = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _frontThisTick = new(StringComparer.Ordinal);
+    private long _lastTickMs, _lastSaveMs, _lastClassifyMs, _lastDecayMs;
     private string _signature = "";
 
     public BackgroundClassifier(string dataDirectory)
     {
-        _path = Path.Combine(dataDirectory, "background-stats.json");
+        // Version 2 keys by program identity; the version 1 file (keyed by exe name) stays untouched next to it.
+        _path = Path.Combine(dataDirectory, "background-stats-v2.json");
         _stats = Load(_path);
     }
 
     public IReadOnlyList<BackgroundVerdict> Verdicts { get; private set; } = [];
 
+    /// <summary>App root of the current foreground process (for the isForegroundApp rule field).</summary>
+    public ProcessKey ForegroundRoot { get; private set; }
+
     /// <summary>Accumulates one tick. Returns true when the classification changed (the caller rebuilds the rules).</summary>
     public bool Observe(IReadOnlyList<ProcessInfo> processes, int foregroundPid, int logical, long nowMs,
         BackgroundSettings settings, GameModeSettings game, SystemTopology topo)
     {
+        _byPid.Clear();
+        foreach (var p in processes) _byPid[p.Key.Pid] = p;
+
+        // Identity and app root: once per process lifetime, before the engine sees the process.
+        foreach (var p in processes)
+        {
+            if (p.Program is not null) continue;
+            var (key, display, critical) = ProgramIdentity.Identify(p);
+            p.Program = key;
+            p.LatencyCritical = critical;
+            p.AppRoot = RootOf(p);
+            if (_stats.TryGetValue(key, out var known)) known.Display = display;
+            else if (_stats.Count < MaxPrograms && !p.IsProtected && p.Key.Pid is not (0 or 4)) _stats[key] = new ProgramStats { Display = display };
+        }
+
+        ForegroundRoot = _byPid.TryGetValue(foregroundPid, out var fg) ? fg.AppRoot : default;
+
         double dt = _lastTickMs == 0 ? 0 : Math.Min(10, (nowMs - _lastTickMs) / 1000.0);
         _lastTickMs = nowMs;
         if (dt <= 0) return false;
 
-        _seenThisTick.Clear();
         _coresThisTick.Clear();
-        string? foregroundName = null;
+        _serviceThisTick.Clear();
+        _frontThisTick.Clear();
         foreach (var p in processes)
         {
-            if (p.IsProtected || p.Key.Pid is 0 or 4) continue;
-            if (p.Key.Pid == foregroundPid) foregroundName = p.Name;
-            // Sum all instances of a program: CpuPercent is a share of the whole machine.
-            _coresThisTick[p.Name] = _coresThisTick.GetValueOrDefault(p.Name) + p.CpuPercent * logical / 100.0;
-            if (!_stats.TryGetValue(p.Name, out var s))
-            {
-                if (_stats.Count >= MaxPrograms) continue;
-                s = new ProgramStats();
-                _stats[p.Name] = s;
-            }
-            if (p.SessionId == 0) s.Service = true;
+            if (p.IsProtected || p.Key.Pid is 0 or 4 || p.Program is null) continue;
+            // All instances of a program add up: CpuPercent is a share of the whole machine.
+            _coresThisTick[p.Program] = _coresThisTick.GetValueOrDefault(p.Program) + p.CpuPercent * logical / 100.0;
+            if (p.SessionId == 0) _serviceThisTick[p.Program] = true;
+            if (p.Key.Pid == foregroundPid || (ForegroundRoot.Pid != 0 && p.AppRoot == ForegroundRoot)) _frontThisTick.Add(p.Program);
         }
 
         long unix = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-        foreach (var (name, cores) in _coresThisTick)
+        foreach (var (key, cores) in _coresThisTick)
         {
-            if (!_stats.TryGetValue(name, out var s)) continue;
+            if (!_stats.TryGetValue(key, out var s)) continue;
             s.ObservedSeconds += dt;
             s.CoreSeconds += cores * dt;
+            s.Profile[Band(cores)] += dt;
             if (cores > s.PeakCores) s.PeakCores = cores;
-            if (string.Equals(name, foregroundName, StringComparison.OrdinalIgnoreCase)) s.ForegroundSeconds += dt;
+            if (_serviceThisTick.ContainsKey(key)) s.Service = true;
+            if (_frontThisTick.Contains(key))
+            {
+                s.ForegroundSeconds += dt;
+                s.LastForeground = unix;
+            }
             s.LastSeen = unix;
         }
 
@@ -94,83 +136,108 @@ internal sealed class BackgroundClassifier
 
         if (nowMs - _lastClassifyMs < 60_000 && _lastClassifyMs != 0) return false;
         _lastClassifyMs = nowMs;
-        return Classify(settings, game, topo);
+        Decay(nowMs);
+        return Classify(settings, game, unix);
     }
 
-    private bool Classify(BackgroundSettings settings, GameModeSettings game, SystemTopology topo)
+    /// <summary>The topmost ancestor below the shell. Services stop at services.exe, so each service is its own app.</summary>
+    private ProcessKey RootOf(ProcessInfo p)
     {
-        var verdicts = new List<BackgroundVerdict>();
-        var backCores = BackCores(topo, settings.KeepBestCoresFree);
-        var load = new double[backCores.Count];
-        ulong allowed = backCores.Aggregate(0UL, (m, c) => m | c);
-        var excluded = new HashSet<string>(settings.Exclusions.Concat(game.KeepResponsive).Concat(game.Games), StringComparer.OrdinalIgnoreCase);
-
-        // Busiest first, so the heaviest single-threaded programs get the very last cores.
-        var candidates = _stats
-            .Select(kv => (Name: kv.Key, Stats: kv.Value, Kind: Verdict(kv.Key, kv.Value, settings, excluded)))
-            .Where(x => x.Kind is not null)
-            .OrderByDescending(x => x.Stats.CoreSeconds / Math.Max(1, x.Stats.ObservedSeconds))
-            .ThenBy(x => x.Name, StringComparer.OrdinalIgnoreCase);
-
-        foreach (var (name, s, kind) in candidates)
+        var cur = p;
+        for (int depth = 0; depth < 16; depth++)
         {
-            double avg = s.CoreSeconds / Math.Max(1, s.ObservedSeconds);
-            string? affinity = null;
-            if (kind == "single" && backCores.Count > 0)
-            {
-                // Fill from the back: the first core (counting from the last one) that still has room for this program,
-                // otherwise the least loaded back core. Never wraps onto the strongest cores.
-                int slot = -1;
-                for (int i = 0; i < backCores.Count; i++)
-                    if (load[i] + avg <= 1.0) { slot = i; break; }
-                if (slot < 0) slot = Array.IndexOf(load, load.Min());
-                load[slot] += avg;
-                affinity = AffinityParser.Format(backCores[slot]);
-            }
-            else if (kind == "multi" && allowed != 0 && allowed != topo.AllMask)
-            {
-                affinity = AffinityParser.Format(allowed);
-            }
-            verdicts.Add(new BackgroundVerdict(name, kind!, affinity, Describe(s)));
+            if (cur.Parent is not { } parent || !_byPid.TryGetValue(parent.Pid, out var pp) || pp.Key != parent) break;
+            if (ProgramIdentity.IsShell(pp.Name) || pp.IsProtected) break;
+            cur = pp;
         }
+        return cur.Key;
+    }
 
-        string signature = string.Join('|', verdicts.OrderBy(v => v.Name, StringComparer.OrdinalIgnoreCase).Select(v => $"{v.Name}:{v.Kind}:{v.Affinity}"));
+    private static int Band(double cores)
+    {
+        for (int i = 0; i < Bands.Length; i++)
+            if (cores <= Bands[i]) return i;
+        return Bands.Length - 1;
+    }
+
+    /// <summary>Ages every counter once a minute (cheaper than per tick, same result).</summary>
+    private void Decay(long nowMs)
+    {
+        if (_lastDecayMs == 0) { _lastDecayMs = nowMs; return; }
+        double f = Math.Pow(0.5, (nowMs - _lastDecayMs) / 1000.0 / HalfLifeSeconds);
+        _lastDecayMs = nowMs;
+        foreach (var s in _stats.Values)
+        {
+            s.ObservedSeconds *= f;
+            s.ForegroundSeconds *= f;
+            s.CoreSeconds *= f;
+            s.PeakCores *= f;
+            for (int i = 0; i < s.Profile.Length; i++) s.Profile[i] *= f;
+        }
+    }
+
+    internal static double P95(ProgramStats s)
+    {
+        double total = s.Profile.Sum();
+        if (total <= 0) return 0;
+        double acc = 0;
+        for (int i = 0; i < s.Profile.Length; i++)
+        {
+            acc += s.Profile[i];
+            if (acc >= 0.95 * total) return Math.Min(BandMid[i], Math.Max(s.PeakCores, BandMid[0]));
+        }
+        return s.PeakCores;
+    }
+
+    private bool Classify(BackgroundSettings settings, GameModeSettings game, long unix)
+    {
+        var excluded = Excluded(settings, game);
+        var verdicts = new List<BackgroundVerdict>();
+        foreach (var (key, s) in _stats)
+        {
+            var (kind, _) = Decide(key, s, settings, excluded, unix);
+            if (kind is "single" or "multi") verdicts.Add(new BackgroundVerdict(key, s.Display, kind, s.Service, Describe(s)));
+        }
+        verdicts.Sort((a, b) => string.CompareOrdinal(a.Program, b.Program));
+        string signature = string.Join('|', verdicts.Select(v => $"{v.Program}:{v.Kind}"));
         Verdicts = verdicts;
         if (signature == _signature) return false;
         _signature = signature;
         return true;
     }
 
-    private static string? Verdict(string name, ProgramStats s, BackgroundSettings settings, HashSet<string> excluded)
+    private static HashSet<string> Excluded(BackgroundSettings settings, GameModeSettings game) =>
+        new(settings.Exclusions.Concat(game.KeepResponsive).Concat(game.Games), StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>The decision and its reason, in the words the Learned table shows.</summary>
+    private static (string Kind, string Label) Decide(string key, ProgramStats s, BackgroundSettings settings, HashSet<string> excluded, long unix)
     {
-        if (excluded.Contains(name) || s.Service) return null;
-        if (s.ObservedSeconds < settings.MinObservedMinutes * 60) return null;
-        if (100 * s.ForegroundSeconds / s.ObservedSeconds > settings.MaxForegroundPercent) return null;
+        string exe = s.Display.Split(" (")[0];
+        if (excluded.Contains(exe) || excluded.Contains(s.Display)) return ("excluded", "Excluded");
+        if (ProgramIdentity.IsCritical(exe, s.Display)) return ("critical", "Left alone: latency critical");
+        if (s.Service && !settings.IncludeServices) return ("service", "Service (services are off)");
+        if (s.ObservedSeconds < settings.MinObservedMinutes * 60) return ("observing", "Observing");
+        if (s.LastForeground != 0 && unix - s.LastForeground < RecentForegroundSeconds) return ("interactive", "Interactive: in front recently");
+        if (100 * s.ForegroundSeconds / s.ObservedSeconds > settings.MaxForegroundPercent) return ("interactive", "Interactive");
         double avg = s.CoreSeconds / s.ObservedSeconds;
-        if (avg < 0.01) return null; // idle programs: nothing to gain
-        return avg <= settings.SingleCoreLoad ? "single" : "multi";
+        double p95 = P95(s);
+        if (avg < 0.02 && p95 <= 0.25) return ("idle", "Idle: nothing to gain");
+        return p95 <= settings.SingleCoreLoad ? ("single", "Background: placed") : ("multi", "Background: placed, lower priority");
     }
 
-    private static string Describe(ProgramStats s) =>
-        $"{s.ObservedSeconds / 3600:0.#} h observed, {100 * s.ForegroundSeconds / Math.Max(1, s.ObservedSeconds):0.##} % foreground, " +
-        $"{s.CoreSeconds / Math.Max(1, s.ObservedSeconds):0.##} cores on average";
-
-    /// <summary>Physical cores (as LP masks) from the back of the CPU, skipping the strongest ones.</summary>
-    private static List<ulong> BackCores(SystemTopology topo, int keepFree)
+    private static string Describe(ProgramStats s)
     {
-        var protectedMask = topo.CoresByRank.Take(Math.Max(0, keepFree)).Aggregate(0UL, (m, c) => m | c);
-        var cores = topo.CoresByRank.Length > 0
-            ? topo.CoresByRank.ToList()
-            : Enumerable.Range(0, topo.LogicalCount).Select(i => 1UL << i).ToList();
-        return cores.Where(c => (c & protectedMask) == 0)
-            .OrderByDescending(c => 63 - System.Numerics.BitOperations.LeadingZeroCount(c)) // highest LP first: fill from the back
-            .ToList();
+        double hours = s.ObservedSeconds / 3600;
+        double front = 100 * s.ForegroundSeconds / Math.Max(1, s.ObservedSeconds);
+        double avg = s.CoreSeconds / Math.Max(1, s.ObservedSeconds);
+        return $"{(s.Service ? "Service, " : "")}{hours:0.#} h observed, in front {front:0.##} % of the time, {avg:0.##} cores on average, " +
+               $"bursts to {P95(s):0.#} (95th percentile)";
     }
 
     public List<BackgroundRowDto> Rows(BackgroundSettings settings, GameModeSettings game)
     {
-        var excluded = new HashSet<string>(settings.Exclusions.Concat(game.KeepResponsive).Concat(game.Games), StringComparer.OrdinalIgnoreCase);
-        var verdicts = Verdicts.ToDictionary(v => v.Name, StringComparer.OrdinalIgnoreCase);
+        var excluded = Excluded(settings, game);
+        long unix = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
         return [.. _stats
             .Where(kv => kv.Value.ObservedSeconds > 60)
             .OrderByDescending(kv => kv.Value.CoreSeconds)
@@ -178,18 +245,11 @@ internal sealed class BackgroundClassifier
             .Select(kv =>
             {
                 var s = kv.Value;
-                verdicts.TryGetValue(kv.Key, out var v);
-                string verdict = v?.Kind switch
-                {
-                    "single" => "Background, single core",
-                    "multi" => "Background, lower priority",
-                    _ => excluded.Contains(kv.Key) ? "Excluded" : s.Service ? "Service (left alone)" :
-                        s.ObservedSeconds < settings.MinObservedMinutes * 60 ? "Observing" :
-                        100 * s.ForegroundSeconds / s.ObservedSeconds > settings.MaxForegroundPercent ? "Interactive" : "Idle",
-                };
-                return new BackgroundRowDto(kv.Key, Math.Round(s.ObservedSeconds / 60, 1),
+                var (kind, label) = Decide(kv.Key, s, settings, excluded, unix);
+                return new BackgroundRowDto(s.Display, kv.Key, Math.Round(s.ObservedSeconds / 60, 1),
                     Math.Round(100 * s.ForegroundSeconds / Math.Max(1, s.ObservedSeconds), 2),
-                    Math.Round(s.CoreSeconds / Math.Max(1, s.ObservedSeconds), 2), Math.Round(s.PeakCores, 2), s.Service, verdict, v is null ? null : "auto (sticky, least-loaded cores)", Describe(s));
+                    Math.Round(s.CoreSeconds / Math.Max(1, s.ObservedSeconds), 2), Math.Round(s.PeakCores, 2), Math.Round(P95(s), 2), s.Service,
+                    label, kind is "single" or "multi" ? "auto (sticky, least-loaded cores)" : null, Describe(s));
             })];
     }
 
@@ -214,9 +274,13 @@ internal sealed class BackgroundClassifier
         {
             if (File.Exists(path) &&
                 JsonSerializer.Deserialize(File.ReadAllText(path), StatsJson.Default.DictionaryStringProgramStats) is { } d)
-                return new Dictionary<string, ProgramStats>(d, StringComparer.OrdinalIgnoreCase);
+            {
+                foreach (var s in d.Values)
+                    if (s.Profile.Length != Bands.Length) s.Profile = new double[Bands.Length];
+                return new Dictionary<string, ProgramStats>(d, StringComparer.Ordinal);
+            }
         }
         catch (Exception e) when (e is JsonException or IOException) { }
-        return new Dictionary<string, ProgramStats>(StringComparer.OrdinalIgnoreCase);
+        return new Dictionary<string, ProgramStats>(StringComparer.Ordinal);
     }
 }
