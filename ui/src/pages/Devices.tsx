@@ -65,7 +65,8 @@ function verdict(d: Device): Verdict | undefined {
 export function Devices() {
   const [hidden, setHidden] = useState(false)
   const data = usePoll(() => api.devices('*', hidden), 1000)
-  const devices = data.data?.devices ?? []
+  // Virtual adapters (VPN, Hyper-V, WSL switches) are hidden unless asked for: they rarely carry real traffic.
+  const devices = (data.data?.devices ?? []).filter((d) => hidden || d.kind !== 'network' || d.type !== 'Virtual')
   const sampling = data.data?.sampling ?? false
   const count = (k: Device['kind']) => devices.filter((d) => d.kind === k).length
   const warnings = devices.filter((d) => verdict(d)?.tone === 'critical')
