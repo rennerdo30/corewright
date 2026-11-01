@@ -103,6 +103,7 @@ internal static unsafe partial class DiskDeviceProbe
             s.Disk = Open(s.Path);
             s.NextOpenAttemptMs = now + 60_000;
             s.Baseline = false;
+            if (s.Disk == -1) Removed(s, now);
         }
         var v = s.Info.Values;
         v.Read = v.Write = v.Active = null; v.SampledAt = time;
@@ -120,7 +121,11 @@ internal static unsafe partial class DiskDeviceProbe
             }
             s.LastRead = read; s.LastWrite = write; s.LastIdle = idle; s.LastQuery = query; s.Baseline = true;
         }
-        else s.Baseline = false;
+        else
+        {
+            s.Baseline = false;
+            if (Removed(s, now)) return;
+        }
         if (now < s.HealthDue || !clientActive()) return;
         s.HealthDue = now + 60_000;
         var health = s.Info.Health;
@@ -128,6 +133,7 @@ internal static unsafe partial class DiskDeviceProbe
         health.WearPercent = health.SparePercent = health.CriticalWarning = null;
         health.MediaErrors = health.PowerOnHours = health.UnsafeShutdowns = health.DataUnitsRead = health.DataUnitsWritten = null;
         bool temperature = Property(s.Disk, 52, b, 4096, out got);
+        if (!temperature && Removed(s, now)) return;
         if (!clientActive()) { s.HealthDue = 0; return; }
         if (temperature && got >= 40 && *(ushort*)(b + 12) > 0 && *(short*)(b + 26) != short.MinValue)
             health.Temperature = *(short*)(b + 26);
@@ -137,7 +143,9 @@ internal static unsafe partial class DiskDeviceProbe
             new Span<byte>(b, 4096).Clear();
             *(uint*)b = 49; *(uint*)(b + 8) = 3; *(uint*)(b + 12) = 2; *(uint*)(b + 16) = 2;
             *(uint*)(b + 24) = 40; *(uint*)(b + 28) = 512;
-            if (Io(s.Disk, QueryProperty, b, 48, b, 4096, out got) && got >= 48 && *(uint*)b >= 48 && *(uint*)(b + 4) >= 48)
+            bool smart = Io(s.Disk, QueryProperty, b, 48, b, 4096, out got);
+            if (!smart && Removed(s, now)) return;
+            if (smart && got >= 48 && *(uint*)b >= 48 && *(uint*)(b + 4) >= 48)
             {
                 uint offset = *(uint*)(b + 24), length = *(uint*)(b + 28);
                 if (offset >= 40 && length >= 512 && offset <= got - 8 && length <= got - 8 - offset)
@@ -153,13 +161,20 @@ internal static unsafe partial class DiskDeviceProbe
         }
         health.SampledAt = time;
     }
+    private static bool Removed(DeviceMonitor.State s, long now)
+    {
+        int error = Marshal.GetLastPInvokeError();
+        if (error is not (6 or 21 or 31 or 55 or 433 or 1167)) return false;
+        s.Invalidate(now);
+        return true;
+    }
     private static string Counter(byte* p) => ((UInt128)(*(ulong*)(p + 8)) << 64 | *(ulong*)p).ToString(System.Globalization.CultureInfo.InvariantCulture);
     private static bool Property(nint h, uint id, byte* b, uint size, out uint got)
     { uint* query = stackalloc uint[3]; query[0] = id; query[1] = query[2] = 0; return Io(h, QueryProperty, query, 12, b, size, out got); }
     private static nint Open(string path) => CreateFileW(path, 0, 7, 0, 3, 0, 0);
     private static bool Io(nint h, uint code, void* input, uint inputSize, void* output, uint outputSize, out uint got) => DeviceIoControl(h, code, input, inputSize, output, outputSize, out got, 0);
-    [LibraryImport("kernel32.dll", StringMarshalling = StringMarshalling.Utf16)] private static partial nint CreateFileW(string path, uint access, uint share, nint security, uint creation, uint flags, nint template);
-    [LibraryImport("kernel32.dll")][return: MarshalAs(UnmanagedType.Bool)] private static partial bool DeviceIoControl(nint h, uint code, void* input, uint inputSize, void* output, uint outputSize, out uint got, nint overlapped);
+    [LibraryImport("kernel32.dll", StringMarshalling = StringMarshalling.Utf16, SetLastError = true)] private static partial nint CreateFileW(string path, uint access, uint share, nint security, uint creation, uint flags, nint template);
+    [LibraryImport("kernel32.dll", SetLastError = true)][return: MarshalAs(UnmanagedType.Bool)] private static partial bool DeviceIoControl(nint h, uint code, void* input, uint inputSize, void* output, uint outputSize, out uint got, nint overlapped);
     [LibraryImport("cfgmgr32.dll")] private static partial uint CM_Get_Device_Interface_List_SizeW(out uint count, Guid* guid, char* device, uint flags);
     [LibraryImport("cfgmgr32.dll")] private static partial uint CM_Get_Device_Interface_ListW(Guid* guid, char* device, char* list, uint count, uint flags);
     [LibraryImport("kernel32.dll")] private static partial nint FindFirstVolumeW(char* name, uint count);

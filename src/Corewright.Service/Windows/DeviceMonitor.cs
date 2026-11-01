@@ -50,6 +50,8 @@ internal sealed unsafe class DeviceMonitor : IDisposable
     {
         public DeviceDto Info = info;
         public State? Published;
+        public bool IdentityInvalidated;
+        public int ResetVersion;
         public string Path = "";
         public ulong Luid;
         public uint Adapter;
@@ -60,7 +62,23 @@ internal sealed unsafe class DeviceMonitor : IDisposable
         private long[]? _time;
         private double?[]? _primary, _secondary;
         private int _next, _count;
-        public void Clear() { Baseline = false; _count = _next = 0; Info.Values.SampledAt = null; }
+        public void Clear()
+        {
+            Baseline = false; _count = _next = 0; ResetVersion++;
+            var v = Info.Values;
+            v.Read = v.Write = v.Active = v.Load = null;
+            v.DedicatedUsed = v.SharedUsed = null; v.SampledAt = null;
+        }
+        public void Invalidate(long now)
+        {
+            Close(); Clear(); IdentityInvalidated = true;
+            NextOpenAttemptMs = now + 60_000;
+            var h = Info.Health;
+            h.Temperature = h.FanRpm = h.PowerPercent = h.EngineClockMhz = null;
+            h.WearPercent = h.SparePercent = h.CriticalWarning = null;
+            h.MediaErrors = h.PowerOnHours = h.UnsafeShutdowns = h.DataUnitsRead = h.DataUnitsWritten = null;
+            h.SampledAt = null;
+        }
         public void Record(long now)
         {
             _time ??= new long[Monitor.HistoryCapacity];
@@ -129,7 +147,9 @@ internal sealed unsafe class DeviceMonitor : IDisposable
         if (found is null) return old; // A failed enumeration never means every device was removed.
         for (int i = 0; i < found.Count; i++)
         {
-            var previous = old.Find(s => s.Info.Id == found[i].Info.Id && s.Info.Name == found[i].Info.Name);
+            // A physical index and model may be reused immediately by a different device.
+            var previous = old.Find(s => !s.IdentityInvalidated && s.Info.Id == found[i].Info.Id
+                && s.Info.Name == found[i].Info.Name && string.Equals(s.Path, found[i].Path, StringComparison.OrdinalIgnoreCase));
             if (previous is null) continue;
             previous.Info = found[i].Info with { Values = previous.Info.Values, Health = previous.Info.Health };
             found[i] = previous;
@@ -242,6 +262,7 @@ internal sealed unsafe class DeviceMonitor : IDisposable
         foreach (var s in source)
         {
             if (s.Published is not { } p) continue;
+            if (p.ResetVersion != s.ResetVersion) { p.Clear(); p.ResetVersion = s.ResetVersion; }
             var a = s.Info.Values; var b = p.Info.Values;
             b.Read = a.Read; b.Write = a.Write; b.Active = a.Active; b.Load = a.Load;
             b.DedicatedUsed = a.DedicatedUsed; b.SharedUsed = a.SharedUsed; b.SampledAt = a.SampledAt;
