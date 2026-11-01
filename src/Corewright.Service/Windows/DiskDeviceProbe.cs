@@ -6,7 +6,7 @@ namespace Corewright.Service.Windows;
 internal static unsafe partial class DiskDeviceProbe
 {
     private const uint QueryProperty = 0x2D1400;
-    public static List<DeviceMonitor.State>? Inventory()
+    public static List<DeviceMonitor.State>? Inventory(Func<bool> clientActive)
     {
         var guid = new Guid("53f56307-b6bf-11d0-94f2-00a0c91efb8b"); // GUID_DEVINTERFACE_DISK
         byte* buf = stackalloc byte[4096];
@@ -20,11 +20,13 @@ internal static unsafe partial class DiskDeviceProbe
                 var result = new List<DeviceMonitor.State>();
                 for (int off = 0; off < names.Length && p[off] != 0;)
                 {
+                    if (!clientActive()) return null;
                     string path = new(p + off); off += path.Length + 1;
                     nint h = Open(path);
                     if (h == -1) continue;
                     try
                     {
+                        if (!clientActive()) return null;
                         if (!Io(h, 0x2D1080, null, 0, buf, 12, out uint got) || got < 12) continue;
                         int index = *(int*)(buf + 4);
                         string model = $"Physical disk {index}", bus = "Unknown";
@@ -40,7 +42,7 @@ internal static unsafe partial class DiskDeviceProbe
                     }
                     finally { Native.CloseHandle(h); }
                 }
-                ReadVolumes(result);
+                ReadVolumes(result, clientActive);
                 result.Sort(static (a, b) => Nullable.Compare(a.Info.Index, b.Info.Index));
                 return result;
             }
@@ -53,7 +55,7 @@ internal static unsafe partial class DiskDeviceProbe
         int n = 0; while (offset + n < length && buf[offset + n] != 0) n++;
         return Encoding.ASCII.GetString(new ReadOnlySpan<byte>(buf + offset, n)).Trim();
     }
-    private static void ReadVolumes(List<DeviceMonitor.State> disks)
+    private static void ReadVolumes(List<DeviceMonitor.State> disks, Func<bool> clientActive)
     {
         char* name = stackalloc char[1024];
         byte* extents = stackalloc byte[4096];
@@ -65,11 +67,13 @@ internal static unsafe partial class DiskDeviceProbe
         {
             do
             {
+                if (!clientActive()) return;
                 string volume = new(name);
                 nint h = Open(volume.TrimEnd('\\'));
                 if (h == -1) continue;
                 try
                 {
+                    if (!clientActive()) return;
                     if (!Io(h, 0x560000, null, 0, extents, 4096, out uint got) || got < 8) continue;
                     uint count = *(uint*)extents;
                     if (count > (got - 8) / 24) continue;
@@ -92,7 +96,7 @@ internal static unsafe partial class DiskDeviceProbe
         foreach (var s in disks)
             s.Info = s.Info with { Volumes = volumes.TryGetValue(s.Info.Index!.Value, out var list) ? [.. list.Distinct()] : null };
     }
-    public static void Sample(DeviceMonitor.State s, long now, long time)
+    public static void Sample(DeviceMonitor.State s, long now, long time, Func<bool> clientActive)
     {
         if (s.Disk == -1 && now >= s.NextOpenAttemptMs)
         {
@@ -103,6 +107,7 @@ internal static unsafe partial class DiskDeviceProbe
         var v = s.Info.Values;
         v.Read = v.Write = v.Active = null; v.SampledAt = time;
         if (s.Disk == -1) return;
+        if (!clientActive()) return;
         byte* b = stackalloc byte[4096];
         if (Io(s.Disk, 0x70020, null, 0, b, 88, out uint got) && got >= 64)
         {
@@ -116,13 +121,15 @@ internal static unsafe partial class DiskDeviceProbe
             s.LastRead = read; s.LastWrite = write; s.LastIdle = idle; s.LastQuery = query; s.Baseline = true;
         }
         else s.Baseline = false;
-        if (now < s.HealthDue) return;
+        if (now < s.HealthDue || !clientActive()) return;
         s.HealthDue = now + 60_000;
         var health = s.Info.Health;
         health.Temperature = null;
         health.WearPercent = health.SparePercent = health.CriticalWarning = null;
         health.MediaErrors = health.PowerOnHours = health.UnsafeShutdowns = health.DataUnitsRead = health.DataUnitsWritten = null;
-        if (Property(s.Disk, 52, b, 4096, out got) && got >= 40 && *(ushort*)(b + 12) > 0 && *(short*)(b + 26) != short.MinValue)
+        bool temperature = Property(s.Disk, 52, b, 4096, out got);
+        if (!clientActive()) { s.HealthDue = 0; return; }
+        if (temperature && got >= 40 && *(ushort*)(b + 12) > 0 && *(short*)(b + 26) != short.MinValue)
             health.Temperature = *(short*)(b + 26);
         if (s.Info.Bus == "NVMe")
         {

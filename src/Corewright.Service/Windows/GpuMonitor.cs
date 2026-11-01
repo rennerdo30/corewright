@@ -12,6 +12,31 @@ public sealed class GpuAdapterDto(string id)
     public bool MemoryAvailable { get; internal set; }
 }
 
+/// <summary>Monitor.Sync-owned cache. No PDH or driver calls while copying or reading it.</summary>
+internal sealed class GpuReadings
+{
+    public double Utilization { get; private set; }
+    public long DedicatedUsed { get; private set; }
+    public GpuAdapterDto[] Adapters { get; private set; } = [];
+    private readonly Dictionary<int, double> _byPid = [];
+    public IReadOnlyDictionary<int, double> ByProcess => _byPid;
+    public void CopyFrom(GpuMonitor? source)
+    {
+        Utilization = source?.Utilization ?? 0; DedicatedUsed = source?.DedicatedUsed ?? 0;
+        _byPid.Clear();
+        if (source is null) { Adapters = []; return; }
+        foreach (var entry in source.ProcessReadings) _byPid.Add(entry.Key, entry.Value);
+        if (Adapters.Length != source.Adapters.Length)
+            Adapters = [.. source.Adapters.Select(a => new GpuAdapterDto(a.Id))];
+        for (int i = 0; i < Adapters.Length; i++)
+        {
+            var a = source.Adapters[i]; var b = Adapters[i];
+            b.Utilization = a.Utilization; b.DedicatedUsed = a.DedicatedUsed; b.SharedUsed = a.SharedUsed;
+            b.LoadAvailable = a.LoadAvailable; b.MemoryAvailable = a.MemoryAvailable;
+        }
+    }
+}
+
 /// <summary>Task Manager's busiest engine per adapter, summed across processes. Buffers and numeric keys
 /// are reused. Full LUIDs prevent collisions. Owned by Monitor's existing client-active lifecycle.</summary>
 internal sealed unsafe partial class GpuMonitor : IDisposable
@@ -26,6 +51,7 @@ internal sealed unsafe partial class GpuMonitor : IDisposable
     public long DedicatedUsed { get; private set; }
     public IReadOnlyDictionary<int, double> ByProcess => _byPid;
     public bool Available { get; private set; }
+    internal Dictionary<int, double> ProcessReadings => _byPid; // Concrete enumeration avoids boxing each pass.
     public GpuMonitor()
     {
         if (PdhOpenQueryW(null, 0, out _query) != 0) return;

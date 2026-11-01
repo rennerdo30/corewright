@@ -42,13 +42,14 @@ public sealed record DeviceDto(string Id, string Kind, string Name, int? Index =
 }
 public sealed record DevicesDto(long InventoryAt, bool Sampling, DeviceDto[] Devices);
 
-/// <summary>Owned by Monitor.Sync. No timers, idle I/O or idle per-tick allocations.
-/// Inventory is refreshed at startup, then only on API demand, at most every three minutes.</summary>
+/// <summary>Cached readings and network rows are owned by Monitor.Sync. Disk/GPU state and native
+/// handles belong exclusively to DeviceProbeWorker; publication copies values without doing I/O.</summary>
 internal sealed unsafe class DeviceMonitor : IDisposable
 {
     internal sealed class State(DeviceDto info)
     {
         public DeviceDto Info = info;
+        public State? Published;
         public string Path = "";
         public ulong Luid;
         public uint Adapter;
@@ -98,20 +99,30 @@ internal sealed unsafe class DeviceMonitor : IDisposable
             Adapter = 0;
         }
     }
+    // Only the worker accesses these lists and their handles.
     private List<State> _disks = [], _gpus = [];
+    // Only Monitor.Sync accesses the published lists and their histories.
+    private List<State> _diskCache = [], _gpuCache = [];
     private readonly Dictionary<ulong, State> _network = [];
     private long _inventoryDue, _inventoryAt, _lastActive;
     private bool _sampling;
-    public DeviceMonitor() => Refresh();
-    public void Refresh()
+    private int _activation, _probeActivation;
+    private DeviceProbeWorker? _worker;
+    public GpuReadings Gpu { get; } = new();
+    public void Start(Lock sync, ILogger log) => _worker = new(this, sync, log);
+    public void Refresh() => _worker?.Request(true);
+    internal void RefreshProbes(Func<bool> clientActive)
     {
         long now = Environment.TickCount64;
         if (now < _inventoryDue) return;
-        _disks = Reconcile(_disks, DiskDeviceProbe.Inventory());
-        _gpus = Reconcile(_gpus, GpuDeviceProbe.Inventory());
+        var disks = DiskDeviceProbe.Inventory(clientActive);
+        if (!clientActive()) return;
+        var gpus = GpuDeviceProbe.Inventory(clientActive);
+        if (!clientActive()) return;
+        _disks = Reconcile(_disks, disks);
+        _gpus = Reconcile(_gpus, gpus);
         _inventoryAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         _inventoryDue = now + 180_000;
-        NetworkInventoryDue = true;
     }
     private static List<State> Reconcile(List<State> old, List<State>? found)
     {
@@ -162,15 +173,25 @@ internal sealed unsafe class DeviceMonitor : IDisposable
     public void BeginSample(bool active)
     {
         if (active && !_sampling)
-            foreach (var s in _disks.Concat(_gpus).Concat(_network.Values)) s.Clear(); // only on activation
+        {
+            Interlocked.Increment(ref _activation);
+            foreach (var s in _diskCache.Concat(_gpuCache).Concat(_network.Values)) s.Clear(); // only on activation
+        }
         _sampling = active;
         if (active)
             foreach (var s in _network.Values)
             { s.Info.Values.Read = s.Info.Values.Write = null; s.Info.Values.SampledAt = null; s.Info.Connected = false; }
     }
-    public void Sample(GpuMonitor? gpu, long now)
+    public void Sample(long now)
     {
-        if (!_sampling)
+        _worker?.Request(_sampling);
+        if (!_sampling) return;
+        long time = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        foreach (var s in _network.Values) { if (s.Info.Values.SampledAt is null) s.Baseline = false; s.Record(time); }
+    }
+    internal void SampleProbes(GpuMonitor? gpu, bool active, long now, Func<bool> clientActive)
+    {
+        if (!active)
         {
             if (_lastActive != 0 && now - _lastActive > 60_000)
             {
@@ -180,17 +201,64 @@ internal sealed unsafe class DeviceMonitor : IDisposable
             }
             return;
         }
+        int activation = Volatile.Read(ref _activation);
+        if (_probeActivation != activation)
+        {
+            foreach (var s in _disks) s.Clear();
+            foreach (var s in _gpus) s.Clear();
+        }
+        _probeActivation = activation;
         _lastActive = now;
         long time = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-        foreach (var s in _disks) { DiskDeviceProbe.Sample(s, now, time); s.Record(time); }
-        foreach (var s in _gpus) { GpuDeviceProbe.Sample(s, gpu, time); s.Record(time); }
-        foreach (var s in _network.Values) { if (s.Info.Values.SampledAt is null) s.Baseline = false; s.Record(time); }
+        foreach (var s in _disks) { if (!clientActive()) return; DiskDeviceProbe.Sample(s, now, time, clientActive); }
+        foreach (var s in _gpus) { if (!clientActive()) return; GpuDeviceProbe.Sample(s, gpu, time); }
+    }
+    private long _publishedInventoryAt;
+    internal void Publish(GpuMonitor? gpu, bool active)
+    {
+        if (_publishedInventoryAt != _inventoryAt)
+        {
+            _diskCache = Cache(_disks);
+            _gpuCache = Cache(_gpus);
+            _publishedInventoryAt = _inventoryAt;
+            NetworkInventoryDue = true;
+        }
+        Copy(_disks, active); Copy(_gpus, active);
+        Gpu.CopyFrom(gpu);
+    }
+    private static List<State> Cache(List<State> source)
+    {
+        var result = new List<State>(source.Count);
+        foreach (var s in source)
+        {
+            s.Published ??= new(s.Info with { Values = new(), Health = new() });
+            s.Published.Info = s.Info with { Values = s.Published.Info.Values, Health = s.Published.Info.Health };
+            result.Add(s.Published);
+        }
+        return result;
+    }
+    private static void Copy(List<State> source, bool active)
+    {
+        foreach (var s in source)
+        {
+            if (s.Published is not { } p) continue;
+            var a = s.Info.Values; var b = p.Info.Values;
+            b.Read = a.Read; b.Write = a.Write; b.Active = a.Active; b.Load = a.Load;
+            b.DedicatedUsed = a.DedicatedUsed; b.SharedUsed = a.SharedUsed; b.SampledAt = a.SampledAt;
+            var h = s.Info.Health; var j = p.Info.Health;
+            j.Temperature = h.Temperature; j.FanRpm = h.FanRpm; j.PowerPercent = h.PowerPercent; j.EngineClockMhz = h.EngineClockMhz;
+            j.WearPercent = h.WearPercent; j.SparePercent = h.SparePercent; j.CriticalWarning = h.CriticalWarning;
+            j.MediaErrors = h.MediaErrors; j.PowerOnHours = h.PowerOnHours; j.UnsafeShutdowns = h.UnsafeShutdowns;
+            j.DataUnitsRead = h.DataUnitsRead; j.DataUnitsWritten = h.DataUnitsWritten; j.SampledAt = h.SampledAt;
+            if (active && a.SampledAt is { } time) p.Record(time);
+        }
     }
     public DevicesDto Snapshot(string? history, bool includeHidden)
     {
         var ids = (history ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        return new(_inventoryAt, _sampling, [.. _disks.Concat(_gpus).Concat(_network.Values)
+        return new(_publishedInventoryAt, _sampling, [.. _diskCache.Concat(_gpuCache).Concat(_network.Values)
             .Where(s => includeHidden || !s.Info.Hidden).Select(s => s.Snapshot(ids.Contains("*") || ids.Contains(s.Info.Id)))]);
     }
-    public void Dispose() { foreach (var s in _disks) s.Close(); foreach (var s in _gpus) s.Close(); }
+    internal void CloseProbes() { foreach (var s in _disks) s.Close(); foreach (var s in _gpus) s.Close(); }
+    public void Dispose() => _worker?.Dispose();
 }

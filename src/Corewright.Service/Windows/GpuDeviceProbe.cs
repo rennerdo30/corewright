@@ -3,7 +3,7 @@ namespace Corewright.Service.Windows;
 
 internal static unsafe partial class GpuDeviceProbe
 {
-    public static List<DeviceMonitor.State>? Inventory()
+    public static List<DeviceMonitor.State>? Inventory(Func<bool> clientActive)
     {
         var iid = new Guid("770aae78-f26f-4dba-a829-253c83d1b387"); // IDXGIFactory1
         if (CreateDXGIFactory1(&iid, out nint factory) < 0) return null;
@@ -14,6 +14,7 @@ internal static unsafe partial class GpuDeviceProbe
             var enumerate = (delegate* unmanaged[Stdcall]<nint, uint, nint*, int>)(*(nint**)factory)[12];
             for (uint i = 0; i < 64; i++)
             {
+                if (!clientActive()) return null;
                 nint adapter;
                 if (enumerate(factory, i, &adapter) < 0) break;
                 try
