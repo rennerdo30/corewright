@@ -1,4 +1,4 @@
-import type { EngineEvent, Explain, ImportResponse, ProcessRow, RuleSet, RulesResult, Status, SystemInfo, Topology } from './types'
+import type { AppSettings, BackgroundRow, EngineEvent, Placement, Explain, ImportResponse, ProcessRow, RuleSet, RulesResult, Status, SystemInfo, Topology } from './types'
 
 declare global {
   interface Window {
@@ -45,6 +45,10 @@ export const api = {
   system: () => request<SystemInfo>('GET', '/system'),
   processes: (include?: string) => request<ProcessRow[]>('GET', `/processes${include ? `?include=${include}` : ''}`),
   topology: () => request<Topology>('GET', '/topology'),
+  settings: () => request<AppSettings>('GET', '/settings'),
+  saveSettings: (s: AppSettings) => request<{ ok: boolean }>('PUT', '/settings', s),
+  background: () => request<BackgroundRow[]>('GET', '/autopilot/background'),
+  placements: () => request<Placement[]>('GET', '/autopilot/placements'),
   explain: (pid: number) => request<Explain>('GET', `/processes/${pid}/explain`),
   rules: () => request<RuleSet>('GET', '/rules'),
   saveRules: (set: RuleSet) => request<RulesResult>('PUT', '/rules', set),

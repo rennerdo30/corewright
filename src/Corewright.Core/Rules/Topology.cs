@@ -51,6 +51,10 @@ public static class AffinityParser
             case "p-cores" or "performance":
                 mask = topo.PerformanceMask;
                 return true;
+            case "auto-background" or "auto-game":
+                if (topo.LogicalCount >= 64) { error = "dynamic placement supports up to 63 logical processors"; return false; }
+                mask = (ulong)(text.Trim().Equals("auto-game", StringComparison.OrdinalIgnoreCase) ? AffinityModes.Game : AffinityModes.Background);
+                return true;
             case "vcache-ccd" or "frequency-ccd" or "best-ccd":
             {
                 int ccd = text.Trim().ToLowerInvariant() switch
@@ -114,6 +118,7 @@ public static class AffinityParser
 
     public static string Format(ulong mask)
     {
+        if (AffinityModes.IsDynamic((long)mask)) return (long)mask == AffinityModes.Game ? "auto (game CCD)" : "auto (background)";
         if (mask == 0) return "none";
         var sb = new StringBuilder();
         int i = 0;
@@ -131,4 +136,22 @@ public static class AffinityParser
     }
 
     public static int Count(ulong mask) => BitOperations.PopCount(mask);
+}
+
+/// <summary>
+/// Dynamic affinity: the rule says "auto-background" or "auto-game" and a placer picks the real cores when the
+/// setting is applied. Encoded as masks with bit 63 set, which no real mask uses below 64 logical processors.
+/// </summary>
+public static class AffinityModes
+{
+    public const long Background = unchecked((long)0x8000_0000_0000_0001UL);
+    public const long Game = unchecked((long)0x8000_0000_0000_0002UL);
+
+    public static bool IsDynamic(long value) => value == Background || value == Game;
+}
+
+/// <summary>Resolves a dynamic affinity mode to a real mask for one process. Implemented by the host.</summary>
+public interface IAffinityPlacer
+{
+    long Resolve(Engine.ProcessInfo process, long mode, Engine.EvalContext context);
 }

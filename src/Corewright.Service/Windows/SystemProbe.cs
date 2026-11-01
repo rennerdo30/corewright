@@ -105,11 +105,27 @@ internal static unsafe class SystemProbe
         }
     }
 
-    public static int ForegroundPid()
+    public static int ForegroundPid() => ForegroundInfo().Pid;
+
+    /// <summary>Foreground process and whether its window covers its whole monitor (full screen or borderless).</summary>
+    public static (int Pid, bool Fullscreen) ForegroundInfo()
     {
         nint w = Native.GetForegroundWindow();
-        if (w == 0) return 0;
+        if (w == 0) return (0, false);
         Native.GetWindowThreadProcessId(w, out uint pid);
-        return (int)pid;
+        return ((int)pid, IsFullscreen(w));
+    }
+
+    public static bool IsFullscreen(nint window)
+    {
+        char* cls = stackalloc char[64];
+        int n = Native.GetClassNameW(window, cls, 64);
+        var name = new ReadOnlySpan<char>(cls, n);
+        if (name.SequenceEqual("Progman") || name.SequenceEqual("WorkerW") || name.SequenceEqual("Shell_TrayWnd")) return false;
+        if (!Native.GetWindowRect(window, out var r)) return false;
+        nint monitor = Native.MonitorFromWindow(window, 2 /* MONITOR_DEFAULTTONEAREST */);
+        var info = new Native.MONITORINFO { Size = (uint)sizeof(Native.MONITORINFO) };
+        if (!Native.GetMonitorInfoW(monitor, &info)) return false;
+        return r.Left <= info.Monitor.Left && r.Top <= info.Monitor.Top && r.Right >= info.Monitor.Right && r.Bottom >= info.Monitor.Bottom;
     }
 }

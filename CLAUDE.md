@@ -76,6 +76,25 @@ Network (next phase): egress throttling and DSCP marking through QoS policies in
 
 - Quick rules: the process context menu saves "always" settings into one rule per process name (`quick-<name>`, priority 60, above imports and examples).
 
+## Autopilot (owner, 2026-11-02)
+
+"The game mode itself should be part of a mode … that automatically schedules Windows processes more smartly … Just like the ProBalance of Process Lasso does, only better with our own rule system in the backend." Working name **Autopilot** (owner may rename).
+
+- Autopilot never writes to processes itself: it generates built-in rules (`autopilot-…`, priorities 4–9, below every user rule) from `settings.json`; Explain and the Activity log show them like any rule.
+- **Off by default** until the owner confirms the default (owner rule on user-visible defaults).
+- Game detection runs only on foreground or full-screen changes: games list > "never games" list > game library paths (Steam, Epic, GOG, Xbox, EA, Ubisoft, Riot, Battle.net, …) > full screen (tray-reported: exclusive D3D or a window covering its monitor) with Direct3D 9/11/12 or Vulkan loaded. A game stays active until its process exits. Facts `game.active`, `game.name`; rule field `isGame`.
+- Game placement "auto": the V-Cache CCD on single V-Cache parts, otherwise the fastest CCD by CPPC (on the owner's dual V-Cache 9950X3D2: CCD 0), all cores on single-CCD CPUs. Games are never moved to the "back" cores.
+- Balancing (ProBalance-like): non-foreground, non-service (session > 0) processes above the CPU threshold for the sustain time get lower priority until they stay calm for the release time.
+- Build tools (owner, 2026-11-02: "high load but not latency critical"): an editable list of compilers, linkers, build drivers and shader compilers runs below normal with low I/O priority and automatic placement; no efficiency mode (it would slow builds).
+- Background placement (PM-12, owner report): observes every program over hours (`background-stats.json`, 30-day retention), classifies only programs never in the foreground (≤ 1 %), not services, observed ≥ 60 min; off by default.
+- **Dynamic placement** (owner, 2026-11-02): affinity tokens `auto-background` / `auto-game` are resolved by `AffinityPlacer` with the whole picture: CCDs, physical cores and SMT threads, V-Cache, P/E cores, CPPC strength, live per-thread load, reservations of already placed processes, and the process's demand (measured cores × 1.5, at least 2 threads, whole cores). Hard limits: never the strongest cores, never the game CCD while a game runs.
+- **Sticky for cache locality** (owner: "if it's placed on a thread it should stay there more or less until it's finished"): placed once on the cheapest CCD, then only grows within that CCD (at most every 30 s); moves only when a game claims its CCD or its cores stay > 95 % busy for 60 s while another CCD is < 40 %, at most every 2 min. Current placements and reasons: `GET /api/v1/autopilot/placements`, Settings → Live placements.
+
+## Settings page and autostart
+
+- `GET`/`PUT /api/v1/settings` (validated by compiling the resulting rules; invalid values are rejected). The page saves automatically, Windows Settings style.
+- "Start Corewright when I sign in" writes `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` value `Corewright` = quoted tray path, from the dashboard window (it runs as the user); the installer writes the same value.
+
 ## Monitoring data and its cost (owner requests, 2026-11-02)
 
 - Sampler values (Task Manager "Details" memory, CPU time, I/O counters, …) come from the same `NtQuerySystemInformation` call and cost nothing extra.

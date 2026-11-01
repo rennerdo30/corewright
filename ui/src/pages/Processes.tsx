@@ -7,7 +7,7 @@ import { bytes, newId, percent } from '../format'
 import { iconUrl, isHost, levelLabel, post, useDescriptions } from '../host'
 import { usePoll } from '../hooks'
 import { quickRule, setQuick } from '../quick'
-import type { ProcessRow, Rule, RuleSet, Topology } from '../types'
+import type { ExplainRule, ProcessRow, Rule, RuleSet, Topology } from '../types'
 import { COLUMN_GROUPS, COLUMNS, type ColumnDef } from './processColumns'
 
 type View = 'apps' | 'tree' | 'list'
@@ -144,7 +144,7 @@ export function Processes({ onCreateRule }: { onCreateRule: (r: Rule) => void })
 
   const scroller = useRef<HTMLDivElement>(null)
   const headRef = useRef<HTMLDivElement>(null)
-  const virtual = useVirtualizer({ count: lines.length, getScrollElement: () => scroller.current, estimateSize: () => 28, overscan: 16 })
+  const virtual = useVirtualizer({ count: lines.length, getScrollElement: () => scroller.current, estimateSize: () => 30, overscan: 16 })
 
   const toggle = (l: Line) =>
     setToggled((s) => {
@@ -304,7 +304,7 @@ export function Processes({ onCreateRule }: { onCreateRule: (r: Rule) => void })
                 return (
                   <div
                     key={l.key}
-                    className={`prow ${selected === p.pid && !group ? 'sel' : ''} ${p.protected ? 'dim' : ''}`}
+                    className={`prow ${v.index % 2 ? 'odd' : ''} ${l.depth > 0 && view === 'apps' ? 'child' : ''} ${selected === p.pid && !group ? 'sel' : ''} ${p.protected ? 'dim' : ''}`}
                     style={{ transform: `translateY(${v.start}px)` }}
                     onClick={() => setSelected(p.pid)}
                     onDoubleClick={() => l.expandable && toggle(l)}
@@ -344,10 +344,12 @@ export function Processes({ onCreateRule }: { onCreateRule: (r: Rule) => void })
                       const display = raw === 'mixed' ? 'Mixed' : c.format ? c.format(raw) : raw === undefined ? '' : String(raw)
                       const managedSlot = c.slot ? l.items.flatMap((x) => x.applied ?? []).find((a) => a.slot === c.slot) : undefined
                       const level = c.heat && typeof raw === 'number' ? c.heat(raw, s) : 0
+                      // Defaults and zeros recede; real values and rule-set values stand out.
+                      const quiet = !managedSlot && (raw === undefined || raw === '' || raw === 0 || (typeof raw === 'number' && parseFloat(display) === 0) || (c.defaultValue !== undefined && raw === c.defaultValue))
                       return (
                         <div
                           key={c.id}
-                          className={`pc ${c.num ? 'num' : ''} ${c.heat ? 'heat' : 'secondary'} ${managedSlot ? 'set-by-rule' : ''}`}
+                          className={`pc ${c.num ? 'num' : ''} ${c.heat ? 'heat' : ''} ${quiet ? 'quiet' : ''} ${managedSlot ? 'set-by-rule' : ''}`}
                           style={heat(level)}
                           title={managedSlot ? `${display}, set by ${managedSlot.ruleName}` : display}
                         >
@@ -442,25 +444,7 @@ function ProcessPanel({ p, title, onClose, onCreateRule }: { p: ProcessRow; titl
         <div className="secondary">Nothing. The process runs with its own settings.</div>
       )}
 
-      <h3>Rule evaluation</h3>
-      {explain.data?.rules.length ? (
-        <ul className="explain">
-          {explain.data.rules.map((r) => (
-            <li key={r.ruleId} className={r.active ? 'on' : ''}>
-              <div>
-                <span className={`dot ${r.active ? 'teal' : r.matches ? 'warn' : ''}`} />
-                {r.ruleName}
-              </div>
-              {r.won.length > 0 && <div className="tiny">sets {r.won.join(', ')}</div>}
-              {r.lost.length > 0 && <div className="tiny secondary">overruled: {r.lost.join(', ')}</div>}
-              {r.matches && !r.active && <div className="tiny secondary">matches, waiting for “apply after”</div>}
-              {!r.matches && <div className="tiny secondary">does not match</div>}
-            </li>
-          ))}
-        </ul>
-      ) : (
-        <div className="secondary">No enabled rules.</div>
-      )}
+      <RuleEvaluation rules={explain.data?.rules} />
 
       {!p.protected && (
         <button className="btn primary wide" onClick={() => onCreateRule(ruleFor(p))}>
@@ -468,6 +452,69 @@ function ProcessPanel({ p, title, onClose, onCreateRule }: { p: ProcessRow; titl
         </button>
       )}
     </aside>
+  )
+}
+
+/** Rules that set something on this process first, then matching-but-overruled ones, the rest collapsed. */
+function RuleEvaluation({ rules }: { rules?: ExplainRule[] }) {
+  const [showOthers, setShowOthers] = useState(false)
+  if (!rules?.length) return <><h3>Rules</h3><div className="secondary">No enabled rules.</div></>
+  const applied = rules.filter((r) => r.active && r.won.length > 0)
+  const overruled = rules.filter((r) => r.matches && !(r.active && r.won.length > 0))
+  const others = rules.filter((r) => !r.matches)
+  return (
+    <>
+      <h3>Applied rules</h3>
+      {applied.length ? (
+        <ul className="explain">
+          {applied.map((r) => (
+            <li key={r.ruleId} className="on">
+              <div>
+                <span className="dot teal" />
+                <strong>{r.ruleName}</strong>
+              </div>
+              <div className="tiny">sets {r.won.join(', ')}</div>
+              {r.lost.length > 0 && <div className="tiny secondary">overruled by a higher rule: {r.lost.join(', ')}</div>}
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <div className="secondary">No rule changes this process.</div>
+      )}
+      {overruled.length > 0 && (
+        <>
+          <h3>Matching, but not applied</h3>
+          <ul className="explain">
+            {overruled.map((r) => (
+              <li key={r.ruleId}>
+                <div>
+                  <span className="dot warn" />
+                  {r.ruleName}
+                </div>
+                <div className="tiny secondary">
+                  {!r.active ? 'waiting for “apply after”' : `everything it sets is owned by a higher rule (${r.lost.join(', ')})`}
+                </div>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+      {others.length > 0 && (
+        <button className="link others-toggle" onClick={() => setShowOthers((v) => !v)}>
+          {showOthers ? 'Hide' : 'Show'} {others.length} other rule{others.length > 1 ? 's' : ''} that don't apply
+        </button>
+      )}
+      {showOthers && (
+        <ul className="explain others">
+          {others.map((r) => (
+            <li key={r.ruleId}>
+              <span className="dot" />
+              {r.ruleName}
+            </li>
+          ))}
+        </ul>
+      )}
+    </>
   )
 }
 

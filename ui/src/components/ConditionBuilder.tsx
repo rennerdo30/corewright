@@ -199,7 +199,7 @@ function ConditionRow(props: { node: Condition; onChange: (c: Condition) => void
 }
 
 /** "is one of": names as removable chips; type and press Enter or a comma to add. */
-function ChipInput({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+export function ChipInput({ value, onChange }: { value: string; onChange: (v: string) => void }) {
   const items = splitList(value)
   const [draft, setDraft] = useState('')
   const commit = (text = draft) => {

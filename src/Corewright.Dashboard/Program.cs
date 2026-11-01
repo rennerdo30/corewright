@@ -97,8 +97,13 @@ internal sealed partial class MainForm : Form
 
     // ---- Frame without a caption bar -----------------------------------------------------------
 
-    /// <summary>Thin strip above the page so the top edge can still be dragged to resize (the page covers the rest).</summary>
-    private int ResizeBand => WindowState == FormWindowState.Maximized ? 0 : Math.Max(4, DeviceDpi * 4 / 96);
+    /// <summary>
+    /// 1 px strip above the page (invisible) so the very top edge always resizes; where the page passes hit tests
+    /// through (its drag region), the top <see cref="ResizeGrip"/> pixels resize as well.
+    /// </summary>
+    private int ResizeBand => WindowState == FormWindowState.Maximized ? 0 : 1;
+
+    private int ResizeGrip => WindowState == FormWindowState.Maximized ? 0 : Math.Max(5, DeviceDpi * 6 / 96);
 
     private void UpdateResizeBand()
     {
@@ -125,7 +130,7 @@ internal sealed partial class MainForm : Form
         if (m.Msg == WM_NCHITTEST && m.Result == HTCLIENT && WindowState != FormWindowState.Maximized)
         {
             var pt = PointToClient(new Point((short)(m.LParam & 0xFFFF), (short)((m.LParam >> 16) & 0xFFFF)));
-            if (pt.Y < ResizeBand) m.Result = HTTOP;
+            if (pt.Y < ResizeGrip) m.Result = HTTOP;
         }
     }
 
@@ -291,6 +296,13 @@ internal sealed partial class MainForm : Form
                 case "close":
                     Close();
                     break;
+                case "autostart-get":
+                    PostAutostart();
+                    break;
+                case "autostart-set":
+                    SetAutostart(root.TryGetProperty("enabled", out var en) && en.GetBoolean());
+                    PostAutostart();
+                    break;
                 case "reveal":
                     if (root.TryGetProperty("path", out var pathEl) && pathEl.GetString() is { } path && File.Exists(path))
                         Process.Start(new ProcessStartInfo("explorer.exe", $"/select,\"{path}\"") { UseShellExecute = false })?.Dispose();
@@ -386,6 +398,41 @@ internal sealed partial class MainForm : Form
     [LibraryImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static partial bool DestroyIcon(nint icon);
+
+    // ---- Start with Windows: the per-user Run value the installer also writes (HKCU ...\Run, "Corewright") ----
+
+    private const string RunKey = @"Software\Microsoft\Windows\CurrentVersion\Run";
+    private const string RunValue = "Corewright";
+
+    /// <summary>The tray next to this dashboard (installed or published). Development builds do not register autostart.</summary>
+    private static string? TrayPath()
+    {
+        string path = Path.Combine(AppContext.BaseDirectory, "Corewright.Tray.exe");
+        return File.Exists(path) ? path : null;
+    }
+
+    private void PostAutostart()
+    {
+        string? tray = TrayPath();
+        using var key = Registry.CurrentUser.OpenSubKey(RunKey);
+        bool enabled = key?.GetValue(RunValue) is string v && v.Length > 0;
+        _web.CoreWebView2?.PostWebMessageAsJson(JsonSerializer.Serialize(new Dictionary<string, object?>
+        {
+            ["type"] = "autostart",
+            ["enabled"] = enabled,
+            ["available"] = tray is not null,
+            ["note"] = tray is null ? "Only available in an installed or published Corewright (start.bat or the installer)." : null,
+        }));
+    }
+
+    private static void SetAutostart(bool enabled)
+    {
+        string? tray = TrayPath();
+        if (tray is null) return;
+        using var key = Registry.CurrentUser.CreateSubKey(RunKey);
+        if (enabled) key.SetValue(RunValue, $"\"{tray}\"");
+        else key.DeleteValue(RunValue, throwOnMissingValue: false);
+    }
 
     private async Task OnResizedAsync()
     {

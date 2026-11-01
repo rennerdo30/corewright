@@ -45,6 +45,9 @@ public sealed class RuleEngine(IActuator actuator, IEngineEventSink sink)
     private long _tick;
 
     public bool Paused { get; private set; }
+
+    /// <summary>Resolves "auto-…" affinity modes; without one they fall back to leaving affinity unchanged.</summary>
+    public IAffinityPlacer? Placer { get; set; }
     public int Version => _version;
     public CompiledRuleSet Rules => _set;
 
@@ -54,8 +57,11 @@ public sealed class RuleEngine(IActuator actuator, IEngineEventSink sink)
         _version++;
     }
 
+    private EvalContext? _ctx;
+
     public void Evaluate(IReadOnlyList<ProcessInfo> processes, EvalContext ctx)
     {
+        _ctx = ctx;
         _tick++;
         if (!Paused)
         {
@@ -246,6 +252,13 @@ public sealed class RuleEngine(IActuator actuator, IEngineEventSink sink)
     private void Reconcile(ProcessInfo p, ProcState st, int s, bool has, long value, CompiledRule? rule)
     {
         var slot = (Slot)s;
+        if (has && slot == Slot.Affinity && AffinityModes.IsDynamic(value))
+        {
+            // The placer keeps a process where it is unless there is a strong reason to move it (cache locality).
+            if (Placer is null) has = false;
+            else value = Placer.Resolve(p, value, _ctx ?? new EvalContext());
+            if (value == 0) has = false;
+        }
         if (!has)
         {
             if (st.IsApplied[s]) Revert(st, s);

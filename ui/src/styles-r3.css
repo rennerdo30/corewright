@@ -80,3 +80,45 @@ table.log.compact { table-layout: fixed; }
 table.log.compact th { padding: 6px 10px; }
 table.log.compact td { padding: 4px 10px; height: 28px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 13px; vertical-align: middle; }
 .dense .card.flush { border-radius: var(--radius-control); }
+
+/* Readability (PM-27): defaults and zeros recede, real values in primary text, rule-set values in accent. */
+.prow { height: 30px; }
+.prow.odd { background: color-mix(in srgb, var(--text) 2.5%, transparent); }
+.prow.child { background: color-mix(in srgb, var(--accent) 4%, transparent); }
+.prow.child.odd { background: color-mix(in srgb, var(--accent) 6%, transparent); }
+.prow:hover { background: var(--subtle-hover); }
+.prow.sel { background: color-mix(in srgb, var(--accent) 16%, transparent); }
+.pc { color: var(--text); font-size: 13px; }
+.pc.quiet { color: var(--text-3); }
+.pc.heat.quiet { color: var(--text-3); }
+.pc.set-by-rule { color: var(--accent); font-weight: 600; }
+.prow.dim .pc, .prow.dim .pname { color: var(--text-3); }
+.pname { font-weight: 500; }
+.prow.child .pname { font-weight: 400; color: var(--secondary-text); }
+.phead { background: var(--layer-alt); }
+.ph-label { color: var(--secondary-text); font-weight: 600; font-size: 12px; }
+
+/* Rule evaluation (PM-28) */
+.others-toggle { margin-top: 10px; display: block; }
+.explain.others li { padding: 4px 10px; color: var(--secondary-text); font-size: 12.5px; }
+.panel h3 { margin-top: 16px; }
+
+/* Settings page (Windows Settings style) */
+.settings .section { max-width: 1000px; }
+.settings h3 { margin: 18px 0 8px; }
+.card-group { display: flex; flex-direction: column; gap: 2px; margin-top: 2px; }
+.card-group.disabled { opacity: 0.5; pointer-events: none; }
+.card-group .setting-row { margin: 0; min-height: 60px; border-radius: 0; }
+.card-group > :first-child { border-radius: var(--radius-control) var(--radius-control) 0 0; }
+.card-group > :last-child { border-radius: 0 0 var(--radius-control) var(--radius-control); }
+.card-group .setting-card { margin: 10px 0 0; border-radius: var(--radius-control) var(--radius-control) 0 0; }
+.list-row { align-items: flex-start; }
+.setting-list { width: 50%; min-width: 300px; }
+.nav-item.settings-item { margin-top: auto; }
+.nav-footer { margin-top: 0; }
+
+.bg-table .setting-text { width: 100%; }
+.bg-table table { margin-top: 10px; font-size: 13px; }
+.bg-table th { text-align: left; font-size: 12px; color: var(--secondary-text); font-weight: 600; padding: 4px; }
+.bg-table th.num { text-align: right; }
+.accent-text { color: var(--accent); font-weight: 600; }

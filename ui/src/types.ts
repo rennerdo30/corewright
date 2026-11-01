@@ -8,6 +8,62 @@ export interface Status {
   rulesVersion: number
   activeRules: number
   foregroundPid: number
+  autopilot: boolean
+  game?: { pid: number; name: string; reason?: string } | null
+  dataDirectory: string
+}
+
+export interface AppSettings {
+  version: number
+  autopilot: {
+    enabled: boolean
+    gameMode: {
+      enabled: boolean
+      gamePriority: string
+      gameGpuPriority: string
+      placement: string
+      moveBackground: boolean
+      backgroundPriority: string
+      games: string[]
+      notGames: string[]
+      keepResponsive: string[]
+    }
+    balance: {
+      enabled: boolean
+      cpuPercent: number
+      sustainSeconds: number
+      releaseSeconds: number
+      priority: string
+      exclusions: string[]
+    }
+    buildTools: {
+      enabled: boolean
+      priority: string
+      ioPriority: string
+      programs: string[]
+    }
+    background: {
+      enabled: boolean
+      minObservedMinutes: number
+      maxForegroundPercent: number
+      singleCoreLoad: number
+      keepBestCoresFree: number
+      priority: string
+      exclusions: string[]
+    }
+  }
+}
+
+export interface BackgroundRow {
+  name: string
+  observedMinutes: number
+  foregroundPercent: number
+  averageCores: number
+  peakCores: number
+  service: boolean
+  verdict: string
+  affinity?: string
+  reason: string
 }
 
 export interface SystemInfo {
@@ -208,4 +264,14 @@ export interface ImportResponse {
   notes: ImportNote[]
   replaced: number
   errors: RuleError[]
+}
+
+export interface Placement {
+  pid: number
+  name: string
+  cores: string
+  ccd: number
+  demandThreads: number
+  placedSecondsAgo: number
+  why: string
 }

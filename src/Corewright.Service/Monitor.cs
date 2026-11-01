@@ -1,3 +1,4 @@
+using Corewright.Core.Autopilot;
 using Corewright.Core.Engine;
 using Corewright.Core.Rules;
 using Corewright.Service.Windows;
@@ -47,7 +48,7 @@ internal sealed class Monitor : BackgroundService
     private readonly float[] _hIo = new float[HistoryCapacity];
     private int _hCount, _hNext;
 
-    public Monitor(ServiceOptions options, RuleStore store, EventBuffer events, ILogger<Monitor> log)
+    public Monitor(ServiceOptions options, RuleStore store, SettingsStore settingsStore, EventBuffer events, ILogger<Monitor> log)
     {
         _options = options;
         _store = store;
@@ -61,14 +62,43 @@ internal sealed class Monitor : BackgroundService
         try { CpuLayout = CpuTopologyProbe.Read(); }
         catch (Exception e) { log.LogWarning("CPU topology probe failed: {Message}", e.Message); }
         Topology = CpuLayout is { } layout ? WithLayout(basic, layout) : basic;
+        _settingsStore = settingsStore;
+        Settings = settingsStore.Load();
+        _placer = new AffinityPlacer(() => Topology, () => _cores.Usage,
+            () => AutopilotRules.GameCcd(Settings.Autopilot.GameMode.Placement, Topology),
+            () => Settings.Autopilot.Background.KeepBestCoresFree);
+        Engine.Placer = _placer;
         RuleSet = store.Load();
         var errors = new List<RuleError>();
-        Engine.SetRules(RuleCompiler.Compile(RuleSet, Topology, errors));
-        foreach (var e in errors.Where(e => RuleSet.Rules.Any(r => r.Id == e.RuleId && r.Enabled)))
+        Engine.SetRules(CompileAll(RuleSet, Settings, errors));
+        foreach (var e in errors)
             log.LogWarning("rule {Rule}: {Message}", e.RuleName, e.Message);
     }
 
     public Lock Sync { get; } = new();
+
+    private readonly SettingsStore _settingsStore;
+    private readonly GameDetector _game = new();
+    private BackgroundClassifier? _background;
+    private readonly AffinityPlacer _placer;
+    public AffinityPlacer Placer => _placer;
+
+    /// <summary>Long-term program statistics; created on the first tick (needs the data folder).</summary>
+    public BackgroundClassifier? Background => _background;
+    private bool _reportedFullscreen;
+
+    public AppSettings Settings { get; private set; }
+    public GameDetector Game => _game;
+
+    /// <summary>User rules plus the built-in Autopilot rules (lower priority, so user rules win). Errors only for enabled rules.</summary>
+    private CompiledRuleSet CompileAll(RuleSet user, AppSettings settings, List<RuleError> errors)
+    {
+        var all = new RuleSet { Version = user.Version, Rules = [.. user.Rules, .. AutopilotRules.Build(settings.Autopilot, Topology, _background?.Verdicts)] };
+        var raw = new List<RuleError>();
+        var compiled = RuleCompiler.Compile(all, Topology, raw);
+        errors.AddRange(raw.Where(e => all.Rules.Any(r => r.Id == e.RuleId && r.Enabled)));
+        return compiled;
+    }
 
     /// <summary>Adds CCDs, V-Cache and the CPPC ranking to the topology used by affinity tokens (ccd0, best-cores:4, ...).</summary>
     private static SystemTopology WithLayout(SystemTopology basic, TopologyDto layout)
@@ -104,6 +134,7 @@ internal sealed class Monitor : BackgroundService
     public EvalContext Context => _ctx;
     public IReadOnlyDictionary<string, string> Facts => _facts;
     public bool IsWindowsService { get; init; }
+    public string DataDirectory { get; init; } = "";
     public int IntervalMs => IsClientActive ? _options.ActiveIntervalMs : _options.IdleIntervalMs;
 
     private bool IsClientActive => Environment.TickCount64 - Interlocked.Read(ref _lastClientMs) < 5000;
@@ -124,12 +155,29 @@ internal sealed class Monitor : BackgroundService
     public List<RuleError> ReplaceRules(RuleSet set)
     {
         var errors = new List<RuleError>();
-        var compiled = RuleCompiler.Compile(set, Topology, errors);
+        RuleCompiler.Compile(set, Topology, errors);
+        if (errors.Count > 0) return errors;
+        var compiled = CompileAll(set, Settings, errors);
         if (errors.Count > 0) return errors;
         lock (Sync)
         {
             _store.Save(set);
             RuleSet = set;
+            Engine.SetRules(compiled);
+        }
+        Wake();
+        return errors;
+    }
+
+    public List<RuleError> ReplaceSettings(AppSettings settings)
+    {
+        var errors = new List<RuleError>();
+        var compiled = CompileAll(RuleSet, settings, errors);
+        if (errors.Count > 0) return errors;
+        lock (Sync)
+        {
+            _settingsStore.Save(settings);
+            Settings = settings;
             Engine.SetRules(compiled);
         }
         Wake();
@@ -146,11 +194,12 @@ internal sealed class Monitor : BackgroundService
         Wake();
     }
 
-    public void ReportForeground(int pid)
+    public void ReportForeground(int pid, bool fullscreen)
     {
         lock (Sync)
         {
             _reportedForegroundPid = pid;
+            _reportedFullscreen = fullscreen;
             _reportedForegroundMs = Environment.TickCount64;
         }
         Wake();
@@ -198,7 +247,11 @@ internal sealed class Monitor : BackgroundService
         }
         finally
         {
-            lock (Sync) Engine.RevertAll();
+            lock (Sync)
+            {
+                Engine.RevertAll();
+                _background?.Save();
+            }
             _actuator.Dispose();
             _gpu?.Dispose();
             _sampler.Dispose();
@@ -215,18 +268,42 @@ internal sealed class Monitor : BackgroundService
 
             // A service in session 0 cannot see the desktop; the tray reports the foreground process.
             // In console mode the service can read it itself unless the tray reported recently.
+            bool fullscreen;
             if (!IsWindowsService && _ctx.NowMs - _reportedForegroundMs > 10_000)
-                _ctx.ForegroundPid = SystemProbe.ForegroundPid();
+                (_ctx.ForegroundPid, fullscreen) = SystemProbe.ForegroundInfo();
             else
-                _ctx.ForegroundPid = _reportedForegroundPid;
+                (_ctx.ForegroundPid, fullscreen) = (_reportedForegroundPid, _reportedFullscreen);
+
+            // Autopilot game mode: only re-classifies when the foreground or its full-screen state changes.
+            var ap = Settings.Autopilot;
+            if (_game.Update(_sampler, _ctx.ForegroundPid, fullscreen, ap.GameMode, ap.Enabled && ap.GameMode.Enabled, Events))
+            {
+                _ctx.GamePid = _game.Game?.Pid ?? 0;
+                _ctx.GameName = _game.GameName;
+                _facts["game.active"] = _game.Game is null ? "false" : "true";
+                if (_game.GameName is { } gn) _facts["game.name"] = gn; else _facts.Remove("game.name");
+            }
+
+            // PM-12: long-term observation; a changed classification rebuilds the rule set (at most once a minute).
+            _background ??= new BackgroundClassifier(DataDirectory);
+            if (_background.Observe(_sampler.Processes, _ctx.ForegroundPid, Topology.LogicalCount, _ctx.NowMs,
+                    Settings.Autopilot.Background, Settings.Autopilot.GameMode, Topology)
+                && Settings.Autopilot.Enabled && Settings.Autopilot.Background.Enabled)
+            {
+                var errors = new List<RuleError>();
+                var compiled = CompileAll(RuleSet, Settings, errors);
+                if (errors.Count == 0) Engine.SetRules(compiled);
+                else _log.LogWarning("background placement rules rejected: {Message}", errors[0].Message);
+            }
 
             Engine.Evaluate(_sampler.Processes, _ctx);
 
             // Cheap system counters always; the costly ones (GPU counters, per-thread load) only while someone watches.
             _network.Sample();
+            _cores.Sample(); // one call; the placer needs per-thread load for dynamic placement
+            _placer.Prune(_sampler.IsAlive);
             if (IsClientActive)
             {
-                _cores.Sample();
                 _gpu ??= new GpuMonitor();
                 _gpu.Sample();
                 _gpuLastUse = _ctx.NowMs;
