@@ -11,23 +11,39 @@ Windows, and restarts after a failure (5, 15, then 60 seconds). The all-users
 gracefully reverts every process change it made.
 
 On the options page, **Start Corewright when I sign in** is checked by default.
-It writes the current user's `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`
-value named `Corewright`, containing the quoted full path to
-`Corewright.Tray.exe`. Clearing the checkbox removes this value. The settings
-page uses this same value. This starts the tray at sign-in; the service starts
-independently. Other users can enable their own tray autostart in settings.
-Run setup under your own account using normal UAC consent: supplying a different
-administrator account applies HKCU and console-rule migration to that account.
+Setup records this first-run default in `%ProgramData%\Corewright\defaults.json`.
+The unelevated tray applies it once in the signed-in user's profile, writing
+`HKCU\Software\Microsoft\Windows\CurrentVersion\Run` value `Corewright` with the
+quoted path to `Corewright.Tray.exe`. It records `AutostartDecided` under
+`HKCU\Software\Corewright`; subsequent starts and upgrades preserve that user's
+choice. Settings toggles the same Run value and records the decision. Enable the
+finish-page launch or start the tray manually once to apply the fresh-install
+default; silent installation alone never writes another account's HKCU.
+Other users can choose their own tray autostart in Settings. The service starts
+independently of the tray.
 
 The finish page's **Start Corewright** checkbox opens the tray through
 `explorer.exe`, which delegates to the existing interactive desktop shell so the
 tray starts with the user's normal, unelevated token. Silent setup starts only
-the service; it never launches a user interface.
+the service on a fresh install; silent upgrades restart a previously running tray.
+This unelevation method depends on an existing, unelevated Explorer shell; an
+absent/elevated shell or disabled UAC may prevent the expected launch/token.
 
 ## Upgrade and console-mode rules
 
-Run the newer setup over the existing installation. Setup stops the service and
-waits up to 30 seconds for its graceful shutdown. A console-mode service must be
+Run the newer setup over the existing installation, or use **Settings → Updates
+→ Check now → Install update**. The dashboard checks published stable GitHub
+Releases when it opens, at most once per 24 hours; **Check now** checks immediately.
+There is no background polling when the dashboard is closed. Downloads use no
+GitHub token. The setup and `SHA256SUMS.txt` go into a fresh folder below
+`%LOCALAPPDATA%\Corewright\updates\<version>`. SHA-256 is verified immediately
+before setup is launched with administrator consent. Failed verification never
+runs the setup. Development copies offer a GitHub download link instead.
+The last check is stored in `%LOCALAPPDATA%\Corewright\update-check.json`.
+
+Setup performs process and file-lock preflights before stopping the service, then
+waits up to 30 seconds for its graceful shutdown. An abort before file replacement
+restores a previously running service. A console-mode service must be
 exited with the tray's **Exit Corewright** command; setup offers Retry/Cancel.
 Silent setup aborts if one is still running. The tray receives `WM_CLOSE` at its
 `CorewrightTray` window; the dashboard receives the
@@ -38,21 +54,48 @@ never kills applications to release files.
 Rules for the service live in `%ProgramData%\Corewright`. If `rules.json` is
 absent there, setup copies the installing user's
 `%LOCALAPPDATA%\Corewright\rules.json`, leaving the original in place. Existing
-machine rules are never overwritten. Upgrading defaults the sign-in checkbox to
-on again; clear it if you want tray autostart disabled.
+machine rules are never overwritten. Migration happens only when the elevated
+token's SID matches the interactive session user obtained through WTS; otherwise
+it is skipped and logged, rather than reading the credential-prompt administrator's
+profile. Back up and copy rules explicitly under administrator control in that case.
+On same-user upgrades, the disabled sign-in checkbox reflects the existing Run
+value (present means on, absent means off); use Settings to change an existing
+user's choice. A different elevation account cannot inspect that choice. Silent
+upgrades never change Run values and restart the tray unelevated if it was running.
+Fresh installs default to autostart on. Upgrades from an older installation without
+defaults conservatively leave unregistered users off.
+
+Before the service starts, setup rejects reparse points/junctions and hard links
+in its ProgramData tree, sets ownership to Administrators, and reapplies protected
+ACLs: SYSTEM and Administrators full control, Users read/execute, no inherited
+write grants. This runs again on upgrades. The existing bearer-token policy is
+unchanged: local users can read the service token. Per-user tokens and tighter
+token ACLs remain a known limitation, as recorded in `CLAUDE.md`.
+
+For development, `build.bat` detects an installed service, packages the current
+source, and runs setup silently with one UAC prompt. It updates the installed
+copy instead of starting a console service. `start.bat` then starts the installed
+tray; without an installed service, both scripts keep their console workflow.
+See [RELEASING.md](RELEASING.md) for version tags, CI drafts and owner publication.
 
 ## Uninstall
 
 Use Windows **Settings → Apps → Installed apps → Corewright → Uninstall**.
 Uninstall closes the tray and dashboard, stops the service (reverting its process
 changes), deletes the service, installed payload, Start menu shortcut, current
-user's Run value and Installed apps entry. Files you added to the installation
+user's Run value (only after the same-user SID check) and Installed apps entry.
+With a different credential-prompt account, per-user removal is skipped and
+logged; the signed-in user can remove the startup entry in Windows Startup apps.
+Uninstall validates the complete removal manifest before stopping/deleting the
+service, and reports nonzero failure if a required removal is incomplete.
+Files you added to the installation
 folder are kept. Other users' Run values belong to their profiles and are not
 removed; they can disable them in Windows Startup apps.
 
 By default `%ProgramData%\Corewright` and `%LOCALAPPDATA%\Corewright` stay,
 including rules, backups and settings. Select **Also remove my rules and
-settings** to delete both the machine data and uninstalling user's console data.
+settings** to delete machine data and, after the same-user SID check, the
+uninstalling user's console data and remembered startup decision.
 This deletes rules shared by all users; back them up first. Silent uninstall
 always keeps data. Console data in other user profiles is never removed.
 
@@ -72,6 +115,7 @@ result checks and bounded state waits. Details show command output; commands,
 exit codes and errors are also appended to
 `%TEMP%\Corewright-installer-<version>.log`. An error stops the operation for
 diagnosis; setup does not automatically roll back a partially completed install.
+Partial file-copy failures have no rollback, and downgrades are unrestricted.
 Fix the reported condition and rerun setup or uninstall. The first real install
 and service validation belong to the owner.
 
