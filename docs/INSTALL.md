@@ -83,7 +83,9 @@ tree as `%ProgramData%\Corewright-preserved-<random>` and renames the new tree i
 place without replacement. Held handles on the old objects cannot rewrite the
 new objects' ACLs. No user data is deleted. Failures retain the original and any
 fresh copy for recovery; link/ACL/path validation failures abort. A service stopped
-before replacement is restored immediately on failure. This runs again on upgrades.
+before replacement is restored immediately on a later failure only after its data was
+moved into freshly protected objects; if that step fails (for example a rejected link),
+the service stays stopped until setup succeeds. This runs again on upgrades.
 The existing bearer-token policy is
 unchanged: local users can read the service token. Per-user tokens and tighter
 token ACLs remain a known limitation, as recorded in `CLAUDE.md`.
