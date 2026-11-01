@@ -215,6 +215,7 @@ export function Rules({ draft, onDraftConsumed }: { draft?: Rule; onDraftConsume
           onChange={updateRule}
           onDelete={() => remove(selected.id)}
           onDuplicate={() => duplicate(selected)}
+          activePids={new Set((procs.data ?? []).filter((p) => p.applied?.some((a) => a.ruleId === selected.id)).map((p) => p.pid))}
         />
       ) : (
         <div className="editor empty">Select a rule or create a new one.</div>

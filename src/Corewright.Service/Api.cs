@@ -66,6 +66,7 @@ public sealed record ImportResponseDto(bool Applied, string? Source, Rule[] Rule
 [JsonSerializable(typeof(RuleSet))]
 [JsonSerializable(typeof(RulesResultDto))]
 [JsonSerializable(typeof(EventsDto))]
+[JsonSerializable(typeof(RuleHitDto[]))]
 [JsonSerializable(typeof(Dictionary<string, string>))]
 [JsonSerializable(typeof(FactValueDto))]
 [JsonSerializable(typeof(ForegroundDto))]
@@ -160,6 +161,9 @@ internal static class Api
             var dto = new RulesResultDto(errors.Count == 0, [.. errors.Select(ToDto)], m.Engine.Version);
             return errors.Count == 0 ? TypedResults.Ok(dto) : TypedResults.BadRequest(dto);
         });
+
+        // The last processes a rule changed (up to 10, newest first), since the service started.
+        api.MapGet("/rules/{id}/history", (string id) => TypedResults.Ok(m.Events.Hits(id)));
 
         api.MapPost("/rules/validate", (RuleSet set) =>
         {

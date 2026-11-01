@@ -222,6 +222,17 @@ const name = (v: string): Rule['when'] => ({ type: 'group', combinator: 'and', c
 const rules: RuleSet = {
   version: 4,
   rules: [
+    {
+      id: 'downloads-low-io',
+      name: 'Downloads stay out of the way',
+      enabled: true,
+      priority: 50,
+      sustainSeconds: 0,
+      releaseSeconds: 0,
+      allowRealtime: false,
+      when: { type: 'group', combinator: 'and', children: [{ type: 'cond', field: 'name', op: 'in', value: 'qbittorrent.exe, steamservice.exe' }, { type: 'cond', field: 'isForeground', op: 'isFalse' }] },
+      actions: { cpuPriority: 'belowNormal', ioPriority: 'veryLow' },
+    },
     { id: 'quick-obs64-exe', name: 'Quick: obs64.exe', enabled: true, priority: 60, sustainSeconds: 0, releaseSeconds: 0, allowRealtime: false, when: name('obs64.exe'), actions: { cpuPriority: 'aboveNormal', gpuPriority: 'aboveNormal' } },
     {
       id: 'browser-cap',
@@ -233,17 +244,6 @@ const rules: RuleSet = {
       allowRealtime: false,
       when: { type: 'group', combinator: 'and', children: [{ type: 'cond', field: 'name', op: 'in', value: 'firefox.exe, chrome.exe, msedge.exe' }] },
       actions: { memoryLimitMb: 4096 },
-    },
-    {
-      id: 'downloads-low-io',
-      name: 'Downloads stay out of the way',
-      enabled: true,
-      priority: 50,
-      sustainSeconds: 0,
-      releaseSeconds: 0,
-      allowRealtime: false,
-      when: { type: 'group', combinator: 'and', children: [{ type: 'cond', field: 'name', op: 'in', value: 'qbittorrent.exe, steamservice.exe' }, { type: 'cond', field: 'isForeground', op: 'eq', value: 'false' }] },
-      actions: { cpuPriority: 'belowNormal', ioPriority: 'veryLow' },
     },
     {
       id: 'recording-boost',
@@ -375,6 +375,18 @@ export async function demoRequest(method: string, path: string, body?: unknown):
       const after = Number(new URLSearchParams(path.split('?')[1]).get('after') ?? 0)
       return { last: seq, events: events.filter((e) => e.seq > after) }
     }
+  }
+  const history = p.match(/^\/rules\/([^/]+)\/history$/)
+  if (history) {
+    const rule = rules.rules.find((r) => r.id === decodeURIComponent(history[1]))
+    const hits: { time: number; pid: number; process: string; kind: string; set: Record<string, string> }[] = []
+    for (const e of [...events].reverse()) {
+      if (!rule || e.rule !== rule.name || !e.slot || (e.kind !== 'applied' && e.kind !== 'failed')) continue
+      const last = hits[hits.length - 1]
+      if (last && last.pid === e.pid && Math.abs(last.time - e.time) < 1000) last.set[e.slot] = e.value ?? ''
+      else if (hits.length < 10) hits.push({ time: e.time, pid: e.pid, process: e.process, kind: e.kind, set: { [e.slot]: e.value ?? '' } })
+    }
+    return hits
   }
   const explain = p.match(/^\/processes\/(\d+)\/explain$/)
   if (explain) {

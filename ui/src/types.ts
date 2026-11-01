@@ -280,3 +280,13 @@ export interface Placement {
   placedSecondsAgo: number
   why: string
 }
+
+/** One time a rule changed a process (GET /rules/{id}/history). */
+export interface RuleHit {
+  time: number
+  pid: number
+  process: string
+  kind: 'applied' | 'failed'
+  set: Record<string, string>
+  message?: string
+}

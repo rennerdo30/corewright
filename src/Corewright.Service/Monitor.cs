@@ -55,6 +55,13 @@ internal sealed class Monitor : BackgroundService
         _log = log;
         Events = events;
         Engine = new RuleEngine(_actuator, events);
+        // Events carry the rule name; the per-rule history is kept by id (names can repeat across a rename).
+        events.RuleIdOf = name =>
+        {
+            foreach (var r in Engine.Rules.Rules)
+                if (string.Equals(r.Source.Name, name, StringComparison.Ordinal)) return r.Id;
+            return null;
+        };
         _ctx.Facts = _facts;
         ProcessInfo.CommandLineReader = SystemProbe.ReadCommandLine;
         SystemProbe.EnablePrivileges();
@@ -165,6 +172,7 @@ internal sealed class Monitor : BackgroundService
             RuleSet = set;
             Engine.SetRules(compiled);
         }
+        Events.Prune(id => id.StartsWith(AutopilotRules.IdPrefix, StringComparison.Ordinal) || set.Rules.Any(r => r.Id == id));
         Wake();
         return errors;
     }
