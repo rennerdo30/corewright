@@ -24,6 +24,8 @@ internal sealed unsafe class ProcessSampler : IDisposable
     private readonly List<ProcessInfo> _list = [];
     private readonly List<ProcessInfo> _new = [];
     private readonly List<ProcessKey> _gone = [];
+    private readonly (ProcessKey Key, long Expires)[] _recentParents = new (ProcessKey, long)[512];
+    private int _nextParent;
     private readonly int _cpuCount = (int)Math.Max(1, Native.GetActiveProcessorCount(Native.ALL_PROCESSOR_GROUPS));
     private readonly int _selfPid = Environment.ProcessId;
 
@@ -66,7 +68,6 @@ internal sealed unsafe class ProcessSampler : IDisposable
         _lastTimestamp = now;
         _tick++;
         _list.Clear();
-        _byPid.Clear();
         double totalIo = 0;
 
         byte* p = _buffer;
@@ -151,13 +152,21 @@ internal sealed unsafe class ProcessSampler : IDisposable
             else
             {
                 info.Parent = null;
+                foreach (var recent in _recentParents)
+                    if (recent.Key.Pid == parentPid && recent.Key.CreateTime <= info.Key.CreateTime && recent.Expires > Environment.TickCount64)
+                    { info.Parent = recent.Key; break; }
             }
         }
         _new.Clear();
 
         foreach (var (k, v) in _live)
             if (v.LastSeenTick != _tick) _gone.Add(k);
-        foreach (var k in _gone) _live.Remove(k);
+        foreach (var k in _gone)
+        {
+            _recentParents[_nextParent++ % _recentParents.Length] = (k, Environment.TickCount64 + 30_000);
+            if (_byPid.TryGetValue(k.Pid, out var old) && old.Key == k) _byPid.Remove(k.Pid);
+            _live.Remove(k);
+        }
         _gone.Clear();
 
         TotalIoBytesPerSec = totalIo;
