@@ -266,7 +266,7 @@ public static class AutopilotRules
                 Name = "Autopilot: compilers and build tools",
                 Priority = 7,
                 When = Condition.All(Condition.Leaf("name", "in", string.Join(", ", s.BuildTools.Programs))),
-                Actions = new RuleActions { CpuPriority = s.BuildTools.Priority, IoPriority = s.BuildTools.IoPriority, Affinity = "auto-background" },
+                Actions = new RuleActions { CpuPriority = s.BuildTools.Priority, IoPriority = s.BuildTools.IoPriority },
             });
         }
 

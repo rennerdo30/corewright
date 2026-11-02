@@ -199,7 +199,7 @@ export function Autopilot() {
             title="Compilers and build tools"
             enabled={bt.enabled}
             onToggle={(v) => update((x) => (x.autopilot.buildTools.enabled = v))}
-            summary={`High load but not latency critical: ${bt.programs.length} known ${bt.programs.length === 1 ? 'tool runs' : 'tools run'} below normal on cores that are free.`}
+            summary={`High load but not latency critical: ${bt.programs.length} known ${bt.programs.length === 1 ? 'tool runs' : 'tools run'} with lower CPU and I/O priority.`}
           >
             <Row title="Build priority" desc="CPU priority for compilers, linkers and build drivers.">
               <Levels levels={LOW_LEVELS} value={bt.priority} onChange={(v) => update((x) => (x.autopilot.buildTools.priority = v))} />
@@ -331,7 +331,7 @@ function placementHint(t?: Topology) {
 
 function Placements({ rows, procs }: { rows: { pid: number; name: string; cores: string; ccd: number; demandThreads: number; placedSecondsAgo: number; why: string }[]; procs: ProcessRow[] }) {
   const roles = new Map(procs.map((p) => [p.pid, roleOf(p)]))
-  if (rows.length === 0) return <div className="ap-empty">No process has automatic cores right now. Build tools and background programs appear here as soon as Autopilot places them.</div>
+  if (rows.length === 0) return <div className="ap-empty">No process has automatic cores right now. Background programs appear here as soon as Autopilot places them.</div>
   return (
     <table className="ap-table">
       <thead>
