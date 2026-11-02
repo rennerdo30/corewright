@@ -292,10 +292,27 @@ internal sealed partial class MainForm : Form
         core.AddWebResourceRequestedFilter($"https://{HostName}/*", CoreWebView2WebResourceContext.All);
         core.WebResourceRequested += OnHostResource;
 
+        // Right after an update or a restart the service needs a few seconds before it writes its endpoint: wait for
+        // it instead of declaring it dead (2026-11-02: a window opened after an update stayed on "not running").
         var ep = EndpointInfo.TryReadAny();
+        if (ep is null)
+        {
+            ShowMessage(core, "Connecting to the Corewright service…", "This takes a few seconds after Windows starts or after an update.");
+            for (int i = 0; i < 60 && ep is null && !IsDisposed; i++)
+            {
+                await Task.Delay(1000);
+                ep = EndpointInfo.TryReadAny();
+            }
+        }
+        if (ep is null)
+        {
+            ShowMessage(core, "The Corewright service is not running", NotRunningHelp());
+            return;
+        }
+
         var boot = new Dictionary<string, object>
         {
-            ["token"] = ep?.Token ?? "",
+            ["token"] = ep.Token,
             ["accent"] = AccentPalette(),
             ["scheme"] = _scheme,
             ["host"] = "dashboard",
@@ -303,22 +320,40 @@ internal sealed partial class MainForm : Form
         // Token and theme go to the page in memory only; nothing appears in a URL.
         await core.AddScriptToExecuteOnDocumentCreatedAsync("window.__COREWRIGHT__ = " + JsonSerializer.Serialize(boot) + ";");
 
-        if (ep is null)
-        {
-            bool dark = IsDarkTheme();
-            core.NavigateToString(
-                $"<html><body style='margin:0;background:{(dark ? "#191919" : "#e9e9e9")};color:{(dark ? "#fff" : "#1a1a1a")};" +
-                "font:14px \"Segoe UI Variable Text\",\"Segoe UI\"'>" +
-                "<div style='app-region:drag;height:40px;display:flex;justify-content:flex-end'>" +
-                "<button onclick=\"chrome.webview.postMessage({type:'close'})\" style='app-region:no-drag;width:46px;border:0;" +
-                "background:none;color:inherit;font-family:\"Segoe Fluent Icons\";font-size:10px'>&#xE8BB;</button></div>" +
-                "<div style='padding:24px 40px'><h2 style='font-weight:600'>The Corewright service is not running</h2>" +
-                "<p>Start it with start.bat, then reopen this window.</p></div></body></html>");
-            return;
-        }
-
         string url = Environment.GetEnvironmentVariable("COREWRIGHT_UI_URL") is { Length: > 0 } dev ? dev : ep.Url + "/";
         core.Navigate(url);
+    }
+
+    /// <summary>What to do when no service answers: an installed Corewright has a Windows service, a development copy
+    /// is started with start.bat. The last update error is shown when there is one.</summary>
+    private static string NotRunningHelp()
+    {
+        bool installed = File.Exists(Path.Combine(AppContext.BaseDirectory, "install-manifest.txt"));
+        string help = installed
+            ? "Corewright's Windows service did not start. Restart the PC, or open Services (services.msc), select “Corewright” and choose Start. If that fails, run the Corewright setup again to repair the installation; your settings and rules are kept."
+            : "Start it with start.bat, then reopen this window.";
+        try
+        {
+            var file = new FileInfo(Path.Combine(AppPaths.ServiceDataDirectory, "update-last-error.txt"));
+            if (file is { Exists: true, Length: < 4096 } && file.LastWriteTimeUtc > DateTime.UtcNow.AddDays(-1))
+                help += " The last update reported: " + File.ReadAllText(file.FullName).Trim();
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
+        return help;
+    }
+
+    private void ShowMessage(CoreWebView2 core, string title, string text)
+    {
+        bool dark = IsDarkTheme();
+        string Html(string s) => System.Net.WebUtility.HtmlEncode(s);
+        core.NavigateToString(
+            $"<html><body style='margin:0;background:{(dark ? "#191919" : "#e9e9e9")};color:{(dark ? "#fff" : "#1a1a1a")};" +
+            "font:14px \"Segoe UI Variable Text\",\"Segoe UI\"'>" +
+            "<div style='app-region:drag;height:40px;display:flex;justify-content:flex-end'>" +
+            "<button onclick=\"chrome.webview.postMessage({type:'close'})\" style='app-region:no-drag;width:46px;border:0;" +
+            "background:none;color:inherit;font-family:\"Segoe Fluent Icons\";font-size:10px'>&#xE8BB;</button></div>" +
+            $"<div style='padding:24px 40px;max-width:70ch'><h2 style='font-weight:600'>{Html(title)}</h2>" +
+            $"<p style='line-height:1.5'>{Html(text)}</p></div></body></html>");
     }
 
     private void PostWindowPrefs() =>

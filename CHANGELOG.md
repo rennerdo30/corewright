@@ -3,6 +3,17 @@
 Release notes for every Corewright version, newest first. The release workflow publishes the section of a version
 as its GitHub release notes.
 
+## 0.1.0-beta.8
+
+### Fixed
+
+- **Corewright did not reopen after an update when another account approved the administrator prompt** (a standard
+  user with an administrator's password). Corewright Updater now reopens Corewright as the signed-in user. This works
+  from the next update after installing beta 8.
+- **The window said "The Corewright service is not running" right after an update** and told you to use start.bat,
+  which only exists in a development copy. It now waits up to a minute for the service, and if it really is not
+  running it explains how to start or repair the installed service and shows the last update error.
+
 ## 0.1.0-beta.7
 
 ### Fixed

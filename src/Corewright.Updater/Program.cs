@@ -54,10 +54,14 @@ try
     string digest = Convert.ToHexString(SHA256.HashData(file));
     if (digest != expected) throw new InvalidDataException("The downloaded setup does not match its published checksum.");
 
-    using var process = Process.Start(new ProcessStartInfo(setup, "/S /RESTART") { UseShellExecute = false, CreateNoWindow = true })
+    // No /RESTART: the setup runs as whoever approved the admin prompt, which may be a different administrator account
+    // than the signed-in user (2026-11-02: a standard user's Corewright stayed closed after an update). This program
+    // reopens Corewright as the desktop's user below.
+    using var process = Process.Start(new ProcessStartInfo(setup, "/S") { UseShellExecute = false, CreateNoWindow = true })
         ?? throw new IOException("Windows could not start the setup.");
     if (!process.WaitForExit(180_000)) throw new TimeoutException("The setup did not finish within 3 minutes.");
     if (process.ExitCode != 0) throw new IOException($"The setup failed (exit {process.ExitCode}).");
+    ReopenAsDesktopUser(Path.Combine(AppContext.BaseDirectory, "Corewright.Dashboard.exe"));
     // The protected stage is kept for diagnosis; no recursive deletion of paths outside our control.
     return 0;
 }
@@ -74,6 +78,20 @@ catch (Exception e)
     }
     catch (Exception) { }
     return 1;
+}
+
+// Starts a program unelevated as the user who owns the desktop (the shell window's process), not as this elevated
+// process's account. Falls back to explorer.exe, which hands the start to the running shell when the accounts match.
+static void ReopenAsDesktopUser(string exe)
+{
+    if (!File.Exists(exe)) return;
+    try
+    {
+        if (Native.StartAsShellUser(exe)) return;
+    }
+    catch (Exception) { }
+    try { Process.Start(new ProcessStartInfo(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "explorer.exe"), $"\"{exe}\"") { UseShellExecute = false }); }
+    catch (Exception) { }
 }
 
 static void Download(HttpClient client, string url, Stream output, long limit)
