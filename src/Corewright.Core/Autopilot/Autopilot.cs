@@ -15,7 +15,7 @@ public sealed class AppSettings
 
 /// <summary>
 /// Autopilot: automatic scheduling on top of the rule engine. It never acts on its own; it generates low-priority
-/// built-in rules (ids "autopilot-…") from these settings, so the user's rules always win and Explain shows why.
+/// built-in rules (ids "autopilot-â€¦") from these settings, so the user's rules always win and Explain shows why.
 /// </summary>
 public sealed class AutopilotSettings
 {
@@ -174,7 +174,7 @@ public sealed class BalanceSettings
     public List<string> Exclusions { get; set; } = [];
 }
 
-/// <summary>Built-in rules from the Autopilot settings. Priorities 1–9: below every user rule.</summary>
+/// <summary>Built-in rules from the Autopilot settings. Priorities 1â€“9: below every user rule.</summary>
 public static class AutopilotRules
 {
     public const string IdPrefix = "autopilot-";
@@ -254,30 +254,19 @@ public static class AutopilotRules
             }
         }
 
-        if (s.Background.Enabled && background is not null)
+        if (s.Background.Enabled)
         {
-            // One rule per classified program; game mode (higher priority) still wins for its slots while gaming.
-            foreach (var v in background)
+            var when = Condition.All(Condition.Leaf("backgroundVerdict", "in", "single,multi"),
+                Condition.Leaf("ageSeconds", "gt", "15"), Condition.Leaf("sessionPresent", "isTrue", null),
+                Condition.Leaf("isLauncher", "isFalse", null), Condition.Leaf("isGame", "isFalse", null),
+                Condition.Any(Condition.Leaf("session", "eq", "0"), Condition.Leaf("isForegroundApp", "isFalse", null)));
+            if (!s.Background.IncludeServices) when.Children!.Add(Condition.Leaf("session", "ne", "0"));
+            rules.Add(new Rule
             {
-                // Short-lived tools (grep, cut, a script's helpers) are not worth an affinity write each.
-                var when = Condition.All(Condition.Leaf("program", "eq", v.Program), Condition.Leaf("ageSeconds", "gt", "15"),
-                    Condition.Leaf("sessionPresent", "isTrue", null),
-                    Condition.Leaf("isLauncher", "isFalse", null), Condition.Leaf("isGame", "isFalse", null));
-                when.Children!.Add(Condition.Any(Condition.Leaf("session", "eq", "0"), Condition.Leaf("isForegroundApp", "isFalse", null)));
-                if (!s.Background.IncludeServices) when.Children.Add(Condition.Leaf("session", "ne", "0"));
-                rules.Add(new Rule
-                {
-                    Id = IdPrefix + "background-" + Slug(v.Display) + "-" + Fnv(v.Program),
-                    Name = $"Autopilot: background {v.Display}",
-                    Priority = 5,
-                    When = when,
-                    // Placement is dynamic and sticky (AffinityPlacer): sized to the program's real demand, never on the
-                    // strongest cores, never on the game's CCD while a game runs.
-                    Actions = v.Kind == "single"
-                        ? new RuleActions { Affinity = "auto-background" }
-                        : new RuleActions { CpuPriority = s.Background.Priority, IoPriority = "low", Affinity = "auto-background" },
-                });
-            }
+                Id = IdPrefix + "background-learned", Name = "Autopilot: learned background program", Priority = 5,
+                When = when,
+                Actions = new RuleActions { Affinity = "auto-background", CpuPriority = s.Background.Priority, IoPriority = "low", BackgroundMultiOnly = true },
+            });
         }
 
         if (s.BuildTools.Enabled && s.BuildTools.Programs.Count > 0)

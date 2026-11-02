@@ -240,6 +240,7 @@ public static class RuleCompiler
         dynamic = true;
         switch (field)
         {
+            case "backgroundVerdict": return Str(p => p.BackgroundVerdict ?? "observing");
             case "sessionPresent":
                 return op switch
                 {

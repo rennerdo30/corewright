@@ -273,6 +273,7 @@ public sealed class RuleEngine(IActuator actuator, IEngineEventSink sink, Func<l
             var lost = new List<string>();
             for (int s = 0; s < Slots.Count; s++)
             {
+                if (r.Source.Actions.BackgroundMultiOnly && p.BackgroundVerdict != "multi" && s != (int)Slot.Affinity) continue;
                 if (!r.Sets((Slot)s)) continue;
                 bool retained = frozen && gate is null && p.GroupId is null && st is not null && st.IsApplied[s] && st.AppliedRule[s]?.Id == r.Id;
                 if (!active && !retained) continue;
@@ -327,6 +328,7 @@ public sealed class RuleEngine(IActuator actuator, IEngineEventSink sink, Func<l
             for (int s = 0; s < Slots.Count; s++)
             {
                 int bit = 1 << s;
+                if (r.Source.Actions.BackgroundMultiOnly && p.BackgroundVerdict != "multi" && s != (int)Slot.Affinity) continue;
                 if ((r.SlotMask & bit) == 0 || (claimed & bit) != 0) continue;
                 claimed |= bit;
                 want[s] = r.Values[s];

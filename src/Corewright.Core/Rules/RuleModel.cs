@@ -65,6 +65,8 @@ public sealed class RuleActions
 {
     public string? CpuPriority { get; set; }
     public bool CpuPriorityLowerOnly { get; set; }
+    /// <summary>For the generic learned rule, single verdicts claim affinity only.</summary>
+    public bool BackgroundMultiOnly { get; set; }
     public string? Affinity { get; set; }
     public string? IoPriority { get; set; }
     public string? GpuPriority { get; set; }
