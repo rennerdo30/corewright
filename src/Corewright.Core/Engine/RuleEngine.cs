@@ -549,7 +549,7 @@ public sealed class RuleEngine(IActuator actuator, IEngineEventSink sink, Func<l
             {
                 if (lowerOnly && p.BasePriority < Slots.BasePriorityOf((CpuPriorityLevel)value))
                 {
-                    if (actuator.TryRead(p.Key, slot, out long current, out _)) st.Original[s] = Math.Min(st.Original[s], current);
+                    // Leave a lower current class alone; the first original remains the restore/inheritance baseline.
                     return;
                 }
                 st.DriftCount++;
