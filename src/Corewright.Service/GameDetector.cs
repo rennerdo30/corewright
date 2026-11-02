@@ -31,6 +31,8 @@ internal sealed unsafe partial class GameDetector
 
     private readonly Dictionary<ProcessKey, (string Name, string Reason)> _games = [];
     private readonly List<ProcessKey> _gone = [];
+    private readonly HashSet<string> _always = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> _never = new(StringComparer.OrdinalIgnoreCase);
     private GameModeSettings? _settings;
     private int _lastForeground;
     private bool _lastFullscreen;
@@ -48,10 +50,14 @@ internal sealed unsafe partial class GameDetector
     {
         bool changed = false;
         if (!ReferenceEquals(_settings, settings))
-        { _settings = settings; _lastForeground = 0; _candidate = null; }
+        {
+            _settings = settings; _lastForeground = 0; _candidate = null;
+            _always.Clear(); _never.Clear();
+            foreach (string name in settings.Games) _always.Add(name);
+            foreach (string name in settings.NotGames) _never.Add(name);
+        }
         foreach (var (key, game) in _games)
-            if (!sampler.IsAlive(key) || settings.NotGames.Contains(game.Name, StringComparer.OrdinalIgnoreCase) ||
-                (!enabled && !settings.Games.Contains(game.Name, StringComparer.OrdinalIgnoreCase))) _gone.Add(key);
+            if (!sampler.IsAlive(key) || _never.Contains(game.Name) || (!enabled && !_always.Contains(game.Name))) _gone.Add(key);
         foreach (var key in _gone)
         {
             var old = _games[key]; _games.Remove(key); changed = true;
@@ -59,8 +65,7 @@ internal sealed unsafe partial class GameDetector
         }
         _gone.Clear();
         foreach (var listed in sampler.Processes)
-            if (!listed.IsProtected && settings.Games.Contains(listed.Name, StringComparer.OrdinalIgnoreCase) &&
-                !settings.NotGames.Contains(listed.Name, StringComparer.OrdinalIgnoreCase) && !_games.ContainsKey(listed.Key))
+            if (!listed.IsProtected && _always.Contains(listed.Name) && !_never.Contains(listed.Name) && !_games.ContainsKey(listed.Key))
                 changed |= Detect(listed, "on your games list", sink);
         if (Game is not { } current || !_games.ContainsKey(current))
         {
@@ -73,7 +78,7 @@ internal sealed unsafe partial class GameDetector
         if (foregroundPid == _lastForeground && fullscreen == _lastFullscreen)
         {
             // Unchanged foreground: only a pending full-screen candidate needs the clock (no module scan, no handle).
-            if (_candidate is { } c && Environment.TickCount64 - _candidateSinceMs >= FullscreenSustainMs && sampler.TryGet(foregroundPid, out var cp) && cp.Key == c && !settings.NotGames.Contains(cp.Name, StringComparer.OrdinalIgnoreCase))
+            if (_candidate is { } c && Environment.TickCount64 - _candidateSinceMs >= FullscreenSustainMs && sampler.TryGet(foregroundPid, out var cp) && cp.Key == c && !_never.Contains(cp.Name))
             {
                 _candidate = null;
                 changed |= Detect(cp, _candidateReason!, sink); UpdateMembers(sampler); return changed;
@@ -129,11 +134,11 @@ internal sealed unsafe partial class GameDetector
         }
     }
 
-    private static string? Classify(ProcessInfo p, bool fullscreen, GameModeSettings s, out bool weak)
+    private string? Classify(ProcessInfo p, bool fullscreen, GameModeSettings s, out bool weak)
     {
         weak = false;
-        if (s.NotGames.Contains(p.Name, StringComparer.OrdinalIgnoreCase)) return null;
-        if (s.Games.Contains(p.Name, StringComparer.OrdinalIgnoreCase)) return "on your games list";
+        if (_never.Contains(p.Name)) return null;
+        if (_always.Contains(p.Name)) return "on your games list";
 
         string path = p.Path?.ToLowerInvariant() ?? "";
         string? graphics = UsesGraphicsApi(p.Key.Pid);
