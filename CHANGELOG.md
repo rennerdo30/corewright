@@ -3,6 +3,19 @@
 Release notes for every Corewright version, newest first. The release workflow publishes the section of a version
 as its GitHub release notes.
 
+## 0.1.0-beta.5
+
+### Fixed
+
+- **In-app updates failed with "Corewright files are still in use"** and left Corewright closed. Corewright Updater
+  ran from the install folder, and the setup refused to replace its files. The setup now moves the running updater
+  aside. Updating from beta 3 or 4 works with this setup.
+
+### Changed
+
+- **Devices uses the width better:** processor and memory sit side by side, values no longer wrap into several
+  lines, and volumes without a drive letter are counted instead of listed as long volume paths.
+
 ## 0.1.0-beta.4
 
 ### Fixed

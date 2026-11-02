@@ -27,9 +27,19 @@ export function deviceSeries(d?: Device) {
 }
 
 /** Short names for selectors: "Disk 0, Northstar N4 Pro (C:)", "GPU 1, Lumen Arc 24", "Wi-Fi". */
+const letters = (volumes?: string[]) => (volumes ?? []).filter((v) => /^[A-Z]:\\?$/i.test(v)).map((v) => v.replace(/\\$/, ''))
+
+/** "C: D:" plus a count of volumes without a letter, instead of long volume GUID paths. */
+function volumeFacts(volumes?: string[]) {
+  const named = letters(volumes)
+  const unnamed = (volumes?.length ?? 0) - named.length
+  if (unnamed <= 0) return [named.join(' ')]
+  return [named.join(' '), named.length ? plural(unnamed, 'more volume') : plural(unnamed, 'volume without a letter', 'volumes without a letter')]
+}
+
 export const deviceLabel = (d: Device) =>
   d.kind === 'disk'
-    ? `Disk ${d.index}, ${d.name}${d.volumes?.length ? ` (${d.volumes.map((v) => v.replace(/\\$/, '')).join(' ')})` : ''}`
+    ? `Disk ${d.index}, ${d.name}${letters(d.volumes).length ? ` (${letters(d.volumes).join(' ')})` : ''}`
     : d.kind === 'gpu'
       ? `GPU ${d.index ?? d.id.split(':')[1]}, ${d.name}`
       : d.alias || d.name
@@ -131,18 +141,21 @@ export function Devices() {
         )}
       </PageHeader>
       {data.error && <div className="banner danger">{data.error}</div>}
-      {topo.data && sys.data && (
-        <section className="dev-section" id="dev-cpu">
-          <h3>Processor</h3>
-          <CpuCard topo={topo.data} sys={sys.data} />
-        </section>
-      )}
-      {sys.data && (
-        <section className="dev-section" id="dev-memory">
-          <h3>Memory</h3>
-          <MemoryCard sys={sys.data} modules={modules.data ?? []} />
-        </section>
-      )}
+      {/* Processor and memory share one row like the device cards below, instead of a full-width row each. */}
+      <div className="dev-list dev-top">
+        {topo.data && sys.data && (
+          <section className="dev-section" id="dev-cpu">
+            <h3>Processor</h3>
+            <CpuCard topo={topo.data} sys={sys.data} />
+          </section>
+        )}
+        {sys.data && (
+          <section className="dev-section" id="dev-memory">
+            <h3>Memory</h3>
+            <MemoryCard sys={sys.data} modules={modules.data ?? []} />
+          </section>
+        )}
+      </div>
       {(['disk', 'gpu', 'network'] as const).map((kind) => {
         const list = devices.filter((d) => d.kind === kind)
         if (data.data && list.length === 0) return null
@@ -183,10 +196,10 @@ function DeviceCard({ d, sampling }: { d: Device; sampling: boolean }) {
   const verdictNow = verdict(d)
 
   const facts: string[] = disk
-    ? [d.bus, d.size != null ? bytes(d.size, 0) : undefined, d.volumes?.length ? d.volumes.map((x) => x.replace(/\\$/, '')).join(' ') : undefined].filter((x): x is string => !!x)
+    ? [d.bus, d.size != null ? bytes(d.size, 0) : undefined, ...volumeFacts(d.volumes)].filter((x): x is string => !!x)
     : gpu
       ? [d.dedicatedMemory != null ? `${bytes(d.dedicatedMemory, 0)} video memory` : undefined].filter((x): x is string => !!x)
-      : [d.type, d.receiveLinkSpeed != null ? `${bits(d.receiveLinkSpeed / 8)} link` : undefined, d.alias && d.alias !== d.name ? d.name : undefined].filter((x): x is string => !!x)
+      : [d.type, d.receiveLinkSpeed ? `${bits(d.receiveLinkSpeed / 8)} link` : undefined, d.alias && d.alias !== d.name ? d.name : undefined].filter((x): x is string => !!x)
 
   const stats: Stat[] = disk
     ? [
@@ -315,10 +328,11 @@ function CpuCard({ topo, sys }: { topo: Topology; sys: SystemInfo }) {
             return (
               <div key={c.id}>
                 <dt>
-                  CCD {c.id}, threads {Math.min(...lps)}-{Math.max(...lps)}
+                  CCD {c.id}, threads {Math.min(...lps)}–{Math.max(...lps)}
                 </dt>
-                <dd>
-                  {Math.round(c.l3Bytes / 1048576)} MB L3{c.vCache ? ', 3D V-Cache' : ''}, {load.toFixed(0)} % busy
+                <dd>{load.toFixed(0)} % busy</dd>
+                <dd className="dev-sub">
+                  {Math.round(c.l3Bytes / 1048576)} MB L3{c.vCache ? ', V-Cache' : ''}
                 </dd>
               </div>
             )
@@ -326,7 +340,8 @@ function CpuCard({ topo, sys }: { topo: Topology; sys: SystemInfo }) {
           {ranked.length > 0 && (
             <div>
               <dt>Fastest cores (CPPC)</dt>
-              <dd>{ranked.slice(0, 4).map((k) => `Core ${k.id}`).join(', ')}</dd>
+              <dd>Cores {ranked.slice(0, 4).map((k) => k.id).join(', ')}</dd>
+              <dd className="dev-sub">strongest first</dd>
             </div>
           )}
         </dl>
@@ -400,14 +415,16 @@ function MemoryCard({ sys, modules }: { sys: SystemInfo; modules: MemoryModule[]
             <div key={m.slot + m.part}>
               <dt>{m.slot || 'Module'}</dt>
               <dd>
-                {(m.sizeMb / 1024).toFixed(0)} GB {m.type}, {m.configuredMts || m.ratedMts} MT/s
+                {(m.sizeMb / 1024).toFixed(0)} GB {m.type}
               </dd>
+              <dd className="dev-sub">{m.configuredMts || m.ratedMts} MT/s</dd>
             </div>
           ))}
           {slow && info?.rated && (
             <div className="tone-caution">
               <dt>Rated speed</dt>
-              <dd>{info.rated} MT/s (EXPO / XMP off)</dd>
+              <dd>{info.rated} MT/s</dd>
+              <dd className="dev-sub">EXPO / XMP is off</dd>
             </div>
           )}
         </dl>

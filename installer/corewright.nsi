@@ -94,6 +94,24 @@ Var DataPathUnsafe
   Abort
 !macroend
 
+; Replaces nothing itself: deletes $INSTDIR\<file>, or when it is running, renames it to <file>.old (deleting an older
+; .old first) and schedules that for removal at restart. A failure leaves the file for File /r to report.
+!macro MoveAsideRunning file
+  ${If} ${FileExists} "$INSTDIR\${file}"
+    ClearErrors
+    Delete "$INSTDIR\${file}"
+    ${If} ${Errors}
+      Delete "$INSTDIR\${file}.old"
+      ClearErrors
+      Rename "$INSTDIR\${file}" "$INSTDIR\${file}.old"
+      ${IfNot} ${Errors}
+        Delete /REBOOTOK "$INSTDIR\${file}.old"
+      ${EndIf}
+    ${EndIf}
+  ${EndIf}
+  Delete "$INSTDIR\${file}.old"
+!macroend
+
 !macro COMMON_FUNCTIONS prefix
 ; No process is terminated. UI components receive their own graceful exit signals.
 Function ${prefix}CloseApps
@@ -524,6 +542,9 @@ Function un.RemovePayload
     ${EndIf}
   ${Loop}
   FileClose $ManifestHandle
+  ; Updater copies moved aside by an in-app update (MoveAsideRunning) that were not yet removed.
+  Delete /REBOOTOK "$INSTDIR\Corewright.Updater.exe.old"
+  Delete /REBOOTOK "$INSTDIR\Corewright.Updater.dll.old"
   ClearErrors
   Delete "$INSTDIR\install-manifest.txt"
   ${If} ${Errors}
@@ -572,6 +593,12 @@ Section "Corewright"
     FileClose $7
   ${EndIf}
   SetOutPath "$INSTDIR"
+  ; In-app updates: Corewright Updater started this setup and is still running from these two files. A running
+  ; program can be renamed but not overwritten, so move it aside; the old copy goes on the next update or restart.
+  !insertmacro MoveAsideRunning "Corewright.Updater.exe"
+  !insertmacro MoveAsideRunning "Corewright.Updater.dll"
+  ; The removal at restart is registered either way; no restart prompt for a leftover file.
+  SetRebootFlag false
   StrCpy $FilesReplaced 1
   ClearErrors
   File /r "${SRC}\*.*"

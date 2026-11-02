@@ -228,6 +228,10 @@ strong.tone-critical { color: var(--critical); }
 .dev-stats dt { font-size: 11px; color: var(--secondary-text); }
 .dev-stats dd { margin: 1px 0 0; font-size: 14px; line-height: 19px; font-weight: 600; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
 .dev-stats .tone-caution dd, .dev-stats .tone-critical dd { color: var(--tone); }
+.dev-stats dd.dev-sub { font-size: 11px; line-height: 15px; font-weight: 400; color: var(--secondary-text); }
+.dev-top { align-items: stretch; }
+.dev-top > .dev-section { display: flex; flex-direction: column; min-width: 0; }
+.dev-top > .dev-section > .dev-card { flex: 1; }
 .dev-missing { margin: 0; border-top: 1px solid var(--divider); padding-top: 8px; }
 .dev-note { margin-top: 16px; }
 @media (max-width: 760px) { .dev-body { grid-template-columns: 1fr; } }

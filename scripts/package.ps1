@@ -64,6 +64,9 @@ $preflight = [Collections.Generic.List[string]]::new()
 foreach ($file in Get-ChildItem -LiteralPath $stage -File -Recurse) {
     $relative = Quote-Nsis ([IO.Path]::GetRelativePath($stage, $file.FullName))
     $manifest.Add('FileWrite $8 "F|' + $relative + '$\r$\n"')
+    # Corewright Updater runs the setup for in-app updates, so its own image files are always in use then. The setup
+    # moves them aside instead (MoveAsideRunning in corewright.nsi); a lock check would fail every update (beta 3).
+    if ($relative -in 'Corewright.Updater.exe', 'Corewright.Updater.dll') { continue }
     if ($relative -eq 'Corewright.Service.exe') { $preflight.Add('${If} $ServicePid == 0') }
     $preflight.Add('${If} ${FileExists} "$INSTDIR\' + $relative + '"')
     $preflight.Add('ClearErrors')

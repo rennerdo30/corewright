@@ -5,7 +5,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <LangVersion>latest</LangVersion>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
-    <Version>0.1.0-beta.4</Version>
+    <Version>0.1.0-beta.5</Version>
 
     <!-- Hard constraint: minimal memory and CPU (see CLAUDE.md). -->
     <InvariantGlobalization>true</InvariantGlobalization>
