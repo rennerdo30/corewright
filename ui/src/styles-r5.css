@@ -35,7 +35,9 @@
 .pg-actions { display: flex; gap: 8px; align-items: center; }
 .pg-status { margin: 0; max-width: 100ch; font-size: 15px; line-height: 24px; color: var(--secondary-text); }
 .pg-status strong { color: var(--text); font-weight: 600; }
-.pg-status .count { font-size: 15px; }
+/* Dots in the page sentence: same size, colour and baseline as the text around them; only the numbers stand out. */
+.pg-status .count { display: inline; font-size: inherit; color: inherit; white-space: nowrap; }
+.pg-status .count i { margin: 0 6px 0 2px; vertical-align: 1px; }
 .section-desc { margin: -2px 0 10px; color: var(--secondary-text); max-width: 80ch; line-height: 20px; }
 .overview .pg-head, .settings .pg-head { margin-bottom: 14px; }
 .settings .section:first-of-type h3 { margin-top: 4px; }

@@ -2,7 +2,7 @@ import { useVirtualizer } from '@tanstack/react-virtual'
 import { useMemo, useRef, useState } from 'react'
 import { api } from '../api'
 import { ContextMenu, type MenuEntry } from '../components/ContextMenu'
-import { Dot, PageHeader, joinAnd, plural } from '../components/PageHeader'
+import { Dot, PageHeader, joinAnd } from '../components/PageHeader'
 import { buildProcessMenu } from '../components/processMenu'
 import { bytes, newId, percent } from '../format'
 import { iconUrl, isHost, levelLabel, post, useDescriptions } from '../host'
@@ -580,15 +580,25 @@ function ProcessSummary({ rows }: { rows?: ProcessRow[] }) {
   }
   const fg = rows.find((p) => p.foreground)
   const parts: React.ReactNode[] = []
-  if (byRules) parts.push(<Dot key="r" role="rule">your rules manage {byRules}</Dot>)
-  if (byAutopilot) parts.push(<Dot key="a" role="background">Autopilot {byAutopilot}</Dot>)
+  if (byRules)
+    parts.push(
+      <Dot key="r" role="rule">
+        <strong>{byRules}</strong> by your rules
+      </Dot>,
+    )
+  if (byAutopilot)
+    parts.push(
+      <Dot key="a" role="background">
+        <strong>{byAutopilot}</strong> by Autopilot
+      </Dot>,
+    )
   return (
     <>
-      {plural(rows.length, 'process', 'processes')} running.{' '}
-      {parts.length ? <>Of these, {joinAnd(parts)}. </> : <>None of them is managed right now. </>}
+      <strong>{rows.length}</strong> {rows.length === 1 ? 'process' : 'processes'} running.{' '}
+      {parts.length ? <>Managed: {joinAnd(parts)}. </> : <>None of them is managed right now. </>}
       {fg ? (
         <>
-          In front: <strong>{fg.name.replace(/\.exe$/i, '')}</strong>.
+          In front: <strong>{fg.name.replace(/\.exe$/i, '').replace(/(\w)\.(\w)/g, '$1 $2')}</strong>.
         </>
       ) : null}
     </>
