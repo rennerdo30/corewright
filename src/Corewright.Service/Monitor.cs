@@ -313,6 +313,11 @@ internal sealed class Monitor : BackgroundService
                         e.Pid, e.Process, e.Slot, e.Value, e.Message));
                 _background?.Save();
             }
+            if (_background is { } background)
+            {
+                try { await background.SaveCompletion.WaitAsync(TimeSpan.FromSeconds(2)); }
+                catch (TimeoutException) { _log.LogWarning("Background statistics write still finishing at shutdown"); }
+            }
             _actuator.Dispose();
             Devices.Dispose();
             _processNetwork?.Dispose();
@@ -387,15 +392,8 @@ internal sealed class Monitor : BackgroundService
             _background ??= new BackgroundClassifier(DataDirectory);
             // As a service the foreground comes from the tray: known once it reported, unknown after it said goodbye (pid 0).
             bool foregroundKnown = _ctx.ForegroundKnown;
-            if (_background.Observe(_sampler.Processes, _ctx.ForegroundPid, foregroundKnown, Topology.LogicalCount, _ctx.NowMs,
-                    Settings.Autopilot.Background, Settings.Autopilot.GameMode, Topology, ap.Launchers)
-                && Settings.Autopilot.Enabled && Settings.Autopilot.Background.Enabled)
-            {
-                var errors = new List<RuleError>();
-                var compiled = CompileAll(RuleSet, Settings, errors);
-                if (errors.Count == 0) Engine.SetRules(compiled);
-                else _log.LogWarning("background placement rules rejected: {Message}", errors[0].Message);
-            }
+            _background.Observe(_sampler.Processes, _ctx.ForegroundPid, foregroundKnown, Topology.LogicalCount, _ctx.NowMs,
+                ap.Background, ap.GameMode, Topology, ap.Launchers);
 
             _ctx.ForegroundRoot = _background.ForegroundRoot;
             _ctx.ForegroundProgram = _sampler.TryGet(_ctx.ForegroundPid, out var foregroundApp) ? foregroundApp.Program : null;
