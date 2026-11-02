@@ -235,3 +235,5 @@ strong.tone-critical { color: var(--critical); }
 .dev-missing { margin: 0; border-top: 1px solid var(--divider); padding-top: 8px; }
 .dev-note { margin-top: 16px; }
 @media (max-width: 760px) { .dev-body { grid-template-columns: 1fr; } }
+.api-calls .hit { grid-template-columns: 90px minmax(120px, 220px) minmax(0, 1fr) auto; }
+.api-calls .hit-what { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

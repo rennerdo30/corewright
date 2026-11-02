@@ -3,6 +3,14 @@
 Release notes for every Corewright version, newest first. The release workflow publishes the section of a version
 as its GitHub release notes.
 
+## 0.1.0-beta.6
+
+### New
+
+- **Integrations → Recent API calls:** the last 100 calls that changed something (facts, rules, settings, groups)
+  and every rejected call, with the program that made it, its result and how long it took. Reads are not listed.
+  Also available as `GET /api/v1/api-calls`.
+
 ## 0.1.0-beta.5
 
 ### Fixed

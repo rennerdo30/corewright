@@ -19,7 +19,7 @@ function value(slot: string, v: string) {
   return levelLabel(v) || v
 }
 
-function ago(ms: number) {
+export function ago(ms: number) {
   const s = Math.max(0, Math.round((Date.now() - ms) / 1000))
   if (s < 60) return `${s} s ago`
   if (s < 3600) return `${Math.round(s / 60)} min ago`

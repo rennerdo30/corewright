@@ -149,6 +149,8 @@ internal sealed class Monitor : BackgroundService
     public SystemTopology Topology { get; }
     public TopologyDto? CpuLayout { get; }
     public ProcessDetailsCache Details { get; } = new();
+    /// <summary>Recent API calls that changed something or were rejected (Integrations).</summary>
+    public ApiLog ApiCalls { get; } = new();
     public NetworkSampler Network => _network;
     public NetworkPolicies NetworkPolicies => _actuator.Network;
     public CoreUsageSampler Cores => _cores;

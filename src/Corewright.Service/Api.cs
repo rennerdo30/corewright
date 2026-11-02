@@ -70,6 +70,7 @@ public sealed record ImportResponseDto(bool Applied, string? Source, Rule[] Rule
 [JsonSerializable(typeof(RulesResultDto))]
 [JsonSerializable(typeof(EventsDto))]
 [JsonSerializable(typeof(RuleHitDto[]))]
+[JsonSerializable(typeof(ApiCallDto[]))]
 [JsonSerializable(typeof(GroupRequestDto))]
 [JsonSerializable(typeof(GroupDto))]
 [JsonSerializable(typeof(GroupDto[]))]
@@ -295,6 +296,8 @@ internal static class Api
             lock (m.Sync) return TypedResults.Ok(m.Placer.Snapshot(Environment.TickCount64).ToArray());
         });
 
+        api.MapGet("/api-calls", () => TypedResults.Ok(m.ApiCalls.Recent()));
+
         api.MapGet("/events", (long? after) =>
         {
             var (last, events) = m.Events.Since(after ?? 0);
@@ -357,13 +360,16 @@ internal static class Api
     public static Func<HttpContext, Func<Task>, Task> Guard(Monitor m, byte[] token, int port) => async (ctx, next) =>
     {
         var host = ctx.Request.Host;
+        bool isApi = ctx.Request.Path.StartsWithSegments("/api");
+        long start = Environment.TickCount64;
         if (host.Host is not ("127.0.0.1" or "localhost") || (host.Port is int p && p != port))
         {
             ctx.Response.StatusCode = StatusCodes.Status421MisdirectedRequest;
+            if (isApi) LogCall(m, ctx, port, start);
             return;
         }
 
-        if (ctx.Request.Path.StartsWithSegments("/api"))
+        if (isApi)
         {
             string auth = ctx.Request.Headers.Authorization.ToString();
             const string prefix = "Bearer ";
@@ -372,10 +378,29 @@ internal static class Api
             if (!ok)
             {
                 ctx.Response.StatusCode = StatusCodes.Status401Unauthorized;
+                LogCall(m, ctx, port, start);
                 return;
             }
             m.TouchClient();
         }
         await next();
+        if (isApi) LogCall(m, ctx, port, start);
     };
+
+    /// <summary>Integrations → Recent API calls: changes and rejected calls only (see <see cref="ApiLog"/>).</summary>
+    private static void LogCall(Monitor m, HttpContext ctx, int port, long start)
+    {
+        string method = ctx.Request.Method;
+        string path = ctx.Request.Path.Value ?? "";
+        int status = ctx.Response.StatusCode;
+        if (!ApiLog.ShouldLog(method, path, status)) return;
+        if (path.Length > 160) path = path[..160] + "…";
+        int? pid = ApiLog.OwnerOf(ctx.Connection.RemotePort, port);
+        string? client = null;
+        if (pid is int id)
+            lock (m.Sync)
+                if (m.Sampler.TryGet(id, out var info)) client = info.Name;
+        m.ApiCalls.Add(new ApiCallDto(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), method, path, status,
+            (int)Math.Min(int.MaxValue, Environment.TickCount64 - start), pid, client));
+    }
 }

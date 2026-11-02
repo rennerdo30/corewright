@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { api } from '../api'
 import { PageHeader, plural } from '../components/PageHeader'
+import { ago } from '../components/RuleHistory'
 import { Card } from '../components/SettingsControls'
 import { isHost, post } from '../host'
 import { usePoll } from '../hooks'
@@ -19,6 +20,7 @@ const ENDPOINTS: { group: string; items: [Method[], string, string][] }[] = [
       [['GET'], '/processes/{pid}/explain', 'Which rules match a process and which settings they win'],
       [['GET'], '/events?after={seq}', 'Changes Corewright made, for polling'],
       [['GET'], '/autopilot/placements', 'Where Autopilot placed each process, and why'],
+      [['GET'], '/api-calls', 'The last 100 calls that changed something or were rejected, and which program made them'],
     ],
   },
   {
@@ -206,6 +208,62 @@ export function Integrations() {
           </table>
         </div>
       </section>
+
+      <RecentCalls />
     </div>
+  )
+}
+
+/** Why a call failed, in words, for the status codes the API uses. */
+const STATUS_TEXT: Record<number, string> = {
+  400: 'rejected: invalid request',
+  401: 'rejected: wrong or missing token',
+  404: 'not found',
+  409: 'conflict',
+  421: 'rejected: not a local address',
+  503: 'not possible right now',
+}
+
+/**
+ * The last 100 calls that changed something, and every rejected call, with the program that made them (owner,
+ * 2026-11-02). Reads are not listed: the dashboard alone reads several times a second.
+ */
+function RecentCalls() {
+  const calls = usePoll(api.apiCalls, 3000)
+  const list = calls.data ?? []
+  return (
+    <section>
+      <div className="section-head">
+        <h3>Recent API calls</h3>
+        <span className="secondary tiny">Changes and rejected calls since the service started, newest first; reads are not listed</span>
+      </div>
+      {list.length === 0 ? (
+        <div className="empty-card">No app has changed anything through the API since the service started.</div>
+      ) : (
+        <div className="card flush hits api-calls">
+          {list.map((c, i) => {
+            const ok = c.status < 400
+            return (
+              <div key={`${c.time}-${i}`} className={`hit ${ok ? 'applied' : 'failed'}`}>
+                <span className="hit-time" title={new Date(c.time).toLocaleString()}>
+                  {ago(c.time)}
+                </span>
+                <span className="hit-proc" title={c.pid ? `PID ${c.pid}` : 'The calling program had already closed the connection'}>
+                  {c.client ?? (c.pid ? `PID ${c.pid}` : 'unknown program')}
+                  {c.client && c.pid ? <span className="secondary tiny"> {c.pid}</span> : null}
+                </span>
+                <span className="hit-what ep-path">
+                  <span className={`method m-${c.method.toLowerCase()}`}>{c.method}</span>
+                  <span className="mono">{c.path.replace(/^\/api\/v1/, '')}</span>
+                </span>
+                <span className="hit-state" title={`HTTP ${c.status}, ${c.ms} ms`}>
+                  {ok ? `${c.ms} ms` : STATUS_TEXT[c.status] ?? `failed (${c.status})`}
+                </span>
+              </div>
+            )
+          })}
+        </div>
+      )}
+    </section>
   )
 }

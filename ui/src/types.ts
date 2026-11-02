@@ -310,6 +310,17 @@ export interface RuleHit {
   message?: string
 }
 
+/** One API call that changed something or was rejected (GET /api-calls, newest first). */
+export interface ApiCall {
+  time: number
+  method: string
+  path: string
+  status: number
+  ms: number
+  pid?: number
+  client?: string
+}
+
 /** One installed memory module (SMBIOS type 17). */
 export interface MemoryModule {
   slot: string

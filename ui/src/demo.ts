@@ -401,6 +401,14 @@ export async function demoRequest(method: string, path: string, body?: unknown):
       return json(background)
     case '/facts':
       return { 'obs.recording': 'true', 'discord.call': 'true' }
+    case '/api-calls':
+      return [
+        { time: now - 4_000, method: 'PUT', path: '/api/v1/facts/obs.recording', status: 204, ms: 3, pid: 9120, client: 'obs64.exe' },
+        { time: now - 52_000, method: 'PUT', path: '/api/v1/groups/render-job', status: 200, ms: 41, pid: 15544, client: 'python.exe' },
+        { time: now - 95_000, method: 'GET', path: '/api/v1/status', status: 401, ms: 0, pid: 20980, client: 'curl.exe' },
+        { time: now - 600_000, method: 'DELETE', path: '/api/v1/groups/render-job', status: 204, ms: 12, pid: 15544, client: 'python.exe' },
+        { time: now - 1_900_000, method: 'PUT', path: '/api/v1/settings', status: 200, ms: 58, pid: 11872, client: 'msedgewebview2.exe' },
+      ]
     case '/events': {
       const after = Number(new URLSearchParams(path.split('?')[1]).get('after') ?? 0)
       return { last: seq, events: events.filter((e) => e.seq > after) }
