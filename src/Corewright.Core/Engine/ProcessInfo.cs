@@ -97,6 +97,9 @@ public sealed class EvalContext
     /// <summary>App root of the foreground process: every process of that app counts as "in front" (rule field isForegroundApp).</summary>
     public ProcessKey ForegroundRoot { get; set; }
 
+    public bool IsForegroundApp(ProcessInfo p) => p.Key.Pid == ForegroundPid ||
+        (ForegroundRoot.Pid != 0 && p.AppRoot == ForegroundRoot);
+
     /// <summary>The detected game (Autopilot game mode); 0 when none. Every process with the same exe name counts.</summary>
     public int GamePid { get; set; }
     public string? GameName { get; set; }

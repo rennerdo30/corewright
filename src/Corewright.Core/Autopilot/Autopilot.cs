@@ -253,8 +253,7 @@ public static class AutopilotRules
                 var when = Condition.All(Condition.Leaf("program", "eq", v.Program), Condition.Leaf("ageSeconds", "gt", "15"),
                     Condition.Leaf("sessionPresent", "isTrue", null),
                     Condition.Leaf("isLauncher", "isFalse", null), Condition.Leaf("isGame", "isFalse", null));
-                // A program only counts as background while no window of its app is in front. Services have none.
-                if (!v.Service) when.Children!.Add(Condition.Leaf("isForegroundApp", "isFalse", null));
+                when.Children!.Add(Condition.Leaf("isForegroundApp", "isFalse", null));
                 rules.Add(new Rule
                 {
                     Id = IdPrefix + "background-" + Slug(v.Display) + "-" + Fnv(v.Program),

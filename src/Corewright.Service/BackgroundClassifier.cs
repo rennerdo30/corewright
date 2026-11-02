@@ -74,6 +74,7 @@ internal sealed class BackgroundClassifier
     private List<string>? _launcherSource;
     private HashSet<string> _launchers = new(StringComparer.OrdinalIgnoreCase);
     private bool _wasPresent;
+    private readonly HashSet<string> _verdictPrograms = new(StringComparer.Ordinal);
 
     public BackgroundClassifier(string dataDirectory)
     {
@@ -160,6 +161,8 @@ internal sealed class BackgroundClassifier
         }
 
         long unix = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        foreach (var key in _frontThisTick)
+            if (_verdictPrograms.Contains(key)) { _lastClassifyMs = 0; break; }
         foreach (var (key, cores) in _coresThisTick)
         {
             if (!_stats.TryGetValue(key, out var s)) continue;
@@ -251,6 +254,8 @@ internal sealed class BackgroundClassifier
         verdicts.Sort((a, b) => string.CompareOrdinal(a.Program, b.Program));
         string signature = string.Join('|', verdicts.Select(v => $"{v.Program}:{v.Kind}"));
         Verdicts = verdicts;
+        _verdictPrograms.Clear();
+        foreach (var v in verdicts) _verdictPrograms.Add(v.Program);
         if (signature == _signature) return false;
         _signature = signature;
         return true;

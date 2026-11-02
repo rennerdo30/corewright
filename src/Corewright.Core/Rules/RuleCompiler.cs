@@ -268,8 +268,8 @@ public static class RuleCompiler
                 // The window you use and every process of the same app (Electron helpers, browser tabs, a terminal's children).
                 return op switch
                 {
-                    "isTrue" => static (p, x) => p.Key.Pid == x.ForegroundPid || (x.ForegroundRoot.Pid != 0 && p.AppRoot == x.ForegroundRoot),
-                    "isFalse" => static (p, x) => p.Key.Pid != x.ForegroundPid && (x.ForegroundRoot.Pid == 0 || p.AppRoot != x.ForegroundRoot),
+                    "isTrue" => static (p, x) => x.IsForegroundApp(p),
+                    "isFalse" => static (p, x) => !x.IsForegroundApp(p),
                     _ => Error($"operator '{op}' does not apply to isForegroundApp (use isTrue or isFalse)"),
                 };
             case "group": return Str(p => p.GroupOwner ?? "");

@@ -272,7 +272,7 @@ public sealed class RuleEngine(IActuator actuator, IEngineEventSink sink, Func<l
         {
             var r = rules[i];
             if (r.UsesNetwork && !p.NetAvailable) { st.ClearTiming(i); continue; }
-            if (r.ForegroundDependent && (!ctx.ForegroundKnown || (p.SessionId != 0 && p.SessionId != ctx.ForegroundSessionId)))
+            if (r.ForegroundDependent && !ForegroundSafe(p, ctx))
             { st.ClearTiming(i); continue; }
             if ((r.SlotMask & ~claimed) == 0)
             {
@@ -304,7 +304,7 @@ public sealed class RuleEngine(IActuator actuator, IEngineEventSink sink, Func<l
             bool has = (claimed & (1 << s)) != 0;
             // Frozen: what Autopilot set on a process outside any group stays exactly as it is.
             if (!has && FreezeAutopilot && p.GroupId is null && st.IsApplied[s] && st.AppliedRule[s] is { IsAutopilot: true } frozen &&
-                (!frozen.ForegroundDependent || ctx.ForegroundKnown)) continue;
+                (!frozen.ForegroundDependent || ForegroundSafe(p, ctx))) continue;
             Reconcile(p, st, s, has, want[s], has ? rules[wantRule[s]] : null);
         }
     }
@@ -411,6 +411,9 @@ public sealed class RuleEngine(IActuator actuator, IEngineEventSink sink, Func<l
         st.Active[i] = active;
         return active;
     }
+
+    private static bool ForegroundSafe(ProcessInfo p, EvalContext ctx) => ctx.ForegroundKnown &&
+        (p.SessionId == 0 || p.SessionId == ctx.ForegroundSessionId) && !ctx.IsForegroundApp(p) && !p.IsLauncher && !p.LatencyCritical;
 
     private void Reconcile(ProcessInfo p, ProcState st, int s, bool has, long value, CompiledRule? rule)
     {
