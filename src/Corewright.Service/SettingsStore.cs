@@ -18,6 +18,12 @@ internal sealed class SettingsStore(string dataDirectory, ILogger<SettingsStore>
             AppSettings s;
             using (var fs = File.OpenRead(_path))
                 s = JsonSerializer.Deserialize(fs, CoreJson.Default.AppSettings) ?? new AppSettings();
+            // A hand-edited "section": null must not stop the service at start (review L2).
+            s.Autopilot ??= new AutopilotSettings();
+            s.Autopilot.GameMode ??= new GameModeSettings();
+            s.Autopilot.Balance ??= new BalanceSettings();
+            s.Autopilot.Background ??= new BackgroundSettings();
+            s.Autopilot.BuildTools ??= new BuildToolsSettings();
             return Migrate(s);
         }
         catch (Exception e) when (e is JsonException or IOException)
@@ -47,7 +53,13 @@ internal sealed class SettingsStore(string dataDirectory, ILogger<SettingsStore>
         {
             foreach (var launcher in GameModeSettings.GameLaunchers)
                 if (!s.Autopilot.GameMode.NotGames.Contains(launcher, StringComparer.OrdinalIgnoreCase)) s.Autopilot.GameMode.NotGames.Add(launcher);
-            if (s.Autopilot.Balance.ReleaseSeconds == 6) s.Autopilot.Balance.ReleaseSeconds = 30;
+            // A customised threshold is converted, never dropped (review M5): a share of the whole machine becomes cores.
+            // Only the untouched old defaults (8 %, release 6 s) move to the new defaults.
+            var balance = s.Autopilot.Balance;
+            bool defaultPercent = balance.LegacyCpuPercent is null or 8;
+            if (!defaultPercent)
+                balance.CpuCores = Math.Round(Math.Max(0.1, balance.LegacyCpuPercent!.Value * Environment.ProcessorCount / 100.0), 2);
+            if (defaultPercent && balance.ReleaseSeconds == 6) balance.ReleaseSeconds = 30;
         }
         if (s.Version < 5) s.Autopilot.Mode = s.Autopilot.LegacyEnabled ? "on" : "off";
         s.Version = AppSettings.CurrentVersion;
@@ -56,6 +68,9 @@ internal sealed class SettingsStore(string dataDirectory, ILogger<SettingsStore>
         log.LogInformation("settings.json migrated to version {Version}", s.Version);
         return s;
     }
+
+    /// <summary>The loaded file is kept as a copy before the next save overwrites it (invalid values at start).</summary>
+    public void PreserveOnNextSave() => _readOnly = true;
 
     public void Save(AppSettings settings)
     {

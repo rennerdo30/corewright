@@ -175,6 +175,12 @@ public sealed class BalanceSettings
     /// <summary>Core-relative contribution, independent of the machine's logical processor count.</summary>
     public double CpuCores { get; set; } = 0.7;
 
+    /// <summary>Settings before version 5 stored a share of the whole machine; read once by the migration, never written.</summary>
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public double? CpuPercent { get => null; set => LegacyCpuPercent = value; }
+    [System.Text.Json.Serialization.JsonIgnore]
+    public double? LegacyCpuPercent { get; private set; }
+
     public double SustainSeconds { get; set; } = 2;
     public double ReleaseSeconds { get; set; } = 30;
     public string Priority { get; set; } = "belowNormal";
@@ -185,6 +191,7 @@ public sealed class BalanceSettings
 public static class AutopilotRules
 {
     public const string IdPrefix = "autopilot-";
+    public const string GameRuleId = IdPrefix + "game";
 
     public static List<Rule> Build(AutopilotSettings s, SystemTopology topo, IReadOnlyList<BackgroundVerdict>? background = null)
     {
@@ -206,11 +213,13 @@ public static class AutopilotRules
 
             rules.Add(new Rule
             {
-                Id = IdPrefix + "game",
+                Id = GameRuleId,
                 Name = "Autopilot: game",
                 Priority = 9,
                 AllowRealtime = false,
-                When = Condition.All(Condition.Leaf("isGame", "isTrue", null), Condition.Leaf("isLauncher", "isFalse", null)),
+                // No launcher guard here: nearly every game starts helpers (anti-cheat, crash handler, overlay), and the
+                // game tree is this rule's target, not a bystander (review M2). Its children belong to the game tree.
+                When = Condition.All(Condition.Leaf("isGame", "isTrue", null)),
                 Actions = new RuleActions { CpuPriority = g.GamePriority, GpuPriority = g.GameGpuPriority, Affinity = gameAffinity, IoPriority = "normal" },
             });
 

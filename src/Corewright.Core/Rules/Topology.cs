@@ -121,7 +121,8 @@ public static class AffinityParser
 
     public static string Format(ulong mask)
     {
-        if (AffinityModes.IsDynamic((long)mask)) return (long)mask == AffinityModes.Game ? "auto (game CCD)" : "auto (background)";
+        if (AffinityModes.IsDynamic((long)mask))
+            return (long)mask == AffinityModes.Game ? "auto (game CCD)" : (long)mask == AffinityModes.NonGame ? "auto (other CCDs while gaming)" : "auto (background)";
         if (mask == 0) return "none";
         var sb = new StringBuilder();
         int i = 0;

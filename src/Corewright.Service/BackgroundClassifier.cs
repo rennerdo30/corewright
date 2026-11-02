@@ -367,11 +367,19 @@ internal sealed class BackgroundClassifier
     }
 
     private int _writeInFlight;
+    private readonly List<string> _stale = [];
     public Task SaveCompletion { get; private set; } = Task.CompletedTask;
 
     public void Save()
     {
         if (Interlocked.CompareExchange(ref _writeInFlight, 1, 0) != 0) return;
+        // Forget programs not seen for 30 days (on this thread, before the snapshot), so the table never fills up and
+        // stops learning new programs (review L1). At most every five minutes, like the save itself.
+        long cutoff = DateTimeOffset.UtcNow.ToUnixTimeSeconds() - 30 * 86400;
+        _stale.Clear();
+        foreach (var (key, stats) in _stats) if (stats.LastSeen != 0 && stats.LastSeen < cutoff) _stale.Add(key);
+        foreach (var key in _stale) _stats.Remove(key);
+        _stale.Clear();
         var snapshot = new Dictionary<string, ProgramStats>(_stats.Count, StringComparer.Ordinal);
         foreach (var (key, stats) in _stats) snapshot[key] = stats.Copy();
         var file = new StatsFile { LastDecayUnix = _lastDecayUnix, Programs = snapshot };

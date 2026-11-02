@@ -163,9 +163,14 @@ public sealed class RuleEngine(IActuator actuator, IEngineEventSink sink, Func<l
     private int CountAutopilotPlaced()
     {
         int count = 0, s = (int)Slot.Affinity;
-        foreach (var st in _states.Values) if (st.IsApplied[s] && st.AppliedRule[s] is { IsAutopilot: true }) count++;
+        foreach (var st in _states.Values) if (st.IsApplied[s] && CountsTowardCap(st.AppliedRule[s])) count++;
         return count;
     }
+
+    /// <summary>The placement cap bounds background placement; the game is the one process Autopilot most wants to place
+    /// (review M1), so its rule neither counts nor is declined.</summary>
+    private static bool CountsTowardCap(CompiledRule? r) =>
+        r is { IsAutopilot: true } && !r.Id.Equals(Corewright.Core.Autopilot.AutopilotRules.GameRuleId, StringComparison.Ordinal);
 
     private static bool IsListed(IReadOnlyList<ProcessInfo> processes, ProcessKey key)
     {
@@ -514,8 +519,8 @@ public sealed class RuleEngine(IActuator actuator, IEngineEventSink sink, Func<l
             else value = Placer.Resolve(p, value, _ctx ?? new EvalContext());
             if (value == 0) has = false;
         }
-        bool wasAutopilot = slot == Slot.Affinity && st.IsApplied[s] && st.AppliedRule[s] is { IsAutopilot: true };
-        if (has && slot == Slot.Affinity && rule!.IsAutopilot &&
+        bool wasAutopilot = slot == Slot.Affinity && st.IsApplied[s] && CountsTowardCap(st.AppliedRule[s]);
+        if (has && slot == Slot.Affinity && CountsTowardCap(rule) &&
             ((!wasAutopilot && AutopilotPlaced >= AutopilotPlacementLimit) || (wasAutopilot && AutopilotPlaced > AutopilotPlacementLimit)))
         { AutopilotCapped = true; has = false; }
         if (!has)

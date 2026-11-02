@@ -10,7 +10,7 @@ using Corewright.Service.Windows;
 namespace Corewright.Service;
 
 public sealed record StatusDto(string Version, string Mode, bool Elevated, bool Paused, int IntervalMs, int ProcessCount,
-    int RulesVersion, int ActiveRules, int ForegroundPid, bool Autopilot, GameDto? Game, string DataDirectory, string AutopilotMode, int AutopilotPlaced, bool AutopilotCapped);
+    int RulesVersion, int ActiveRules, int ForegroundPid, bool Autopilot, GameDto? Game, string DataDirectory, string AutopilotMode, int AutopilotPlaced, bool AutopilotCapped, string? JournalProblem = null);
 
 public sealed record AutopilotPreviewDto(int Pid, string Process, string Rule, string Slot, string Value, string Reason);
 
@@ -115,7 +115,7 @@ internal static class Api
                     Environment.IsPrivilegedProcess, m.Engine.Paused, m.IntervalMs, m.Sampler.Processes.Count,
                     m.Engine.Version, m.Engine.Rules.Rules.Count(r => !r.Id.StartsWith(AutopilotRules.IdPrefix, StringComparison.Ordinal)),
                     m.Context.ForegroundPid, m.Settings.Autopilot.Enabled,
-                    m.Game.Game is { } g ? new GameDto(g.Pid, m.Game.GameName ?? "", m.Game.Reason) : null, m.DataDirectory, m.Settings.Autopilot.Mode, m.Engine.AutopilotPlaced, m.Engine.AutopilotCapped));
+                    m.Game.Game is { } g ? new GameDto(g.Pid, m.Game.GameName ?? "", m.Game.Reason) : null, m.DataDirectory, m.Settings.Autopilot.Mode, m.Engine.AutopilotPlaced, m.Engine.AutopilotCapped, m.JournalProblem));
         });
 
         api.MapGet("/system", () =>

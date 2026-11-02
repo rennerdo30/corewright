@@ -23,6 +23,7 @@ internal sealed class Monitor : BackgroundService
 
     private readonly ProcessSampler _sampler = new();
     private readonly WindowsActuator _actuator;
+    private readonly AppliedJournal _journal;
     private readonly SemaphoreSlim _wake = new(0);
     private readonly ServiceOptions _options;
     private readonly RuleStore _store;
@@ -34,7 +35,6 @@ internal sealed class Monitor : BackgroundService
     private long _reportedForegroundMs;
     private ProcessKey? _reporter, _foregroundKey;
     private bool _reportedPresent;
-    private int? _reportedSessionId;
 
     // History ring.
     private readonly NetworkSampler _network = new();
@@ -68,7 +68,7 @@ internal sealed class Monitor : BackgroundService
         Events = events;
         SystemProbe.EnablePrivileges();
         Engine = new RuleEngine(_actuator, events);
-        Engine.Journal = new AppliedJournal(dataDirectory, _actuator, events, log);
+        Engine.Journal = _journal = new AppliedJournal(dataDirectory, _actuator, events, log);
         _actuator.Network.Start(events);
         // Events carry the rule name; the per-rule history is kept by id (names can repeat across a rename).
         events.RuleIdOf = name =>
@@ -89,8 +89,10 @@ internal sealed class Monitor : BackgroundService
         var settingsErrors = AutopilotRules.ValidateSettings(Settings, Topology);
         if (settingsErrors.Count > 0)
         {
+            // The file stays untouched and is copied aside before the next save, so no setting is lost (review L2).
             log.LogWarning("Invalid settings preserved; starting in Observe: {Message}", settingsErrors[0].Message);
             Settings = new AppSettings();
+            settingsStore.PreserveOnNextSave();
         }
         _ctx.AlwaysGames = AlwaysGamesOf(Settings);
         _placer = new AffinityPlacer(() => Topology,
@@ -158,6 +160,8 @@ internal sealed class Monitor : BackgroundService
         };
     }
     public RuleEngine Engine { get; }
+    /// <summary>Why the engine declines changes because it cannot record them, or null.</summary>
+    public string? JournalProblem => _journal.Problem;
     public EventBuffer Events { get; }
     public SystemTopology Topology { get; }
     public TopologyDto? CpuLayout { get; }
@@ -257,7 +261,6 @@ internal sealed class Monitor : BackgroundService
             _reportedForegroundMs = Environment.TickCount64;
             _reporter = reporterPid is { } rp ? ReadIdentity(rp) : null;
             _foregroundKey = ReadIdentity(pid);
-            _reportedSessionId = sessionId;
             _reportedPresent = present;
             _game.InvalidateForeground();
         }
@@ -329,6 +332,7 @@ internal sealed class Monitor : BackgroundService
                 catch (TimeoutException) { _log.LogWarning("Background statistics write still finishing at shutdown"); }
             }
             _actuator.Dispose();
+            _journal.Dispose();
             Devices.Dispose();
             _processNetwork?.Dispose();
             if ((_processNetwork is null || _processNetwork.Stopped) && _actuator.Network.SessionStopped)
@@ -379,13 +383,26 @@ internal sealed class Monitor : BackgroundService
                 _networkFieldsActive = false;
             }
 
-            // A service in session 0 cannot see the desktop; the tray reports the foreground process.
-            // In console mode the service can read it itself unless the tray reported recently.
+            // A service in session 0 cannot see the desktop; the tray reports the foreground process. The session comes
+            // from the reporting process itself, not from what the request claims (review L5).
             bool fullscreen = _reportedFullscreen;
             _ctx.ForegroundPid = _reportedForegroundPid;
             _ctx.ForegroundKnown = _reportedPresent && _reporter is { } reporter && _sampler.IsAlive(reporter) &&
                 _foregroundKey is { } foreground && _sampler.IsAlive(foreground);
-            _ctx.ForegroundSessionId = _reportedSessionId ?? (_reporter is { } rk && _sampler.TryGet(rk.Pid, out var tray) ? tray.SessionId : -1);
+            _ctx.ForegroundSessionId = _reporter is { } rk && _sampler.TryGet(rk.Pid, out var tray) && tray.Key == rk ? tray.SessionId : -1;
+            // Console mode (development) runs in the user's session and can read the foreground itself when no tray
+            // reports; without this it would never learn or apply anything foreground-related (review M4).
+            if (!IsWindowsService && !_ctx.ForegroundKnown)
+            {
+                var (selfPid, selfFullscreen) = SystemProbe.ForegroundInfo();
+                if (selfPid > 0 && _sampler.TryGet(selfPid, out var selfFront))
+                {
+                    _ctx.ForegroundPid = selfPid;
+                    fullscreen = selfFullscreen;
+                    _ctx.ForegroundKnown = true;
+                    _ctx.ForegroundSessionId = selfFront.SessionId;
+                }
+            }
 
             // Autopilot game mode: only re-classifies when the foreground or its full-screen state changes.
             var ap = Settings.Autopilot;

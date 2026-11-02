@@ -104,6 +104,9 @@ internal static unsafe partial class Win32
     public const uint WM_TIMER = 0x0113;
     [StructLayout(LayoutKind.Sequential)]
     public struct LASTINPUTINFO { public uint Size, Time; }
+    public struct RAWINPUTDEVICE { public ushort UsagePage, Usage; public uint Flags; public nint Target; }
+    [LibraryImport("user32.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)]
+    public static partial bool RegisterRawInputDevices(RAWINPUTDEVICE* devices, uint count, uint size);
     [LibraryImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] public static partial bool GetLastInputInfo(ref LASTINPUTINFO info);
     [LibraryImport("wtsapi32.dll")] [return: MarshalAs(UnmanagedType.Bool)] public static partial bool WTSRegisterSessionNotification(nint hwnd, uint flags);
     [LibraryImport("wtsapi32.dll")] [return: MarshalAs(UnmanagedType.Bool)] public static partial bool WTSUnRegisterSessionNotification(nint hwnd);
