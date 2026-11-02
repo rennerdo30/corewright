@@ -6,7 +6,7 @@ namespace Corewright.Core.Autopilot;
 public sealed class AppSettings
 {
     /// <summary>2: background placement on by default. 3: screen tools added to "never games" (owner, 2026-11-02).</summary>
-    public const int CurrentVersion = 3;
+    public const int CurrentVersion = 4;
 
     public int Version { get; set; } = CurrentVersion;
     public AutopilotSettings Autopilot { get; set; } = new();
@@ -129,6 +129,13 @@ public sealed class GameModeSettings
         "devenv.exe", "rider64.exe", "Unity.exe", "UnrealEditor.exe", "blender.exe", "obs64.exe",
         "Corewright.Dashboard.exe", "msedgewebview2.exe", "ApplicationFrameHost.exe",
         .. ScreenTools,
+        .. GameLaunchers,
+    ];
+
+    public static readonly string[] GameLaunchers =
+    [
+        "Battle.net.exe", "RiotClientServices.exe", "RiotClientUx.exe", "EADesktop.exe", "EABackgroundService.exe",
+        "EpicGamesLauncher.exe", "GalaxyClient.exe", "upc.exe", "UbisoftConnect.exe", "steam.exe", "steamwebhelper.exe",
     ];
 
     /// <summary>

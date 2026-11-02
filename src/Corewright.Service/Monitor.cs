@@ -246,6 +246,7 @@ internal sealed class Monitor : BackgroundService
             _foregroundKey = ReadIdentity(pid);
             _reportedSessionId = sessionId;
             _reportedPresent = present;
+            _game.InvalidateForeground();
         }
         Wake();
     }

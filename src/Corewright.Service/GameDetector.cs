@@ -21,7 +21,7 @@ internal sealed unsafe partial class GameDetector
         @"\blizzard entertainment\", @"\rockstar games\", @"\amazon games\library\", @"\itch\apps\",
     ];
 
-    private static readonly string[] GraphicsModules = ["d3d9.dll", "d3d11.dll", "d3d12.dll", "vulkan-1.dll"];
+    private static readonly string[] GraphicsModules = ["d3d9.dll", "d3d10.dll", "d3d11.dll", "d3d12.dll", "dxgi.dll", "vulkan-1.dll", "opengl32.dll"];
 
     /// <summary>
     /// Full screen alone is weak evidence: screenshot tools (ShareX region capture), overlays and launchers cover the
@@ -41,6 +41,7 @@ internal sealed unsafe partial class GameDetector
     public ProcessKey? Game { get; private set; }
     public string? GameName { get; private set; }
     public string? Reason { get; private set; }
+    public void InvalidateForeground() => _lastForeground = -1;
 
     /// <summary>Returns true when the detected game changed.</summary>
     public bool Update(ProcessSampler sampler, int foregroundPid, bool fullscreen, GameModeSettings settings, bool enabled, IEngineEventSink sink)
@@ -135,10 +136,12 @@ internal sealed unsafe partial class GameDetector
         if (s.Games.Contains(p.Name, StringComparer.OrdinalIgnoreCase)) return "on your games list";
 
         string path = p.Path?.ToLowerInvariant() ?? "";
+        string? graphics = UsesGraphicsApi(p.Key.Pid);
         foreach (var marker in LibraryMarkers)
-            if (path.Contains(marker, StringComparison.Ordinal)) return $"installed in a game library ({marker.Trim('\\')})";
+            if (path.Contains(marker, StringComparison.Ordinal) && graphics is not null && graphics != "module access denied")
+                return $"installed in a game library ({marker.Trim('\\')}) with {graphics}";
 
-        if (fullscreen && UsesGraphicsApi(p.Key.Pid) is { } api)
+        if (fullscreen && graphics is { } api)
         {
             weak = true;
             return $"full screen with {api}";
@@ -150,13 +153,14 @@ internal sealed unsafe partial class GameDetector
     private static string? UsesGraphicsApi(int pid)
     {
         nint h = Native.OpenProcess(Native.PROCESS_QUERY_INFORMATION | 0x0010 /* PROCESS_VM_READ */, false, pid);
-        if (h == 0) return null;
+        if (h == 0) return Marshal.GetLastPInvokeError() == 5 ? "module access denied" : null;
         try
         {
             var modules = new nint[1024];
             uint needed;
             fixed (nint* m = modules)
-                if (!K32EnumProcessModulesEx(h, m, (uint)(modules.Length * sizeof(nint)), out needed, 0x03)) return null;
+                if (!K32EnumProcessModulesEx(h, m, (uint)(modules.Length * sizeof(nint)), out needed, 0x03))
+                    return Marshal.GetLastPInvokeError() == 5 ? "module access denied" : null;
             int count = Math.Min(modules.Length, (int)(needed / (uint)sizeof(nint)));
             char* name = stackalloc char[260];
             for (int i = 0; i < count; i++)

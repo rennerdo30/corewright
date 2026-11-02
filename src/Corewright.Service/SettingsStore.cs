@@ -43,6 +43,12 @@ internal sealed class SettingsStore(string dataDirectory, ILogger<SettingsStore>
             foreach (var tool in GameModeSettings.ScreenTools)
                 if (!notGames.Contains(tool, StringComparer.OrdinalIgnoreCase)) notGames.Add(tool);
         }
+        if (s.Version < 4)
+        {
+            foreach (var launcher in GameModeSettings.GameLaunchers)
+                if (!s.Autopilot.GameMode.NotGames.Contains(launcher, StringComparer.OrdinalIgnoreCase)) s.Autopilot.GameMode.NotGames.Add(launcher);
+            if (s.Autopilot.Balance.ReleaseSeconds == 6) s.Autopilot.Balance.ReleaseSeconds = 30;
+        }
         s.Version = AppSettings.CurrentVersion;
         try { Save(s); }
         catch (IOException e) { log.LogWarning("settings.json migration could not be saved ({Message})", e.Message); }
