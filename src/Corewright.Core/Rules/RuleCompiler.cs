@@ -11,6 +11,7 @@ public sealed class CompiledRule
     internal CompiledRule(Rule source, Func<ProcessInfo, EvalContext, bool> match, bool isDynamic)
     {
         Source = source;
+        Fingerprint = System.Text.Json.JsonSerializer.Serialize(source, CoreJson.Default.Rule);
         Match = match;
         IsDynamic = isDynamic;
         SustainMs = (long)(Math.Max(0, source.SustainSeconds) * 1000);
@@ -18,6 +19,8 @@ public sealed class CompiledRule
     }
 
     public Rule Source { get; }
+    public string Fingerprint { get; }
+    public int StateIndex { get; internal set; } = -1;
     public string Id => Source.Id;
     public string Name => Source.Name;
     public int Priority => Source.Priority;

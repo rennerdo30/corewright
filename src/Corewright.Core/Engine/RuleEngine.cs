@@ -55,6 +55,7 @@ public sealed class RuleEngine(IActuator actuator, IEngineEventSink sink, Func<l
     private readonly record struct Tombstone(ProcessKey Key, ProcessKey? Parent, string Name, Inheritance Cpu, Inheritance Affinity, long Expires);
     private CompiledRuleSet _set = CompiledRuleSet.Empty;
     private int _version;
+    private int _stateCapacity;
     private long _tick;
 
     public bool Paused { get; private set; }
@@ -72,8 +73,28 @@ public sealed class RuleEngine(IActuator actuator, IEngineEventSink sink, Func<l
 
     public void SetRules(CompiledRuleSet set)
     {
-        _set = set;
+        var old = _set.Rules.ToDictionary(r => r.Id, StringComparer.Ordinal);
+        var unchanged = new HashSet<int>();
+        foreach (var r in set.Rules)
+            if (old.TryGetValue(r.Id, out var before) && before.Fingerprint == r.Fingerprint)
+            { r.StateIndex = before.StateIndex; unchanged.Add(r.StateIndex); }
+        var used = new HashSet<int>(unchanged);
+        int next = 0;
+        foreach (var r in set.Rules)
+        {
+            if (r.StateIndex >= 0) continue;
+            while (used.Contains(next)) next++;
+            r.StateIndex = next; used.Add(next);
+        }
+        foreach (int i in used) _stateCapacity = Math.Max(_stateCapacity, i + 1);
         _version++;
+        foreach (var st in _states.Values)
+        {
+            st.Reset(_stateCapacity, _version);
+            for (int i = 0; i < st.Active.Length; i++)
+                if (!unchanged.Contains(i)) { st.ClearTiming(i); st.StaticCache[i] = 0; }
+        }
+        _set = set;
     }
 
     private EvalContext? _ctx;
@@ -240,8 +261,8 @@ public sealed class RuleEngine(IActuator actuator, IEngineEventSink sink, Func<l
             var r = rules[i];
             bool unavailable = r.UsesNetwork && !p.NetAvailable;
             bool matches = !unavailable && r.Match(p, ctx);
-            bool active = st is not null && st.Version == _version && i < st.Active.Length
-                ? (r.SustainMs > 0 || r.ReleaseMs > 0 ? st.Active[i] : matches)
+            bool active = st is not null && st.Version == _version && r.StateIndex < st.Active.Length
+                ? (r.SustainMs > 0 || r.ReleaseMs > 0 ? st.Active[r.StateIndex] : matches)
                 : matches;
             if (unavailable) active = false;
             var won = new List<string>();
@@ -261,7 +282,7 @@ public sealed class RuleEngine(IActuator actuator, IEngineEventSink sink, Func<l
     private void EvaluateProcess(ProcessInfo p, ProcState st, EvalContext ctx)
     {
         var rules = _set.Rules;
-        if (st.Version != _version) st.Reset(rules.Length, _version);
+        if (st.Version != _version) st.Reset(_stateCapacity, _version);
 
         Span<long> want = stackalloc long[Slots.Count];
         Span<int> wantRule = stackalloc int[Slots.Count];
@@ -271,23 +292,23 @@ public sealed class RuleEngine(IActuator actuator, IEngineEventSink sink, Func<l
         for (int i = 0; i < rules.Length; i++)
         {
             var r = rules[i];
-            if (r.UsesNetwork && !p.NetAvailable) { st.ClearTiming(i); continue; }
+            if (r.UsesNetwork && !p.NetAvailable) { st.ClearTiming(r.StateIndex); continue; }
             if (r.ForegroundDependent && !ForegroundSafe(p, ctx))
-            { st.ClearTiming(i); continue; }
+            { st.ClearTiming(r.StateIndex); continue; }
             if ((r.SlotMask & ~claimed) == 0)
             {
                 // Every slot of this rule is already owned by a higher rule: skip the evaluation entirely.
-                st.ClearTiming(i);
+                st.ClearTiming(r.StateIndex);
                 continue;
             }
             // A grouped process belongs to the tool that registered it: only group-aware rules apply (PM-39).
             // While Autopilot is frozen, its rules make no new decisions.
             if ((p.GroupId is not null && !r.GroupAware) || (FreezeAutopilot && r.IsAutopilot))
             {
-                st.ClearTiming(i);
+                st.ClearTiming(r.StateIndex);
                 continue;
             }
-            if (!IsActive(r, i, p, st, ctx)) continue;
+            if (!IsActive(r, r.StateIndex, p, st, ctx)) continue;
             for (int s = 0; s < Slots.Count; s++)
             {
                 int bit = 1 << s;
@@ -609,19 +630,13 @@ public sealed class RuleEngine(IActuator actuator, IEngineEventSink sink, Func<l
         {
             Version = version;
             DriftCount = 0;
-            if (StaticCache.Length != ruleCount)
+            if (StaticCache.Length < ruleCount)
             {
-                StaticCache = new byte[ruleCount];
-                TrueSince = new long[ruleCount];
-                FalseSince = new long[ruleCount];
-                Active = new bool[ruleCount];
-            }
-            else
-            {
-                Array.Clear(StaticCache);
-                Array.Clear(TrueSince);
-                Array.Clear(FalseSince);
-                Array.Clear(Active);
+                int capacity = Math.Max(16, (int)System.Numerics.BitOperations.RoundUpToPowerOf2((uint)ruleCount));
+                Array.Resize(ref StaticCache, capacity);
+                Array.Resize(ref TrueSince, capacity);
+                Array.Resize(ref FalseSince, capacity);
+                Array.Resize(ref Active, capacity);
             }
             Array.Clear(Failed);
         }
