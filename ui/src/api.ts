@@ -53,6 +53,7 @@ export const api = {
   saveSettings: (s: AppSettings) => request<{ ok: boolean }>('PUT', '/settings', s),
   background: () => request<BackgroundRow[]>('GET', '/autopilot/background'),
   placements: () => request<Placement[]>('GET', '/autopilot/placements'),
+  autopilotPreview: () => request<{ pid: number; process: string; rule: string; slot: string; value: string; reason: string }[]>('GET', '/autopilot/preview'),
   explain: (pid: number) => request<Explain>('GET', `/processes/${pid}/explain`),
   rules: () => request<RuleSet>('GET', '/rules'),
   saveRules: (set: RuleSet) => request<RulesResult>('PUT', '/rules', set),

@@ -65,6 +65,7 @@ public sealed class RuleEngine(IActuator actuator, IEngineEventSink sink, Func<l
     /// the ones it made on other processes as they are; nothing is reverted mid-run.
     /// </summary>
     public bool FreezeAutopilot { get; set; }
+    public bool ObserveAutopilot { get; set; }
 
     /// <summary>Resolves "auto-…" affinity modes; without one they fall back to leaving affinity unchanged.</summary>
     public IAffinityPlacer? Placer { get; set; }
@@ -340,8 +341,9 @@ public sealed class RuleEngine(IActuator actuator, IEngineEventSink sink, Func<l
         {
             if (s < 2 && st.InheritAttempts[s] > 0 && st.InheritAttempts[s] < 4) continue;
             bool has = (claimed & (1 << s)) != 0;
+            if (has && ObserveAutopilot && rules[wantRule[s]].IsAutopilot) has = false;
             // Frozen: what Autopilot set on a process outside any group stays exactly as it is.
-            if (!has && FreezeAutopilot && p.GroupId is null && st.IsApplied[s] && st.AppliedRule[s] is { IsAutopilot: true } frozen &&
+            if (!has && !ObserveAutopilot && FreezeAutopilot && p.GroupId is null && st.IsApplied[s] && st.AppliedRule[s] is { IsAutopilot: true } frozen &&
                 (!frozen.ForegroundDependent || ForegroundSafe(p, ctx))) continue;
             Reconcile(p, st, s, has, want[s], has ? rules[wantRule[s]] : null);
         }

@@ -49,6 +49,7 @@ internal sealed class SettingsStore(string dataDirectory, ILogger<SettingsStore>
                 if (!s.Autopilot.GameMode.NotGames.Contains(launcher, StringComparer.OrdinalIgnoreCase)) s.Autopilot.GameMode.NotGames.Add(launcher);
             if (s.Autopilot.Balance.ReleaseSeconds == 6) s.Autopilot.Balance.ReleaseSeconds = 30;
         }
+        if (s.Version < 5) s.Autopilot.Mode = s.Autopilot.LegacyEnabled ? "on" : "off";
         s.Version = AppSettings.CurrentVersion;
         try { Save(s); }
         catch (IOException e) { log.LogWarning("settings.json migration could not be saved ({Message})", e.Message); }

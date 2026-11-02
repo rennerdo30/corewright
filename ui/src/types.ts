@@ -26,6 +26,7 @@ export interface AppSettings {
   version: number
   autopilot: {
     enabled: boolean
+    mode?: 'off' | 'observe' | 'on'
     launchers?: string[]
     gameMode: {
       enabled: boolean
@@ -195,6 +196,7 @@ export interface ProcessRow {
 }
 
 export interface ExplainRule {
+  reason?: string
   unavailable?: string
   ruleId: string
   ruleName: string

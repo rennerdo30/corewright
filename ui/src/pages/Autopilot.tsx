@@ -30,6 +30,7 @@ export function Autopilot() {
   const topo = usePoll(api.topology, 600_000)
   const procs = usePoll(() => api.processes(), 3000)
   const placements = usePoll(api.placements, 3000)
+  const preview = usePoll(api.autopilotPreview, 5000, settings?.autopilot.mode === 'observe')
 
   useEffect(() => {
     api.settings().then(setSettings)
@@ -101,10 +102,12 @@ export function Autopilot() {
       <header className="ap-hero">
         <div className="ap-switch">
           <h2 className="page-title">Autopilot</h2>
-          <Toggle value={a.enabled} onChange={(v) => update((x) => (x.autopilot.enabled = v))} />
+          <select aria-label="Autopilot mode" value={a.mode ?? (a.enabled ? 'on' : 'off')} onChange={(e) => update((x) => (x.autopilot.mode = e.target.value as 'off' | 'observe' | 'on'))}>
+            <option value="off">Off</option><option value="observe">Observe</option><option value="on">On</option>
+          </select>
         </div>
         <p className="ap-status">
-          {!a.enabled ? (
+          {a.mode === 'observe' ? <>Observing: learning and showing proposed changes without applying Autopilot settings.</> : !a.enabled ? (
             <>Autopilot is off. Your own rules still apply. Turn it on to let Corewright schedule games, builds and background work for you.</>
           ) : (
             <>
@@ -145,6 +148,12 @@ export function Autopilot() {
           ))}
         </div>
       )}
+
+      {a.mode === 'observe' && <section className="card">
+        <h3>What Autopilot would do</h3>
+        {(preview.data ?? []).map((p, i) => <p key={`${p.pid}-${p.slot}-${i}`}>{p.process} ({p.pid}): {p.slot} → {p.value}. {p.reason}</p>)}
+        {preview.data?.length === 0 && <p>No proposed changes right now.</p>}
+      </section>}
 
       {t && sys.data && (
         <section className="ap-map card">

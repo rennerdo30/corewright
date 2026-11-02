@@ -6,7 +6,7 @@ namespace Corewright.Core.Autopilot;
 public sealed class AppSettings
 {
     /// <summary>2: background placement on by default. 3: screen tools added to "never games" (owner, 2026-11-02).</summary>
-    public const int CurrentVersion = 4;
+    public const int CurrentVersion = 5;
 
     public int Version { get; set; } = CurrentVersion;
     public AutopilotSettings Autopilot { get; set; } = new();
@@ -20,7 +20,13 @@ public sealed class AppSettings
 public sealed class AutopilotSettings
 {
     /// <summary>Off by default: turning it on changes how every process is scheduled (owner confirms defaults).</summary>
-    public bool Enabled { get; set; }
+    private bool _legacyEnabled;
+    public bool Enabled { get => Mode == "on"; set => _legacyEnabled = value; }
+    public string Mode { get; set; } = "observe";
+    [System.Text.Json.Serialization.JsonIgnore]
+    public bool LegacyEnabled => _legacyEnabled;
+    [System.Text.Json.Serialization.JsonIgnore]
+    public bool Active => Mode is "observe" or "on";
 
     public GameModeSettings GameMode { get; set; } = new();
     public BalanceSettings Balance { get; set; } = new();
@@ -182,7 +188,7 @@ public static class AutopilotRules
     public static List<Rule> Build(AutopilotSettings s, SystemTopology topo, IReadOnlyList<BackgroundVerdict>? background = null)
     {
         var rules = new List<Rule>();
-        if (!s.Enabled) return rules;
+        if (!s.Active) return rules;
         var keep = s.GameMode.KeepResponsive;
 
         if (s.GameMode.Enabled)
@@ -335,6 +341,7 @@ public static class AutopilotRules
         var a = settings.Autopilot;
         if (a?.Background is null || a.Balance is null || a.GameMode is null || a.BuildTools is null)
         { errors.Add(new("settings", "autopilot", "Autopilot sections must not be null")); return errors; }
+        if (a.Mode is not ("off" or "observe" or "on")) errors.Add(new("settings", "mode", "mode must be off, observe or on"));
         if (a.Launchers is null || a.Background.Exclusions is null || a.Balance.Exclusions is null || a.BuildTools.Programs is null ||
             a.GameMode.Games is null || a.GameMode.NotGames is null || a.GameMode.KeepResponsive is null || a.GameMode.Placement is null)
         { errors.Add(new("settings", "autopilot", "Autopilot lists and game placement must not be null")); return errors; }

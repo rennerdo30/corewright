@@ -379,7 +379,7 @@ internal sealed class Monitor : BackgroundService
 
             // Autopilot game mode: only re-classifies when the foreground or its full-screen state changes.
             var ap = Settings.Autopilot;
-            if (_game.Update(_sampler, _ctx.ForegroundPid, fullscreen, ap.GameMode, ap.Enabled && ap.GameMode.Enabled, Events))
+            if (_game.Update(_sampler, _ctx.ForegroundPid, fullscreen, ap.GameMode, ap.Active && ap.GameMode.Enabled, Events))
             {
                 _ctx.GamePid = _game.Game?.Pid ?? 0;
                 _ctx.GameName = _game.GameName;
@@ -402,6 +402,7 @@ internal sealed class Monitor : BackgroundService
             if (_groups.Expire(_ctx.NowMs)) RebuildRules();
             _groups.Resolve(_sampler.Processes, _byPid);
             Engine.FreezeAutopilot = _groups.AnyFreeze;
+            Engine.ObserveAutopilot = ap.Mode == "observe";
             if (_groups.AnyFreeze) _facts["autopilot.frozen"] = "true";
             else _facts.Remove("autopilot.frozen");
             _ctx.ForegroundBusy = _sampler.TryGet(_ctx.ForegroundPid, out var front) && front.CpuPercent * Topology.LogicalCount / 100 >= 0.5;
