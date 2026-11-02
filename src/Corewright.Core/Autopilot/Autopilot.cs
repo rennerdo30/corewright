@@ -10,6 +10,7 @@ public sealed class AppSettings
 
     public int Version { get; set; } = CurrentVersion;
     public AutopilotSettings Autopilot { get; set; } = new();
+    public string[] Warnings { get; set; } = [];
 }
 
 /// <summary>
@@ -194,6 +195,7 @@ public static class AutopilotRules
                 _ when gameCcd >= 0 => $"ccd{gameCcd}",
                 _ => g.Placement is "auto" ? null : g.Placement,
             };
+            if (gameAffinity is not null && !AffinityParser.TryParse(gameAffinity, topo, out _, out _)) gameAffinity = null;
 
             rules.Add(new Rule
             {
@@ -335,6 +337,29 @@ public static class AutopilotRules
 
     private static int Fastest(SystemTopology topo) => topo.FrequencyCcd >= 0 && topo.FrequencyCcd < topo.CcdMasks.Length
         ? topo.FrequencyCcd : topo.VCacheCcds.Length > 0 ? topo.VCacheCcds[0] : 0;
+
+    public static List<RuleError> ValidateSettings(AppSettings settings, SystemTopology topo)
+    {
+        var errors = new List<RuleError>();
+        void Range(string field, double value, double min, double max)
+        { if (!double.IsFinite(value) || value < min || value > max) errors.Add(new("settings", field, $"{field} must be between {min} and {max}")); }
+        var a = settings.Autopilot;
+        if (a?.Background is null || a.Balance is null || a.GameMode is null || a.BuildTools is null)
+        { errors.Add(new("settings", "autopilot", "Autopilot sections must not be null")); return errors; }
+        if (a.Launchers is null || a.Background.Exclusions is null || a.Balance.Exclusions is null || a.BuildTools.Programs is null ||
+            a.GameMode.Games is null || a.GameMode.NotGames is null || a.GameMode.KeepResponsive is null || a.GameMode.Placement is null)
+        { errors.Add(new("settings", "autopilot", "Autopilot lists and game placement must not be null")); return errors; }
+        Range("background.minObservedMinutes", a.Background.MinObservedMinutes, 1, 10080);
+        Range("background.maxForegroundPercent", a.Background.MaxForegroundPercent, 0, 100);
+        Range("background.singleCoreLoad", a.Background.SingleCoreLoad, 0.1, 64);
+        Range("background.keepBestCoresFree", a.Background.KeepBestCoresFree, 0, topo.PhysicalCores.Length > 0 ? topo.PhysicalCores.Length : topo.LogicalCount);
+        Range("balance.cpuCores", a.Balance.CpuCores, 0.1, 64);
+        Range("balance.sustainSeconds", a.Balance.SustainSeconds, 0, 3600);
+        Range("balance.releaseSeconds", a.Balance.ReleaseSeconds, 0, 3600);
+        settings.Warnings = a.GameMode.Placement is "auto" or "all" || AffinityParser.TryParse(a.GameMode.Placement, topo, out _, out _)
+            ? [] : ["Game placement is unavailable on this CPU; game priority remains active without affinity."];
+        return errors;
+    }
 
     /// <summary>Stable short hash (string.GetHashCode is randomized per process), so two programs with one display name get two ids.</summary>
     private static string Fnv(string s)

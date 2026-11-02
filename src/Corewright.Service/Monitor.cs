@@ -84,6 +84,7 @@ internal sealed class Monitor : BackgroundService
         _ctx.LogicalCount = Topology.LogicalCount;
         _settingsStore = settingsStore;
         Settings = settingsStore.Load();
+        AutopilotRules.ValidateSettings(Settings, Topology);
         _ctx.AlwaysGames = AlwaysGamesOf(Settings);
         _placer = new AffinityPlacer(() => Topology,
             () => AutopilotRules.GameCcd(Settings.Autopilot.GameMode.Placement, Topology),
@@ -211,7 +212,9 @@ internal sealed class Monitor : BackgroundService
 
     public List<RuleError> ReplaceSettings(AppSettings settings)
     {
-        var errors = new List<RuleError>();
+        var errors = AutopilotRules.ValidateSettings(settings, Topology);
+        if (errors.Count > 0) return errors;
+        settings.Version = AppSettings.CurrentVersion;
         var compiled = CompileAll(RuleSet, settings, errors);
         if (errors.Count > 0) return errors;
         lock (Sync)
