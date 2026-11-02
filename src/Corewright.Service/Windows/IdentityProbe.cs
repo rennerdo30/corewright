@@ -25,7 +25,7 @@ internal static unsafe partial class IdentityProbe
             if (!ReadProcessMemory(h, (nint)parameters + (width == 8 ? 0x38 : 0x24), directory, (nuint)(width == 8 ? 16 : 8), out _)) return null;
             int length = *(ushort*)directory;
             if (length == 0 || length > 32766 || (length & 1) != 0) return null;
-            nint text = width == 8 ? *(nint*)(directory + 8) : (nint)*(uint*)(directory + 4);
+            nint text = width == 8 ? *(nint*)(directory + 8) : (nint)(*(uint*)(directory + 4));
             char[] buffer = new char[length / 2];
             fixed (char* chars = buffer)
                 return ReadProcessMemory(h, text, chars, (nuint)length, out var read) && read == (nuint)length ? new string(buffer) : null;

@@ -261,7 +261,8 @@ public static class AutopilotRules
                 var when = Condition.All(Condition.Leaf("program", "eq", v.Program), Condition.Leaf("ageSeconds", "gt", "15"),
                     Condition.Leaf("sessionPresent", "isTrue", null),
                     Condition.Leaf("isLauncher", "isFalse", null), Condition.Leaf("isGame", "isFalse", null));
-                when.Children!.Add(Condition.Leaf("isForegroundApp", "isFalse", null));
+                when.Children!.Add(Condition.Any(Condition.Leaf("session", "eq", "0"), Condition.Leaf("isForegroundApp", "isFalse", null)));
+                if (!s.Background.IncludeServices) when.Children.Add(Condition.Leaf("session", "ne", "0"));
                 rules.Add(new Rule
                 {
                     Id = IdPrefix + "background-" + Slug(v.Display) + "-" + Fnv(v.Program),

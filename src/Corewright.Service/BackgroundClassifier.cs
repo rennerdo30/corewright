@@ -272,7 +272,6 @@ internal sealed class BackgroundClassifier
         if (!ProgramIdentity.CanClassify(key, s.Display)) return ("observing", "Observing: unresolved or non-specific host target");
         if (excluded.Contains(key) || excluded.Contains(exe) || excluded.Contains(s.Display)) return ("excluded", "Excluded");
         if (s.Critical || ProgramIdentity.IsCritical(exe, s.Display)) return ("critical", "Left alone: latency critical");
-        if (s.Service && !settings.IncludeServices) return ("service", "Service (services are off)");
         if (s.ObservedSeconds < settings.MinObservedMinutes * 60) return ("observing", "Observing");
         if (s.RecentForegroundRemaining > 0) return ("interactive", "Interactive: in front recently");
         if (100 * s.ForegroundSeconds / s.ObservedSeconds > settings.MaxForegroundPercent) return ("interactive", "Interactive");
