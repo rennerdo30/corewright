@@ -25,6 +25,14 @@ public sealed class AutopilotSettings
     public BalanceSettings Balance { get; set; } = new();
     public BackgroundSettings Background { get; set; } = new();
     public BuildToolsSettings BuildTools { get; set; } = new();
+
+    public List<string> Launchers { get; set; } =
+    [
+        "cmd.exe", "pwsh.exe", "powershell.exe", "bash.exe", "sh.exe", "conhost.exe", "OpenConsole.exe",
+        "WindowsTerminal.exe", "explorer.exe", "claude.exe", "codex.exe", "node.exe", "Code.exe", "devenv.exe",
+        "rider64.exe", "idea64.exe", "cargo.exe", "MSBuild.exe", "dotnet.exe", "ninja.exe", "cmake.exe", "make.exe",
+        "gradle.exe", "java.exe", "Unity.exe", "UnityHub.exe", "steam.exe", "EpicGamesLauncher.exe", "T3 Code (Nightly).exe",
+    ];
 }
 
 /// <summary>
@@ -186,7 +194,7 @@ public static class AutopilotRules
                 Name = "Autopilot: game",
                 Priority = 9,
                 AllowRealtime = false,
-                When = Condition.All(Condition.Leaf("isGame", "isTrue", null)),
+                When = Condition.All(Condition.Leaf("isGame", "isTrue", null), Condition.Leaf("isLauncher", "isFalse", null)),
                 Actions = new RuleActions { CpuPriority = g.GamePriority, GpuPriority = g.GameGpuPriority, Affinity = gameAffinity, IoPriority = "normal" },
             });
 
@@ -216,6 +224,7 @@ public static class AutopilotRules
                 var when = Condition.All(
                     Condition.Leaf("fact", "isTrue", null, "game.active"),
                     Condition.Leaf("isGame", "isFalse", null),
+                    Condition.Leaf("isLauncher", "isFalse", null),
                     // The whole app in front is left alone, and services are included except latency-critical ones (owner, 2026-11-02).
                     Condition.Leaf("isForegroundApp", "isFalse", null),
                     Condition.Leaf("latencyCritical", "isFalse", null),
@@ -240,7 +249,8 @@ public static class AutopilotRules
             foreach (var v in background)
             {
                 // Short-lived tools (grep, cut, a script's helpers) are not worth an affinity write each.
-                var when = Condition.All(Condition.Leaf("program", "eq", v.Program), Condition.Leaf("ageSeconds", "gt", "15"));
+                var when = Condition.All(Condition.Leaf("program", "eq", v.Program), Condition.Leaf("ageSeconds", "gt", "15"),
+                    Condition.Leaf("isLauncher", "isFalse", null), Condition.Leaf("isGame", "isFalse", null));
                 // A program only counts as background while no window of its app is in front. Services have none.
                 if (!v.Service) when.Children!.Add(Condition.Leaf("isForegroundApp", "isFalse", null));
                 rules.Add(new Rule
@@ -274,6 +284,7 @@ public static class AutopilotRules
         {
             var b = s.Balance;
             var when = Condition.All(
+                Condition.Leaf("isLauncher", "isFalse", null),
                 Condition.Leaf("isForegroundApp", "isFalse", null),
                 Condition.Leaf("isGame", "isFalse", null),
                 Condition.Leaf("latencyCritical", "isFalse", null),

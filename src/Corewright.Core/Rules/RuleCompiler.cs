@@ -232,6 +232,13 @@ public static class RuleCompiler
         dynamic = true;
         switch (field)
         {
+            case "isLauncher":
+                return op switch
+                {
+                    "isTrue" => static (p, _) => p.IsLauncher,
+                    "isFalse" => static (p, _) => !p.IsLauncher,
+                    _ => Error($"operator '{op}' does not apply to isLauncher (use isTrue or isFalse)"),
+                };
             case "cpu": return Num(p => p.CpuPercent);
             case "ageSeconds": return Num(p => (DateTime.UtcNow.ToFileTimeUtc() - p.Key.CreateTime) / 10_000_000.0);
             case "workingSetMb": return Num(p => p.WorkingSet / 1048576.0);

@@ -26,6 +26,7 @@ export interface AppSettings {
   version: number
   autopilot: {
     enabled: boolean
+    launchers?: string[]
     gameMode: {
       enabled: boolean
       gamePriority: string

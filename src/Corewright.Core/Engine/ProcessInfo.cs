@@ -28,6 +28,9 @@ public sealed class ProcessInfo(ProcessKey key, string name)
     public ProcessKey AppRoot;
     /// <summary>Audio, input, display-driver and network-core processes: Autopilot never slows them down.</summary>
     public bool LatencyCritical;
+    public bool IsLauncher;
+    public bool HasChildren;
+    public long LastChildStartMs;
 
     /// <summary>
     /// The process group another tool registered this process in (PM-39, PUT /api/v1/groups/{id}): only the group's

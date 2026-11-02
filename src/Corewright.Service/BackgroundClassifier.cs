@@ -70,6 +70,8 @@ internal sealed class BackgroundClassifier
     private readonly List<ProcessInfo> _new = [];
     private long _lastTickMs, _lastSaveMs, _lastClassifyMs, _lastDecayMs;
     private string _signature = "";
+    private List<string>? _launcherSource;
+    private HashSet<string> _launchers = new(StringComparer.OrdinalIgnoreCase);
 
     public BackgroundClassifier(string dataDirectory)
     {
@@ -86,8 +88,13 @@ internal sealed class BackgroundClassifier
 
     /// <summary>Accumulates one tick. Returns true when the classification changed (the caller rebuilds the rules).</summary>
     public bool Observe(IReadOnlyList<ProcessInfo> processes, int foregroundPid, bool foregroundKnown, int logical, long nowMs,
-        BackgroundSettings settings, GameModeSettings game, SystemTopology topo)
+        BackgroundSettings settings, GameModeSettings game, SystemTopology topo, List<string> launchers)
     {
+        if (!ReferenceEquals(_launcherSource, launchers))
+        {
+            _launcherSource = launchers;
+            _launchers = new(launchers, StringComparer.OrdinalIgnoreCase);
+        }
         _byPid.Clear();
         foreach (var p in processes) _byPid[p.Key.Pid] = p;
 
@@ -109,8 +116,23 @@ internal sealed class BackgroundClassifier
             foreach (var p in _new)
                 if (p.Parent is { } parent && _byPid.TryGetValue(parent.Pid, out var pp) && pp.Key == parent && pp.Program is { } pk &&
                     _stats.TryGetValue(pk, out var ps))
-                    ps.ChildStarts++;
+                {
+                    if (foregroundKnown) ps.ChildStarts++;
+                    pp.LastChildStartMs = nowMs;
+                }
         _new.Clear();
+
+        foreach (var p in processes) p.HasChildren = false;
+        foreach (var p in processes)
+            if (p.Parent is { } parent && _byPid.TryGetValue(parent.Pid, out var pp) && pp.Key == parent) pp.HasChildren = true;
+        foreach (var p in processes)
+        {
+            bool conditional = p.Name.Equals("node.exe", StringComparison.OrdinalIgnoreCase) ||
+                p.Name.Equals("java.exe", StringComparison.OrdinalIgnoreCase) || p.Name.Equals("gradle.exe", StringComparison.OrdinalIgnoreCase);
+            p.IsLauncher = (_launchers.Contains(p.Name) && (!conditional || p.HasChildren)) ||
+                (p.LastChildStartMs != 0 && nowMs - p.LastChildStartMs < 600_000) ||
+                (p.Program is { } key && _stats.TryGetValue(key, out var stats) && IsLauncher(stats));
+        }
 
         ForegroundRoot = _byPid.TryGetValue(foregroundPid, out var fg) ? fg.AppRoot : default;
 

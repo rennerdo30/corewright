@@ -257,6 +257,7 @@ export function Autopilot() {
               <Levels levels={LOW_LEVELS} value={bg.priority} onChange={(v) => update((x) => (x.autopilot.background.priority = v))} />
             </Row>
             <ListRow title="Never place" desc="Programs background placement leaves alone." value={bg.exclusions} onChange={(v) => update((x) => (x.autopilot.background.exclusions = v))} />
+            <ListRow title="Launchers" desc="Never placed automatically. Node, Java and Gradle count when they have children." value={a.launchers ?? []} onChange={(v) => update((x) => (x.autopilot.launchers = v))} />
           </Group>
         </div>
       </section>
