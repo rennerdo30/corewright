@@ -8,7 +8,7 @@ namespace Corewright.Service.Windows;
 /// Applies slot values with Win32 calls. Every handle is checked against the process creation time,
 /// so a reused PID never receives another process's settings. Called only from the engine thread.
 /// </summary>
-internal sealed unsafe class WindowsActuator : IActuator, IDisposable
+internal sealed unsafe class WindowsActuator(string dataDirectory) : IActuator, IDisposable
 {
     private const uint Query = Native.PROCESS_QUERY_LIMITED_INFORMATION;
     private const uint QueryFull = Native.PROCESS_QUERY_INFORMATION | Native.PROCESS_QUERY_LIMITED_INFORMATION;
@@ -17,19 +17,15 @@ internal sealed unsafe class WindowsActuator : IActuator, IDisposable
 
     // Job objects for memory caps; kept open while the process lives so the limit can be changed or removed.
     private readonly Dictionary<ProcessKey, nint> _jobs = [];
+    private readonly string _jobPrefix = @"Global\Corewright.Memory." + Convert.ToHexString(
+        System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.Unicode.GetBytes(
+            Path.GetFullPath(dataDirectory).TrimEnd(Path.DirectorySeparatorChar).ToUpperInvariant()))) + ".";
     public NetworkPolicies Network { get; } = new();
 
     public bool TryRead(in ProcessKey key, Slot slot, out long value, out string? error)
     {
         value = 0;
         if (NetworkPolicies.IsSlot(slot)) { value = NetworkPolicies.Original(slot); error = null; return true; }
-        if (slot == Slot.MemoryLimit)
-        {
-            // Without our job the process has no cap from us; "0" restores to "no cap".
-            error = null;
-            return true;
-        }
-
         nint h = Open(key, slot is Slot.IoPriority or Slot.GpuPriority ? QueryFull : Query, out error);
         if (h == 0 && slot is Slot.IoPriority or Slot.GpuPriority) h = Open(key, Query, out error);
         if (h == 0) return false;
@@ -37,6 +33,16 @@ internal sealed unsafe class WindowsActuator : IActuator, IDisposable
         {
             switch (slot)
             {
+                case Slot.MemoryLimit:
+                {
+                    if (!FindMemoryJob(key, h, out nint job, out error)) return false;
+                    if (job == 0) return true;
+                    Native.JOBOBJECT_EXTENDED_LIMIT_INFORMATION info;
+                    if (!Native.QueryInformationJobObject(job, Native.JobObjectExtendedLimitInformation, &info, (uint)sizeof(Native.JOBOBJECT_EXTENDED_LIMIT_INFORMATION), out _))
+                        return Win32Fail(out error);
+                    value = (info.BasicLimitInformation.LimitFlags & Native.JOB_OBJECT_LIMIT_PROCESS_MEMORY) != 0 ? (long)info.ProcessMemoryLimit / MB : 0;
+                    return true;
+                }
                 case Slot.CpuPriority:
                 {
                     uint pc = Native.GetPriorityClass(h);
@@ -126,7 +132,7 @@ internal sealed unsafe class WindowsActuator : IActuator, IDisposable
     {
         uint access = slot switch
         {
-            Slot.MemoryLimit => Native.PROCESS_SET_QUOTA | Native.PROCESS_TERMINATE | Query,
+            Slot.MemoryLimit => _jobs.ContainsKey(key) ? Query : Native.PROCESS_SET_QUOTA | Native.PROCESS_TERMINATE | Native.PROCESS_DUP_HANDLE | Query,
             Slot.WorkingSetLimit => Native.PROCESS_SET_QUOTA | Query,
             _ => Set,
         };
@@ -196,12 +202,27 @@ internal sealed unsafe class WindowsActuator : IActuator, IDisposable
     private bool WriteMemoryLimit(in ProcessKey key, nint process, long valueMb, out string? error)
     {
         error = null;
-        if (!_jobs.TryGetValue(key, out nint job))
+        if (!FindMemoryJob(key, process, out nint job, out error)) return false;
+        if (job == 0)
         {
             if (valueMb <= 0) return true;
-            job = Native.CreateJobObjectW(0, null);
+            fixed (char* name = MemoryJobName(key)) job = Native.CreateJobObjectW(0, name);
             if (job == 0) return Win32Fail(out error);
+            if (Marshal.GetLastPInvokeError() == 183)
+            {
+                Native.CloseHandle(job);
+                error = "memory job name already exists; change declined";
+                return false;
+            }
             if (!Native.AssignProcessToJobObject(job, process))
+            {
+                Win32Fail(out error);
+                Native.CloseHandle(job);
+                return false;
+            }
+            // A process association alone does not keep a job's name open after the controller exits.
+            // One non-inheritable, query-only reference lives in the controlled process until its exit.
+            if (!Native.DuplicateHandle(Native.GetCurrentProcess(), job, process, out _, 0x0004 /* QUERY */, false, 0))
             {
                 Win32Fail(out error);
                 Native.CloseHandle(job);
@@ -210,14 +231,40 @@ internal sealed unsafe class WindowsActuator : IActuator, IDisposable
             _jobs[key] = job;
         }
 
-        var info = new Native.JOBOBJECT_EXTENDED_LIMIT_INFORMATION();
+        Native.JOBOBJECT_EXTENDED_LIMIT_INFORMATION info;
+        if (!Native.QueryInformationJobObject(job, Native.JobObjectExtendedLimitInformation, &info,
+                (uint)sizeof(Native.JOBOBJECT_EXTENDED_LIMIT_INFORMATION), out _)) return Win32Fail(out error);
+        info.BasicLimitInformation.LimitFlags &= ~Native.JOB_OBJECT_LIMIT_PROCESS_MEMORY;
+        info.ProcessMemoryLimit = 0;
         if (valueMb > 0)
         {
-            info.BasicLimitInformation.LimitFlags = Native.JOB_OBJECT_LIMIT_PROCESS_MEMORY;
+            info.BasicLimitInformation.LimitFlags |= Native.JOB_OBJECT_LIMIT_PROCESS_MEMORY;
             info.ProcessMemoryLimit = (nuint)(valueMb * MB);
         }
         return Native.SetInformationJobObject(job, Native.JobObjectExtendedLimitInformation, &info,
                    (uint)sizeof(Native.JOBOBJECT_EXTENDED_LIMIT_INFORMATION)) || Win32Fail(out error);
+    }
+
+    private string MemoryJobName(ProcessKey key) => _jobPrefix + key.Pid + "." + key.CreateTime;
+
+    private bool FindMemoryJob(ProcessKey key, nint process, out nint job, out string? error)
+    {
+        error = null;
+        if (_jobs.TryGetValue(key, out job)) return true;
+        fixed (char* name = MemoryJobName(key)) job = Native.OpenJobObjectW(0x0006 /* QUERY | SET_ATTRIBUTES */, false, name);
+        if (job == 0)
+        {
+            if (Marshal.GetLastPInvokeError() == 2) return true;
+            return Win32Fail(out error);
+        }
+        if (!Native.IsProcessInJob(process, job, out bool member) || !member)
+        {
+            Native.CloseHandle(job); job = 0;
+            error = "memory job does not contain this process; change declined";
+            return false;
+        }
+        _jobs[key] = job;
+        return true;
     }
 
     public void Forget(in ProcessKey key)

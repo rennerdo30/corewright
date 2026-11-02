@@ -21,7 +21,7 @@ internal sealed unsafe partial class GameDetector
         @"\blizzard entertainment\", @"\rockstar games\", @"\amazon games\library\", @"\itch\apps\",
     ];
 
-    private static readonly string[] GraphicsModules = ["d3d9.dll", "d3d11.dll", "d3d12.dll", "vulkan-1.dll"];
+    private static readonly string[] GraphicsModules = ["d3d9.dll", "d3d10.dll", "d3d11.dll", "d3d12.dll", "dxgi.dll", "vulkan-1.dll", "opengl32.dll"];
 
     /// <summary>
     /// Full screen alone is weak evidence: screenshot tools (ShareX region capture), overlays and launchers cover the
@@ -29,6 +29,11 @@ internal sealed unsafe partial class GameDetector
     /// </summary>
     private const long FullscreenSustainMs = 10_000;
 
+    private readonly Dictionary<ProcessKey, (string Name, string Reason)> _games = [];
+    private readonly List<ProcessKey> _gone = [];
+    private readonly HashSet<string> _always = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> _never = new(StringComparer.OrdinalIgnoreCase);
+    private GameModeSettings? _settings;
     private int _lastForeground;
     private bool _lastFullscreen;
     private ProcessKey? _candidate;
@@ -38,45 +43,54 @@ internal sealed unsafe partial class GameDetector
     public ProcessKey? Game { get; private set; }
     public string? GameName { get; private set; }
     public string? Reason { get; private set; }
+    public void InvalidateForeground() => _lastForeground = -1;
 
     /// <summary>Returns true when the detected game changed.</summary>
     public bool Update(ProcessSampler sampler, int foregroundPid, bool fullscreen, GameModeSettings settings, bool enabled, IEngineEventSink sink)
     {
         bool changed = false;
-        if (!enabled)
+        if (!ReferenceEquals(_settings, settings))
         {
-            if (Game is not null) { Clear(sink, "game mode off"); changed = true; }
-            _lastForeground = 0;
-            return changed;
+            _settings = settings; _lastForeground = 0; _candidate = null;
+            _always.Clear(); _never.Clear();
+            foreach (string name in settings.Games) _always.Add(name);
+            foreach (string name in settings.NotGames) _never.Add(name);
         }
-
-        if (Game is { } g && !sampler.IsAlive(g))
+        foreach (var (key, game) in _games)
+            if (!sampler.IsAlive(key) || _never.Contains(game.Name) || (!enabled && !_always.Contains(game.Name))) _gone.Add(key);
+        foreach (var key in _gone)
         {
-            Clear(sink, "game exited");
-            changed = true;
+            var old = _games[key]; _games.Remove(key); changed = true;
+            sink.Emit(new(EngineEventKind.Info, key.Pid, old.Name, "Autopilot", null, null, "game mode ended (root exited or excluded)"));
         }
-        else if (Game is not null && settings.NotGames.Contains(GameName ?? "", StringComparer.OrdinalIgnoreCase))
+        _gone.Clear();
+        foreach (var listed in sampler.Processes)
+            if (!listed.IsProtected && _always.Contains(listed.Name) && !_never.Contains(listed.Name) && !_games.ContainsKey(listed.Key))
+                changed |= Detect(listed, "on your games list", sink);
+        if (Game is not { } current || !_games.ContainsKey(current))
         {
-            Clear(sink, "marked as not a game");
-            changed = true;
+            Game = null; GameName = null; Reason = null;
+            foreach (var (key, game) in _games) { Game = key; GameName = game.Name; Reason = game.Reason; }
         }
+        UpdateMembers(sampler);
+        if (!enabled) { _candidate = null; _lastForeground = 0; return changed; }
 
         if (foregroundPid == _lastForeground && fullscreen == _lastFullscreen)
         {
             // Unchanged foreground: only a pending full-screen candidate needs the clock (no module scan, no handle).
-            if (_candidate is { } c && Environment.TickCount64 - _candidateSinceMs >= FullscreenSustainMs && sampler.TryGet(foregroundPid, out var cp) && cp.Key == c)
+            if (_candidate is { } c && Environment.TickCount64 - _candidateSinceMs >= FullscreenSustainMs && sampler.TryGet(foregroundPid, out var cp) && cp.Key == c && !_never.Contains(cp.Name))
             {
                 _candidate = null;
-                return Detect(cp, _candidateReason!, sink) || changed;
+                changed |= Detect(cp, _candidateReason!, sink); UpdateMembers(sampler); return changed;
             }
             return changed;
         }
+        if (!sampler.TryGet(foregroundPid, out var p)) return changed;
         _lastForeground = foregroundPid;
         _lastFullscreen = fullscreen;
         _candidate = null;
-
-        if (!sampler.TryGet(foregroundPid, out var p) || p.IsProtected || p.SessionId == 0) return changed;
-        if (Game is { } current && current == p.Key) return changed;
+        if (p.IsProtected || p.SessionId == 0) return changed;
+        if (Game is { } detected && detected == p.Key) return changed;
 
         string? reason = Classify(p, fullscreen, settings, out bool weak);
         if (reason is null) return changed;
@@ -87,12 +101,14 @@ internal sealed unsafe partial class GameDetector
             _candidateReason = reason;
             return changed;
         }
-        return Detect(p, reason, sink) || changed;
+        changed |= Detect(p, reason, sink); UpdateMembers(sampler); return changed;
     }
 
     private bool Detect(ProcessInfo p, string reason, IEngineEventSink sink)
     {
 
+        if (_games.ContainsKey(p.Key)) return false;
+        _games[p.Key] = (p.Name, reason);
         Game = p.Key;
         GameName = p.Name;
         Reason = reason;
@@ -100,25 +116,37 @@ internal sealed unsafe partial class GameDetector
         return true;
     }
 
-    private void Clear(IEngineEventSink sink, string why)
+    private void UpdateMembers(ProcessSampler sampler)
     {
-        if (Game is { } g) sink.Emit(new EngineEvent(EngineEventKind.Info, g.Pid, GameName ?? "", "Autopilot", null, null, $"game mode ended ({why})"));
-        Game = null;
-        GameName = null;
-        Reason = null;
+        foreach (var p in sampler.Processes)
+        {
+            if (p.GameRoot is { } prior && !_games.ContainsKey(prior)) p.GameRoot = null;
+            if (_games.ContainsKey(p.Key)) p.GameRoot = p.Key;
+            p.IsGame = p.GameRoot is not null;
+            var ancestor = p.Parent;
+            for (int depth = 0; !p.IsGame && ancestor is { } key && depth < 32; depth++)
+            {
+                if (_games.ContainsKey(key)) { p.IsGame = true; p.GameRoot = key; break; }
+                if (!sampler.TryGet(key.Pid, out var parent) || parent.Key != key) break;
+                if (parent.GameRoot is { } root && _games.ContainsKey(root)) { p.IsGame = true; p.GameRoot = root; break; }
+                ancestor = parent.Parent;
+            }
+        }
     }
 
-    private static string? Classify(ProcessInfo p, bool fullscreen, GameModeSettings s, out bool weak)
+    private string? Classify(ProcessInfo p, bool fullscreen, GameModeSettings s, out bool weak)
     {
         weak = false;
-        if (s.NotGames.Contains(p.Name, StringComparer.OrdinalIgnoreCase)) return null;
-        if (s.Games.Contains(p.Name, StringComparer.OrdinalIgnoreCase)) return "on your games list";
+        if (_never.Contains(p.Name)) return null;
+        if (_always.Contains(p.Name)) return "on your games list";
 
         string path = p.Path?.ToLowerInvariant() ?? "";
+        string? graphics = UsesGraphicsApi(p.Key.Pid);
         foreach (var marker in LibraryMarkers)
-            if (path.Contains(marker, StringComparison.Ordinal)) return $"installed in a game library ({marker.Trim('\\')})";
+            if (path.Contains(marker, StringComparison.Ordinal) && graphics is not null && graphics != "module access denied")
+                return $"installed in a game library ({marker.Trim('\\')}) with {graphics}";
 
-        if (fullscreen && UsesGraphicsApi(p.Key.Pid) is { } api)
+        if (fullscreen && graphics is { } api)
         {
             weak = true;
             return $"full screen with {api}";
@@ -130,13 +158,14 @@ internal sealed unsafe partial class GameDetector
     private static string? UsesGraphicsApi(int pid)
     {
         nint h = Native.OpenProcess(Native.PROCESS_QUERY_INFORMATION | 0x0010 /* PROCESS_VM_READ */, false, pid);
-        if (h == 0) return null;
+        if (h == 0) return Marshal.GetLastPInvokeError() == 5 ? "module access denied" : null;
         try
         {
             var modules = new nint[1024];
             uint needed;
             fixed (nint* m = modules)
-                if (!K32EnumProcessModulesEx(h, m, (uint)(modules.Length * sizeof(nint)), out needed, 0x03)) return null;
+                if (!K32EnumProcessModulesEx(h, m, (uint)(modules.Length * sizeof(nint)), out needed, 0x03))
+                    return Marshal.GetLastPInvokeError() == 5 ? "module access denied" : null;
             int count = Math.Min(modules.Length, (int)(needed / (uint)sizeof(nint)));
             char* name = stackalloc char[260];
             for (int i = 0; i < count; i++)

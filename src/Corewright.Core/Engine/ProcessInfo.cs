@@ -24,10 +24,21 @@ public sealed class ProcessInfo(ProcessKey key, string name)
     /// or for generic hosts what they run ("python.exe (train.py)", "svchost.exe (wuauserv)"). Rule field "program".
     /// </summary>
     public string? Program;
+    public bool IdentityKnown;
+    public int IdentityAttempts;
     /// <summary>The topmost ancestor below the shell (explorer, services, …): processes with the same root are one app.</summary>
     public ProcessKey AppRoot;
+    public bool AppRootUncertain;
+    public bool HasUnknownParent;
     /// <summary>Audio, input, display-driver and network-core processes: Autopilot never slows them down.</summary>
     public bool LatencyCritical;
+    public string? BackgroundVerdict;
+    public string? BackgroundReason;
+    public bool IsLauncher;
+    public bool IsGame;
+    public ProcessKey? GameRoot;
+    public bool HasChildren;
+    public long LastChildStartMs;
 
     /// <summary>
     /// The process group another tool registered this process in (PM-39, PUT /api/v1/groups/{id}): only the group's
@@ -87,9 +98,22 @@ public sealed class EvalContext
 
     public IReadOnlyDictionary<string, string> Facts { get; set; } = NoFacts;
     public int ForegroundPid { get; set; }
+    public bool ForegroundBusy { get; set; }
+    public bool ForegroundKnown { get; set; }
+    public int ForegroundSessionId { get; set; } = -1;
+    public int LogicalCount { get; set; } = 1;
+    public bool SystemUnderPressure { get; set; }
 
     /// <summary>App root of the foreground process: every process of that app counts as "in front" (rule field isForegroundApp).</summary>
     public ProcessKey ForegroundRoot { get; set; }
+    public string? ForegroundProgram { get; set; }
+    public bool ForegroundFrameHost { get; set; }
+
+    public bool IsForegroundApp(ProcessInfo p) => p.Key.Pid == ForegroundPid || p.AppRootUncertain ||
+        (ForegroundRoot.Pid != 0 && p.AppRoot == ForegroundRoot) ||
+        (ForegroundProgram is not null && p.Program == ForegroundProgram) ||
+        (ForegroundFrameHost && (p.Name.Equals("ApplicationFrameHost.exe", StringComparison.OrdinalIgnoreCase) ||
+            (p.Path?.Contains("\\WindowsApps\\", StringComparison.OrdinalIgnoreCase) ?? false)));
 
     /// <summary>The detected game (Autopilot game mode); 0 when none. Every process with the same exe name counts.</summary>
     public int GamePid { get; set; }

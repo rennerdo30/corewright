@@ -3,6 +3,50 @@
 Release notes for every Corewright version, newest first. The release workflow publishes the section of a version
 as its GitHub release notes.
 
+## 0.1.0-beta.10
+
+Autopilot, version 3. Three independent reviews found that automatic core placement could slow builds and leave
+programs confined; this release rebuilds it to be careful first.
+
+### New
+
+- **Autopilot has three modes: Off, Observe and On.** Observe shows what Autopilot would change, and why, without
+  touching any process. New installations start in Observe; an Autopilot you had turned on stays on.
+- **A limit on how many processes Autopilot places at once** (40 by default). Status shows how many are placed.
+- **Crash recovery:** Corewright records what it changes before it changes it. If the service ever stops
+  unexpectedly, the next start puts the affected programs back.
+
+### Changed
+
+- **Builds keep all their CPU cores.** Compilers and build tools only get lower CPU and disk priority, so builds no
+  longer start on two threads.
+- **Background placement is simpler:** a placed program may use every core except your strongest few (only while
+  you are actively using something) and except the game's CCD while a game runs. No more per-program core packing.
+- **Programs that start other programs** (terminals, editors, AI agents, build tools, launchers) are never placed
+  by any Autopilot rule, so the programs they start are never confined.
+- **No information, no placement:** when the tray is not running, the PC is locked or you have been away for 10
+  minutes, Autopilot stops placing and stops learning until you are back.
+- **Balancing** acts only when the PC is actually busy, measures load per core, and never raises a priority.
+- **While gaming**, busy background work moves to the other CCD as a whole, only after it is 15 s old and busy for 5 s.
+- **Several games can run at once**; game mode ends when the last one closes. Game launchers (Steam, Battle.net, EA,
+  Epic, …) are no longer detected as games.
+- **Your rules always beat Autopilot**, whatever their priority. Rule ids starting with `autopilot-` or `group-` are
+  reserved.
+- **Learning is more precise:** scripts, projects and Windows services are told apart, statistics keep their peaks
+  and age while the PC is off, and programs not seen for 30 days are forgotten.
+- Explain says when pause, a group, a freeze or the placement limit decides, and why a program counts as background.
+
+### Fixed
+
+- Programs started through a shell by a placed program, or by a parent that already exited, are put back too.
+- A balancing threshold you had changed is converted to the new per-core setting instead of being reset.
+
+### For integrations
+
+- `/api/v1/settings`: `autopilot.mode` (`off`, `observe`, `on`) replaces `enabled` (still read, written as
+  `mode == on`); `balance.cpuCores` replaces `balance.cpuPercent`. `/api/v1/status` adds `autopilotMode`,
+  `autopilotPlaced`, `autopilotCapped` and `journalProblem`. New: `GET /api/v1/autopilot/preview`.
+
 ## 0.1.0-beta.9
 
 ### Fixed

@@ -33,6 +33,9 @@ public sealed class SystemTopology
     /// <summary>Physical cores (their logical processors) ordered fastest first by CPPC; empty without a ranking.</summary>
     public ulong[] CoresByRank { get; init; } = [];
 
+    /// <summary>Physical cores from RelationProcessorCore, independent of CPPC availability.</summary>
+    public ulong[] PhysicalCores { get; init; } = [];
+
     public static SystemTopology Uniform(int logicalCount) => new(logicalCount, ulong.MaxValue, 0);
 }
 
@@ -51,9 +54,9 @@ public static class AffinityParser
             case "p-cores" or "performance":
                 mask = topo.PerformanceMask;
                 return true;
-            case "auto-background" or "auto-game":
+            case "auto-background" or "auto-game" or "non-game-ccd":
                 if (topo.LogicalCount >= 64) { error = "dynamic placement supports up to 63 logical processors"; return false; }
-                mask = (ulong)(text.Trim().Equals("auto-game", StringComparison.OrdinalIgnoreCase) ? AffinityModes.Game : AffinityModes.Background);
+                mask = (ulong)(text.Trim().ToLowerInvariant() switch { "auto-game" => AffinityModes.Game, "non-game-ccd" => AffinityModes.NonGame, _ => AffinityModes.Background });
                 return true;
             case "vcache-ccd" or "frequency-ccd" or "best-ccd":
             {
@@ -118,7 +121,8 @@ public static class AffinityParser
 
     public static string Format(ulong mask)
     {
-        if (AffinityModes.IsDynamic((long)mask)) return (long)mask == AffinityModes.Game ? "auto (game CCD)" : "auto (background)";
+        if (AffinityModes.IsDynamic((long)mask))
+            return (long)mask == AffinityModes.Game ? "auto (game CCD)" : (long)mask == AffinityModes.NonGame ? "auto (other CCDs while gaming)" : "auto (background)";
         if (mask == 0) return "none";
         var sb = new StringBuilder();
         int i = 0;
@@ -146,8 +150,9 @@ public static class AffinityModes
 {
     public const long Background = unchecked((long)0x8000_0000_0000_0001UL);
     public const long Game = unchecked((long)0x8000_0000_0000_0002UL);
+    public const long NonGame = unchecked((long)0x8000_0000_0000_0003UL);
 
-    public static bool IsDynamic(long value) => value == Background || value == Game;
+    public static bool IsDynamic(long value) => value == Background || value == Game || value == NonGame;
 }
 
 /// <summary>Resolves a dynamic affinity mode to a real mask for one process. Implemented by the host.</summary>

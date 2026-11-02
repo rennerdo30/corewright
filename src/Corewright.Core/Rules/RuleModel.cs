@@ -1,5 +1,7 @@
 namespace Corewright.Core.Rules;
 
+public enum RuleOrigin { Autopilot, User, Group }
+
 /// <summary>The persisted rule file (rules.json).</summary>
 public sealed class RuleSet
 {
@@ -9,6 +11,8 @@ public sealed class RuleSet
 
 public sealed class Rule
 {
+    [System.Text.Json.Serialization.JsonIgnore]
+    public RuleOrigin Origin { get; set; } = RuleOrigin.User;
     public string Id { get; set; } = "";
     public string Name { get; set; } = "";
     public bool Enabled { get; set; } = true;
@@ -60,6 +64,9 @@ public sealed class Condition
 public sealed class RuleActions
 {
     public string? CpuPriority { get; set; }
+    public bool CpuPriorityLowerOnly { get; set; }
+    /// <summary>For the generic learned rule, single verdicts claim affinity only.</summary>
+    public bool BackgroundMultiOnly { get; set; }
     public string? Affinity { get; set; }
     public string? IoPriority { get; set; }
     public string? GpuPriority { get; set; }

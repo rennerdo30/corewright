@@ -5,6 +5,7 @@ namespace Corewright.Service.Windows;
 internal static unsafe partial class Native
 {
     public const uint PROCESS_TERMINATE = 0x0001;
+    public const uint PROCESS_DUP_HANDLE = 0x0040;
     public const uint PROCESS_SET_QUOTA = 0x0100;
     public const uint PROCESS_SET_INFORMATION = 0x0200;
     public const uint PROCESS_QUERY_INFORMATION = 0x0400;
@@ -84,6 +85,22 @@ internal static unsafe partial class Native
 
     [LibraryImport("kernel32.dll", SetLastError = true)]
     public static partial nint CreateJobObjectW(nint attributes, char* name);
+
+    [LibraryImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static partial bool DuplicateHandle(nint sourceProcess, nint source, nint targetProcess, out nint target,
+        uint access, [MarshalAs(UnmanagedType.Bool)] bool inherit, uint options);
+
+    [LibraryImport("kernel32.dll", SetLastError = true)]
+    public static partial nint OpenJobObjectW(uint access, [MarshalAs(UnmanagedType.Bool)] bool inherit, char* name);
+
+    [LibraryImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static partial bool QueryInformationJobObject(nint job, int infoClass, void* info, uint length, out uint returned);
+
+    [LibraryImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static partial bool IsProcessInJob(nint process, nint job, [MarshalAs(UnmanagedType.Bool)] out bool member);
 
     [LibraryImport("kernel32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]

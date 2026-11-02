@@ -102,6 +102,17 @@ internal static unsafe partial class Win32
     public struct POINT { public int X, Y; }
 
     public const uint WM_TIMER = 0x0113;
+    [StructLayout(LayoutKind.Sequential)]
+    public struct LASTINPUTINFO { public uint Size, Time; }
+    public struct RAWINPUTDEVICE { public ushort UsagePage, Usage; public uint Flags; public nint Target; }
+    [LibraryImport("user32.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)]
+    public static partial bool RegisterRawInputDevices(RAWINPUTDEVICE* devices, uint count, uint size);
+    [LibraryImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] public static partial bool GetLastInputInfo(ref LASTINPUTINFO info);
+    [LibraryImport("wtsapi32.dll")] [return: MarshalAs(UnmanagedType.Bool)] public static partial bool WTSRegisterSessionNotification(nint hwnd, uint flags);
+    [LibraryImport("wtsapi32.dll")] [return: MarshalAs(UnmanagedType.Bool)] public static partial bool WTSUnRegisterSessionNotification(nint hwnd);
+    [LibraryImport("kernel32.dll")] public static partial nint OpenProcess(uint access, [MarshalAs(UnmanagedType.Bool)] bool inherit, uint pid);
+    [LibraryImport("kernel32.dll")] [return: MarshalAs(UnmanagedType.Bool)] public static partial bool CloseHandle(nint handle);
+    [LibraryImport("kernel32.dll")] [return: MarshalAs(UnmanagedType.Bool)] public static partial bool QueryFullProcessImageNameW(nint process, uint flags, char* name, ref uint size);
 
     [StructLayout(LayoutKind.Sequential)]
     public struct RECT { public int Left, Top, Right, Bottom; }

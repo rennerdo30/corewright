@@ -22,7 +22,8 @@ internal sealed class Monitor : BackgroundService
     public const int HistoryCapacity = 300;
 
     private readonly ProcessSampler _sampler = new();
-    private readonly WindowsActuator _actuator = new();
+    private readonly WindowsActuator _actuator;
+    private readonly AppliedJournal _journal;
     private readonly SemaphoreSlim _wake = new(0);
     private readonly ServiceOptions _options;
     private readonly RuleStore _store;
@@ -32,6 +33,8 @@ internal sealed class Monitor : BackgroundService
     private long _lastClientMs;
     private int _reportedForegroundPid;
     private long _reportedForegroundMs;
+    private ProcessKey? _reporter, _foregroundKey;
+    private bool _reportedPresent;
 
     // History ring.
     private readonly NetworkSampler _network = new();
@@ -55,14 +58,17 @@ internal sealed class Monitor : BackgroundService
     private readonly float[] _hIo = new float[HistoryCapacity];
     private int _hCount, _hNext;
 
-    public Monitor(ServiceOptions options, RuleStore store, SettingsStore settingsStore, EventBuffer events, ILogger<Monitor> log)
+    public Monitor(ServiceOptions options, RuleStore store, SettingsStore settingsStore, EventBuffer events, ILogger<Monitor> log, string dataDirectory)
     {
         _options = options;
         _store = store;
         _log = log;
+        _actuator = new WindowsActuator(dataDirectory);
         Devices.Start(Sync, log);
         Events = events;
+        SystemProbe.EnablePrivileges();
         Engine = new RuleEngine(_actuator, events);
+        Engine.Journal = _journal = new AppliedJournal(dataDirectory, _actuator, events, log);
         _actuator.Network.Start(events);
         // Events carry the rule name; the per-rule history is kept by id (names can repeat across a rename).
         events.RuleIdOf = name =>
@@ -73,15 +79,23 @@ internal sealed class Monitor : BackgroundService
         };
         _ctx.Facts = _facts;
         ProcessInfo.CommandLineReader = SystemProbe.ReadCommandLine;
-        SystemProbe.EnablePrivileges();
         var basic = SystemProbe.ReadTopology();
         try { CpuLayout = CpuTopologyProbe.Read(); }
         catch (Exception e) { log.LogWarning("CPU topology probe failed: {Message}", e.Message); }
         Topology = CpuLayout is { } layout ? WithLayout(basic, layout) : basic;
+        _ctx.LogicalCount = Topology.LogicalCount;
         _settingsStore = settingsStore;
         Settings = settingsStore.Load();
+        var settingsErrors = AutopilotRules.ValidateSettings(Settings, Topology);
+        if (settingsErrors.Count > 0)
+        {
+            // The file stays untouched and is copied aside before the next save, so no setting is lost (review L2).
+            log.LogWarning("Invalid settings preserved; starting in Observe: {Message}", settingsErrors[0].Message);
+            Settings = new AppSettings();
+            settingsStore.PreserveOnNextSave();
+        }
         _ctx.AlwaysGames = AlwaysGamesOf(Settings);
-        _placer = new AffinityPlacer(() => Topology, () => _cores.Usage,
+        _placer = new AffinityPlacer(() => Topology,
             () => AutopilotRules.GameCcd(Settings.Autopilot.GameMode.Placement, Topology),
             () => Settings.Autopilot.Background.KeepBestCoresFree,
             () => _groups.ExclusiveMask);
@@ -142,9 +156,12 @@ internal sealed class Monitor : BackgroundService
             VCacheCcds = [.. layout.Ccds.Where(c => c.VCache).Select(c => c.Id)],
             FrequencyCcd = freq,
             CoresByRank = ranked,
+            PhysicalCores = cores.Select(k => Mask(k.Threads)).ToArray(),
         };
     }
     public RuleEngine Engine { get; }
+    /// <summary>Why the engine declines changes because it cannot record them, or null.</summary>
+    public string? JournalProblem => _journal.Problem;
     public EventBuffer Events { get; }
     public SystemTopology Topology { get; }
     public TopologyDto? CpuLayout { get; }
@@ -206,13 +223,18 @@ internal sealed class Monitor : BackgroundService
 
     public List<RuleError> ReplaceSettings(AppSettings settings)
     {
-        var errors = new List<RuleError>();
+        var errors = AutopilotRules.ValidateSettings(settings, Topology);
+        if (errors.Count > 0) return errors;
+        settings.Version = AppSettings.CurrentVersion;
         var compiled = CompileAll(RuleSet, settings, errors);
         if (errors.Count > 0) return errors;
         lock (Sync)
         {
             _settingsStore.Save(settings);
             Settings = settings;
+            Engine.ObserveAutopilot = settings.Autopilot.Mode == "observe";
+            Engine.AutopilotPlacementLimit = settings.Autopilot.PlacementLimit;
+            _background?.Invalidate();
             _ctx.AlwaysGames = AlwaysGamesOf(settings);
             Engine.SetRules(compiled);
         }
@@ -230,15 +252,28 @@ internal sealed class Monitor : BackgroundService
         Wake();
     }
 
-    public void ReportForeground(int pid, bool fullscreen)
+    public void ReportForeground(int pid, bool fullscreen, int? sessionId, bool present, int? reporterPid)
     {
         lock (Sync)
         {
             _reportedForegroundPid = pid;
             _reportedFullscreen = fullscreen;
             _reportedForegroundMs = Environment.TickCount64;
+            _reporter = reporterPid is { } rp ? ReadIdentity(rp) : null;
+            _foregroundKey = ReadIdentity(pid);
+            _reportedPresent = present;
+            _game.InvalidateForeground();
         }
         Wake();
+    }
+
+    private static ProcessKey? ReadIdentity(int pid)
+    {
+        if (pid <= 0) return null;
+        nint h = Native.OpenProcess(Native.PROCESS_QUERY_LIMITED_INFORMATION, false, pid);
+        if (h == 0) return null;
+        try { return Native.GetProcessTimes(h, out long created, out _, out _, out _) ? new ProcessKey(pid, created) : null; }
+        finally { Native.CloseHandle(h); }
     }
 
     public (long[] Time, float[] Cpu, float[] Mem, float[] Io, float[] Gpu, float[] NetRx, float[] NetTx) History()
@@ -291,7 +326,13 @@ internal sealed class Monitor : BackgroundService
                         e.Pid, e.Process, e.Slot, e.Value, e.Message));
                 _background?.Save();
             }
+            if (_background is { } background)
+            {
+                try { await background.SaveCompletion.WaitAsync(TimeSpan.FromSeconds(2)); }
+                catch (TimeoutException) { _log.LogWarning("Background statistics write still finishing at shutdown"); }
+            }
             _actuator.Dispose();
+            _journal.Dispose();
             Devices.Dispose();
             _processNetwork?.Dispose();
             if ((_processNetwork is null || _processNetwork.Stopped) && _actuator.Network.SessionStopped)
@@ -342,52 +383,64 @@ internal sealed class Monitor : BackgroundService
                 _networkFieldsActive = false;
             }
 
-            // A service in session 0 cannot see the desktop; the tray reports the foreground process.
-            // In console mode the service can read it itself unless the tray reported recently.
-            bool fullscreen;
-            if (!IsWindowsService && _ctx.NowMs - _reportedForegroundMs > 10_000)
-                (_ctx.ForegroundPid, fullscreen) = SystemProbe.ForegroundInfo();
-            else
-                (_ctx.ForegroundPid, fullscreen) = (_reportedForegroundPid, _reportedFullscreen);
+            // A service in session 0 cannot see the desktop; the tray reports the foreground process. The session comes
+            // from the reporting process itself, not from what the request claims (review L5).
+            bool fullscreen = _reportedFullscreen;
+            _ctx.ForegroundPid = _reportedForegroundPid;
+            _ctx.ForegroundKnown = _reportedPresent && _reporter is { } reporter && _sampler.IsAlive(reporter) &&
+                _foregroundKey is { } foreground && _sampler.IsAlive(foreground);
+            _ctx.ForegroundSessionId = _reporter is { } rk && _sampler.TryGet(rk.Pid, out var tray) && tray.Key == rk ? tray.SessionId : -1;
+            // Console mode (development) runs in the user's session and can read the foreground itself when no tray
+            // reports; without this it would never learn or apply anything foreground-related (review M4).
+            if (!IsWindowsService && !_ctx.ForegroundKnown)
+            {
+                var (selfPid, selfFullscreen) = SystemProbe.ForegroundInfo();
+                if (selfPid > 0 && _sampler.TryGet(selfPid, out var selfFront))
+                {
+                    _ctx.ForegroundPid = selfPid;
+                    fullscreen = selfFullscreen;
+                    _ctx.ForegroundKnown = true;
+                    _ctx.ForegroundSessionId = selfFront.SessionId;
+                }
+            }
 
             // Autopilot game mode: only re-classifies when the foreground or its full-screen state changes.
             var ap = Settings.Autopilot;
-            if (!_groups.AnyFreeze && _game.Update(_sampler, _ctx.ForegroundPid, fullscreen, ap.GameMode, ap.Enabled && ap.GameMode.Enabled, Events))
+            if (_game.Update(_sampler, _ctx.ForegroundPid, fullscreen, ap.GameMode, ap.Active && ap.GameMode.Enabled, Events))
             {
                 _ctx.GamePid = _game.Game?.Pid ?? 0;
                 _ctx.GameName = _game.GameName;
                 _facts["game.active"] = _game.Game is null ? "false" : "true";
                 if (_game.GameName is { } gn) _facts["game.name"] = gn; else _facts.Remove("game.name");
+                _facts["game.pid"] = _ctx.GamePid.ToString(System.Globalization.CultureInfo.InvariantCulture);
             }
 
             // PM-12: long-term observation; a changed classification rebuilds the rule set (at most once a minute).
             _background ??= new BackgroundClassifier(DataDirectory);
             // As a service the foreground comes from the tray: known once it reported, unknown after it said goodbye (pid 0).
-            bool foregroundKnown = !IsWindowsService || (_reportedForegroundMs != 0 && _reportedForegroundPid > 0);
-            if (_background.Observe(_sampler.Processes, _ctx.ForegroundPid, foregroundKnown, Topology.LogicalCount, _ctx.NowMs,
-                    Settings.Autopilot.Background, Settings.Autopilot.GameMode, Topology)
-                && Settings.Autopilot.Enabled && Settings.Autopilot.Background.Enabled)
-            {
-                var errors = new List<RuleError>();
-                var compiled = CompileAll(RuleSet, Settings, errors);
-                if (errors.Count == 0) Engine.SetRules(compiled);
-                else _log.LogWarning("background placement rules rejected: {Message}", errors[0].Message);
-            }
+            bool foregroundKnown = _ctx.ForegroundKnown;
+            _background.Observe(_sampler.Processes, _ctx.ForegroundPid, foregroundKnown, Topology.LogicalCount, _ctx.NowMs,
+                ap.Background, ap.GameMode, Topology, ap.Launchers);
 
             _ctx.ForegroundRoot = _background.ForegroundRoot;
+            _ctx.ForegroundProgram = _sampler.TryGet(_ctx.ForegroundPid, out var foregroundApp) ? foregroundApp.Program : null;
+            _ctx.ForegroundFrameHost = foregroundApp?.Name.Equals("ApplicationFrameHost.exe", StringComparison.OrdinalIgnoreCase) ?? false;
             // PM-39: process groups. Expiry rebuilds the rules; membership is decided once per new process.
             if (_groups.Expire(_ctx.NowMs)) RebuildRules();
             _groups.Resolve(_sampler.Processes, _byPid);
             Engine.FreezeAutopilot = _groups.AnyFreeze;
+            Engine.ObserveAutopilot = ap.Mode == "observe";
+            Engine.AutopilotPlacementLimit = ap.PlacementLimit;
             if (_groups.AnyFreeze) _facts["autopilot.frozen"] = "true";
             else _facts.Remove("autopilot.frozen");
+            _ctx.ForegroundBusy = _ctx.ForegroundKnown && _sampler.TryGet(_ctx.ForegroundPid, out var front) && front.CpuPercent * Topology.LogicalCount / 100 >= 0.5;
+            _ctx.SystemUnderPressure = _sampler.SystemCpuPercent >= 60 || (_ctx.ForegroundKnown && _ctx.ForegroundBusy);
+            if (IsClientActive) _cores.Sample(); // Loose masks do not need per-thread load.
             Engine.Evaluate(_sampler.Processes, _ctx);
 
             // Cheap system counters always; the costly ones (GPU counters, per-thread load) only while someone watches.
             Devices.BeginSample(IsClientActive);
             _network.Sample(Devices, IsClientActive);
-            _cores.Sample(); // one call; the placer needs per-thread load for dynamic placement
-            _placer.Prune(_sampler.IsAlive);
             if (!IsClientActive)
             {
                 Details.DropIfIdle();

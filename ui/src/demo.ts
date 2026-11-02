@@ -280,18 +280,15 @@ const settings: AppSettings = {
       notGames: ['chrome.exe', 'msedge.exe', 'firefox.exe', 'vlc.exe', 'Code.exe', 'obs64.exe', 'ShareX.exe', 'SnippingTool.exe'],
       keepResponsive: ['Discord.exe', 'TeamSpeak.exe', 'obs64.exe', 'audiodg.exe', 'steam.exe'],
     },
-    balance: { enabled: true, cpuPercent: 8, sustainSeconds: 2, releaseSeconds: 6, priority: 'belowNormal', exclusions: [] },
+    balance: { enabled: true, cpuCores: 0.7, sustainSeconds: 2, releaseSeconds: 30, priority: 'belowNormal', exclusions: [] },
     buildTools: { enabled: true, priority: 'belowNormal', ioPriority: 'low', programs: ['cl.exe', 'link.exe', 'MSBuild.exe', 'clang.exe', 'rustc.exe', 'cargo.exe', 'ninja.exe', 'dxc.exe'] },
     background: { enabled: true, minObservedMinutes: 60, includeServices: true, maxForegroundPercent: 1, singleCoreLoad: 1.2, keepBestCoresFree: 4, priority: 'belowNormal', exclusions: [] },
   },
 }
 
 const placements: Placement[] = [
-  ...processes
-    .filter((p) => p.name === 'cl.exe' || p.name === 'link.exe' || p.name === 'MSBuild.exe')
-    .map((p, i) => ({ pid: p.pid, name: p.name, cores: '24-31', ccd: 1, demandThreads: [8, 8, 8, 8, 4, 2][i] ?? 2, placedSecondsAgo: 140 - i * 9, why: i === 0 ? 'Grew to 8 threads on CCD 1 because it needed more' : 'Placed on CCD 1, the least busy place for 8 threads, away from the game, off your strongest cores.' })),
-  { pid: pids.get('OneDrive.exe')!, name: 'OneDrive.exe', cores: '20-23', ccd: 1, demandThreads: 2, placedSecondsAgo: 1820, why: 'Placed on CCD 1, the least busy place for 2 threads, away from the game, off your strongest cores.' },
-  { pid: pids.get('CloudBackup.exe')!, name: 'CloudBackup.exe', cores: '18-19', ccd: 1, demandThreads: 2, placedSecondsAgo: 610, why: 'Placed on CCD 1, the least busy place for 2 threads, away from the game, off your strongest cores.' },
+  { pid: pids.get('OneDrive.exe')!, name: 'OneDrive.exe', cores: '16-31', ccd: 1, demandThreads: 0, placedSecondsAgo: 1820, why: 'Busy while you play: moved to the other CCD so the game keeps its cores.' },
+  { pid: pids.get('CloudBackup.exe')!, name: 'CloudBackup.exe', cores: '16-31', ccd: 1, demandThreads: 0, placedSecondsAgo: 610, why: 'Busy while you play: moved to the other CCD so the game keeps its cores.' },
 ]
 
 const background: BackgroundRow[] = [

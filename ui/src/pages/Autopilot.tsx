@@ -30,6 +30,7 @@ export function Autopilot() {
   const topo = usePoll(api.topology, 600_000)
   const procs = usePoll(() => api.processes(), 3000)
   const placements = usePoll(api.placements, 3000)
+  const preview = usePoll(api.autopilotPreview, 5000, settings?.autopilot.mode === 'observe')
 
   useEffect(() => {
     api.settings().then(setSettings)
@@ -44,7 +45,8 @@ export function Autopilot() {
     window.clearTimeout(timer.current)
     timer.current = window.setTimeout(async () => {
       try {
-        await api.saveSettings(next)
+        const saved = await api.saveSettings(next)
+        if (saved.settings) setSettings(saved.settings)
         setErrors([])
         setSavedAt(Date.now())
       } catch (e) {
@@ -101,10 +103,12 @@ export function Autopilot() {
       <header className="ap-hero">
         <div className="ap-switch">
           <h2 className="page-title">Autopilot</h2>
-          <Toggle value={a.enabled} onChange={(v) => update((x) => (x.autopilot.enabled = v))} />
+          <select aria-label="Autopilot mode" value={a.mode ?? (a.enabled ? 'on' : 'off')} onChange={(e) => update((x) => (x.autopilot.mode = e.target.value as 'off' | 'observe' | 'on'))}>
+            <option value="off">Off</option><option value="observe">Observe</option><option value="on">On</option>
+          </select>
         </div>
         <p className="ap-status">
-          {!a.enabled ? (
+          {a.mode === 'observe' ? <>Observing: learning and showing proposed changes without applying Autopilot settings.</> : !a.enabled ? (
             <>Autopilot is off. Your own rules still apply. Turn it on to let Corewright schedule games, builds and background work for you.</>
           ) : (
             <>
@@ -145,6 +149,14 @@ export function Autopilot() {
           ))}
         </div>
       )}
+      {status.data?.autopilotCapped && <p className="banner">Autopilot has reached its placement limit. No new processes will be placed.</p>}
+      {settings.warnings?.map((w) => <p className="banner" key={w}>{w}</p>)}
+
+      {a.mode === 'observe' && <section className="card">
+        <h3>What Autopilot would do</h3>
+        {(preview.data ?? []).map((p, i) => <p key={`${p.pid}-${p.slot}-${i}`}>{p.process} ({p.pid}): {p.slot} → {p.value}. {p.reason}</p>)}
+        {preview.data?.length === 0 && <p>No proposed changes right now.</p>}
+      </section>}
 
       {t && sys.data && (
         <section className="ap-map card">
@@ -154,7 +166,7 @@ export function Autopilot() {
 
       <section className="ap-groups">
         <h3>What Autopilot does</h3>
-        <div className={a.enabled ? '' : 'groups-off'}>
+        <div className={a.mode === 'observe' || a.enabled ? '' : 'groups-off'}>
           <Group
             glyph={'\uE7FC'}
             role="game"
@@ -199,7 +211,7 @@ export function Autopilot() {
             title="Compilers and build tools"
             enabled={bt.enabled}
             onToggle={(v) => update((x) => (x.autopilot.buildTools.enabled = v))}
-            summary={`High load but not latency critical: ${bt.programs.length} known ${bt.programs.length === 1 ? 'tool runs' : 'tools run'} below normal on cores that are free.`}
+            summary={`High load but not latency critical: ${bt.programs.length} known ${bt.programs.length === 1 ? 'tool runs' : 'tools run'} with lower CPU and I/O priority.`}
           >
             <Row title="Build priority" desc="CPU priority for compilers, linkers and build drivers.">
               <Levels levels={LOW_LEVELS} value={bt.priority} onChange={(v) => update((x) => (x.autopilot.buildTools.priority = v))} />
@@ -213,10 +225,10 @@ export function Autopilot() {
             title="Balancing"
             enabled={b.enabled}
             onToggle={(v) => update((x) => (x.autopilot.balance.enabled = v))}
-            summary={`Background programs above ${b.cpuPercent} % CPU for ${b.sustainSeconds} s are held back until they calm down. The window you use is never touched.`}
+            summary={`Under CPU pressure, background programs using at least ${b.cpuCores} of a core for ${b.sustainSeconds} s get lower priority.`}
           >
-            <Row title="CPU threshold" desc="Per-process CPU, as a share of the whole machine, that counts as hogging.">
-              <NumberBox value={b.cpuPercent} min={1} max={100} unit="%" onChange={(v) => update((x) => (x.autopilot.balance.cpuPercent = v))} />
+            <Row title="CPU threshold" desc="Per-process load in cores, while the system or foreground app is busy.">
+              <NumberBox value={b.cpuCores} min={0.1} max={64} step={0.1} unit="cores" onChange={(v) => update((x) => (x.autopilot.balance.cpuCores = v))} />
             </Row>
             <Row title="Act after" desc="How long a process must stay above the threshold.">
               <NumberBox value={b.sustainSeconds} min={0} step={0.5} unit="s" onChange={(v) => update((x) => (x.autopilot.balance.sustainSeconds = v))} />
@@ -257,6 +269,8 @@ export function Autopilot() {
               <Levels levels={LOW_LEVELS} value={bg.priority} onChange={(v) => update((x) => (x.autopilot.background.priority = v))} />
             </Row>
             <ListRow title="Never place" desc="Programs background placement leaves alone." value={bg.exclusions} onChange={(v) => update((x) => (x.autopilot.background.exclusions = v))} />
+            <Row title="Placement limit" desc="Maximum processes Autopilot may place at once."><NumberBox value={a.placementLimit ?? 40} min={1} max={1000} onChange={(v) => update((x) => (x.autopilot.placementLimit = v))} /></Row>
+            <ListRow title="Launchers" desc="Never placed automatically. Node, Java and Gradle count when they have children." value={a.launchers ?? []} onChange={(v) => update((x) => (x.autopilot.launchers = v))} />
           </Group>
         </div>
       </section>
@@ -273,7 +287,7 @@ export function Autopilot() {
           </div>
           <span className="secondary tiny">
             {tab === 'placements'
-              ? 'Placed once on the CCD where they fit best, then kept there so their caches stay warm.'
+              ? 'Programs Autopilot keeps off your strongest cores, or off the game’s CCD while you play. Builds and programs that start other programs are never placed.'
               : 'Hours of observation per program. Decisions update once a minute; statistics are kept for 30 days.'}
           </span>
         </div>
@@ -331,14 +345,13 @@ function placementHint(t?: Topology) {
 
 function Placements({ rows, procs }: { rows: { pid: number; name: string; cores: string; ccd: number; demandThreads: number; placedSecondsAgo: number; why: string }[]; procs: ProcessRow[] }) {
   const roles = new Map(procs.map((p) => [p.pid, roleOf(p)]))
-  if (rows.length === 0) return <div className="ap-empty">No process has automatic cores right now. Build tools and background programs appear here as soon as Autopilot places them.</div>
+  if (rows.length === 0) return <div className="ap-empty">No process has automatic cores right now. Background programs appear here as soon as Autopilot places them.</div>
   return (
     <table className="ap-table">
       <thead>
         <tr>
           <th>Process</th>
-          <th>Threads</th>
-          <th className="num">Needs</th>
+          <th>Cores</th>
           <th className="num">Placed</th>
           <th>Why there</th>
         </tr>
@@ -353,11 +366,8 @@ function Placements({ rows, procs }: { rows: { pid: number; name: string; cores:
               </span>
               <span className="secondary tiny"> {r.pid}</span>
             </td>
-            <td>
-              CCD {r.ccd}, {r.cores}
-            </td>
-            <td className="num">{r.demandThreads}</td>
-            <td className="num secondary">{r.placedSecondsAgo >= 120 ? `${Math.round(r.placedSecondsAgo / 60)} min ago` : `${r.placedSecondsAgo} s ago`}</td>
+            <td>{r.ccd >= 0 ? `CCD ${r.ccd}, ${r.cores}` : r.cores}</td>
+            <td className="num secondary">{r.placedSecondsAgo >= 120 ? `${Math.round(r.placedSecondsAgo / 60)} min ago` : `${Math.round(r.placedSecondsAgo)} s ago`}</td>
             <td className="secondary why" title={r.why}>
               {r.why}
             </td>

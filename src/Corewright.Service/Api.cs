@@ -10,7 +10,9 @@ using Corewright.Service.Windows;
 namespace Corewright.Service;
 
 public sealed record StatusDto(string Version, string Mode, bool Elevated, bool Paused, int IntervalMs, int ProcessCount,
-    int RulesVersion, int ActiveRules, int ForegroundPid, bool Autopilot, GameDto? Game, string DataDirectory);
+    int RulesVersion, int ActiveRules, int ForegroundPid, bool Autopilot, GameDto? Game, string DataDirectory, string AutopilotMode, int AutopilotPlaced, bool AutopilotCapped, string? JournalProblem = null);
+
+public sealed record AutopilotPreviewDto(int Pid, string Process, string Rule, string Slot, string Value, string Reason);
 
 public sealed record CoresDto(int LogicalProcessors, bool Hybrid, string PerformanceCores, string EfficiencyCores);
 
@@ -46,7 +48,7 @@ public sealed record EventsDto(long Last, EventDto[] Events);
 
 public sealed record FactValueDto(string? Value);
 
-public sealed record ForegroundDto(int Pid, bool Fullscreen = false);
+public sealed record ForegroundDto(int Pid, bool Fullscreen = false, int? SessionId = null, bool Present = true);
 
 public sealed record GameDto(int Pid, string Name, string? Reason);
 
@@ -82,6 +84,7 @@ public sealed record ImportResponseDto(bool Applied, string? Source, Rule[] Rule
 [JsonSerializable(typeof(SettingsResultDto))]
 [JsonSerializable(typeof(BackgroundRowDto[]))]
 [JsonSerializable(typeof(PlacementDto[]))]
+[JsonSerializable(typeof(AutopilotPreviewDto[]))]
 [JsonSerializable(typeof(ImportRequestDto))]
 [JsonSerializable(typeof(ImportResponseDto))]
 internal sealed partial class ApiJson : JsonSerializerContext;
@@ -112,7 +115,7 @@ internal static class Api
                     Environment.IsPrivilegedProcess, m.Engine.Paused, m.IntervalMs, m.Sampler.Processes.Count,
                     m.Engine.Version, m.Engine.Rules.Rules.Count(r => !r.Id.StartsWith(AutopilotRules.IdPrefix, StringComparison.Ordinal)),
                     m.Context.ForegroundPid, m.Settings.Autopilot.Enabled,
-                    m.Game.Game is { } g ? new GameDto(g.Pid, m.Game.GameName ?? "", m.Game.Reason) : null, m.DataDirectory));
+                    m.Game.Game is { } g ? new GameDto(g.Pid, m.Game.GameName ?? "", m.Game.Reason) : null, m.DataDirectory, m.Settings.Autopilot.Mode, m.Engine.AutopilotPlaced, m.Engine.AutopilotCapped, m.JournalProblem));
         });
 
         api.MapGet("/system", () =>
@@ -235,9 +238,10 @@ internal static class Api
 
         api.MapDelete("/facts/{key}", (string key) => { m.SetFact(key, null); return TypedResults.NoContent(); });
 
-        api.MapPut("/session/foreground", (ForegroundDto body) =>
+        api.MapPut("/session/foreground", (ForegroundDto body, HttpContext http) =>
         {
-            m.ReportForeground(body.Pid, body.Fullscreen);
+            m.ReportForeground(body.Pid, body.Fullscreen, body.SessionId, body.Present,
+                ApiLog.OwnerOf(http.Connection.RemotePort, http.Connection.LocalPort));
             return TypedResults.NoContent();
         });
 
@@ -293,7 +297,32 @@ internal static class Api
 
         api.MapGet("/autopilot/placements", () =>
         {
-            lock (m.Sync) return TypedResults.Ok(m.Placer.Snapshot(Environment.TickCount64).ToArray());
+            lock (m.Sync) return TypedResults.Ok(m.Placer.Snapshot(Environment.TickCount64, m.Engine).ToArray());
+        });
+
+        api.MapGet("/autopilot/preview", () =>
+        {
+            lock (m.Sync)
+            {
+                var rows = new List<AutopilotPreviewDto>();
+                int placements = 0;
+                foreach (var p in m.Sampler.Processes)
+                    foreach (var e in m.Engine.Explain(p, m.Context))
+                    {
+                        var r = m.Engine.Rules.Rules.FirstOrDefault(r => r.Id == e.RuleId && r.IsAutopilot);
+                        if (r is null || e.Unavailable is not null) continue;
+                        foreach (var name in e.Won)
+                            for (int s = 0; s < Slots.Count; s++)
+                                if (Slots.Name((Slot)s) == name)
+                                {
+                                    if ((Slot)s == Slot.Affinity && ++placements > m.Settings.Autopilot.PlacementLimit) continue;
+                                    long value = r.Values[s];
+                                    if ((Slot)s == Slot.Affinity && AffinityModes.IsDynamic(value)) value = m.Placer.Resolve(p, value, m.Context);
+                                    rows.Add(new(p.Key.Pid, p.Name, r.Name, name, Slots.FormatValue((Slot)s, value), e.Reason ?? r.Name));
+                                }
+                    }
+                return TypedResults.Ok(rows.ToArray());
+            }
         });
 
         api.MapGet("/api-calls", () => TypedResults.Ok(m.ApiCalls.Recent()));

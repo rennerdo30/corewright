@@ -9,6 +9,8 @@ export interface Status {
   activeRules: number
   foregroundPid: number
   autopilot: boolean
+  autopilotPlaced?: number
+  autopilotCapped?: boolean
   game?: { pid: number; name: string; reason?: string } | null
   dataDirectory: string
 }
@@ -24,8 +26,12 @@ export interface DevicesInfo { inventoryAt: number; sampling: boolean; devices: 
 
 export interface AppSettings {
   version: number
+  warnings?: string[]
   autopilot: {
     enabled: boolean
+    mode?: 'off' | 'observe' | 'on'
+    placementLimit?: number
+    launchers?: string[]
     gameMode: {
       enabled: boolean
       gamePriority: string
@@ -39,7 +45,7 @@ export interface AppSettings {
     }
     balance: {
       enabled: boolean
-      cpuPercent: number
+      cpuCores: number
       sustainSeconds: number
       releaseSeconds: number
       priority: string
@@ -194,6 +200,7 @@ export interface ProcessRow {
 }
 
 export interface ExplainRule {
+  reason?: string
   unavailable?: string
   ruleId: string
   ruleName: string

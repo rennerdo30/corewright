@@ -11,6 +11,8 @@ public sealed class CompiledRule
     internal CompiledRule(Rule source, Func<ProcessInfo, EvalContext, bool> match, bool isDynamic)
     {
         Source = source;
+        Fingerprint = source.Origin + Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
+            System.Text.Encoding.UTF8.GetBytes(System.Text.Json.JsonSerializer.Serialize(source, CoreJson.Default.Rule))));
         Match = match;
         IsDynamic = isDynamic;
         SustainMs = (long)(Math.Max(0, source.SustainSeconds) * 1000);
@@ -18,6 +20,8 @@ public sealed class CompiledRule
     }
 
     public Rule Source { get; }
+    public string Fingerprint { get; }
+    public int StateIndex { get; internal set; } = -1;
     public string Id => Source.Id;
     public string Name => Source.Name;
     public int Priority => Source.Priority;
@@ -31,7 +35,8 @@ public sealed class CompiledRule
     public bool GroupAware { get; internal set; }
 
     /// <summary>Built-in Autopilot rule (frozen while a group freezes Autopilot).</summary>
-    public bool IsAutopilot => Source.Id.StartsWith("autopilot-", StringComparison.Ordinal);
+    public bool IsAutopilot => Source.Origin == RuleOrigin.Autopilot;
+    public bool ForegroundDependent => IsAutopilot && (Id == "autopilot-balance" || Id == "autopilot-game-background" || Id.StartsWith("autopilot-background-", StringComparison.Ordinal));
 
     public long SustainMs { get; }
     public long ReleaseMs { get; }
@@ -71,6 +76,8 @@ public static class RuleCompiler
         {
             var rule = set.Rules[i];
             var messages = new List<string>();
+            if (rule.Origin == RuleOrigin.User && ((rule.Id ?? "").StartsWith("autopilot-", StringComparison.OrdinalIgnoreCase) || (rule.Id ?? "").StartsWith("group-", StringComparison.OrdinalIgnoreCase)))
+                messages.Add("rule ids beginning with 'autopilot-' or 'group-' are reserved for built-ins");
             if (string.IsNullOrWhiteSpace(rule.Id)) messages.Add("rule id is empty");
             else if (!ids.Add(rule.Id)) messages.Add($"duplicate rule id '{rule.Id}'");
 
@@ -80,21 +87,22 @@ public static class RuleCompiler
             int mask = CompileActions(rule, topo, values, messages);
             if (mask == 0) messages.Add("rule sets no action");
 
-            foreach (var m in messages) errors.Add(new RuleError(rule.Id, rule.Name, m));
+            foreach (var m in messages) errors.Add(new RuleError(rule.Id ?? "", rule.Name ?? "", m));
             if (messages.Count > 0 || !rule.Enabled || match is null) continue;
 
             var cr = new CompiledRule(rule, match, dynamic)
             {
                 SlotMask = mask,
                 UsesNetwork = UsesNetwork(rule.When),
-                GroupAware = rule.Id.StartsWith(GroupRulePrefix, StringComparison.Ordinal) || NamesGroup(rule.When),
+                GroupAware = rule.Origin == RuleOrigin.Group || NamesGroup(rule.When),
             };
             values.CopyTo(cr.Values, 0);
             compiled.Add((cr, i));
         }
 
         var ordered = compiled
-            .OrderByDescending(c => c.Rule.Priority)
+            .OrderByDescending(c => c.Rule.Source.Origin)
+            .ThenByDescending(c => c.Rule.Priority)
             .ThenBy(c => c.Order)
             .Select(c => c.Rule)
             .ToArray();
@@ -232,7 +240,32 @@ public static class RuleCompiler
         dynamic = true;
         switch (field)
         {
+            case "backgroundVerdict": return Str(p => p.BackgroundVerdict ?? "observing");
+            case "sessionPresent":
+                return op switch
+                {
+                    "isTrue" => static (p, x) => x.ForegroundKnown && (p.SessionId == 0 || p.SessionId == x.ForegroundSessionId),
+                    "isFalse" => static (p, x) => !x.ForegroundKnown || (p.SessionId != 0 && p.SessionId != x.ForegroundSessionId),
+                    _ => Error("sessionPresent uses isTrue or isFalse"),
+                };
+            case "isLauncher":
+                return op switch
+                {
+                    "isTrue" => static (p, _) => p.IsLauncher,
+                    "isFalse" => static (p, _) => !p.IsLauncher,
+                    _ => Error($"operator '{op}' does not apply to isLauncher (use isTrue or isFalse)"),
+                };
             case "cpu": return Num(p => p.CpuPercent);
+            case "cpuCores":
+                var cores = NumberPredicate(op, c.Value, errors);
+                return cores is null ? null : (p, x) => cores(p.CpuPercent * x.LogicalCount / 100.0);
+            case "systemPressure":
+                return op switch
+                {
+                    "isTrue" => static (_, x) => x.SystemUnderPressure,
+                    "isFalse" => static (_, x) => !x.SystemUnderPressure,
+                    _ => Error("systemPressure uses isTrue or isFalse"),
+                };
             case "ageSeconds": return Num(p => (DateTime.UtcNow.ToFileTimeUtc() - p.Key.CreateTime) / 10_000_000.0);
             case "workingSetMb": return Num(p => p.WorkingSet / 1048576.0);
             case "privateMb": return Num(p => p.PrivateBytes / 1048576.0);
@@ -253,8 +286,8 @@ public static class RuleCompiler
                 // The window you use and every process of the same app (Electron helpers, browser tabs, a terminal's children).
                 return op switch
                 {
-                    "isTrue" => static (p, x) => p.Key.Pid == x.ForegroundPid || (x.ForegroundRoot.Pid != 0 && p.AppRoot == x.ForegroundRoot),
-                    "isFalse" => static (p, x) => p.Key.Pid != x.ForegroundPid && (x.ForegroundRoot.Pid == 0 || p.AppRoot != x.ForegroundRoot),
+                    "isTrue" => static (p, x) => x.IsForegroundApp(p),
+                    "isFalse" => static (p, x) => !x.IsForegroundApp(p),
                     _ => Error($"operator '{op}' does not apply to isForegroundApp (use isTrue or isFalse)"),
                 };
             case "group": return Str(p => p.GroupOwner ?? "");
@@ -320,9 +353,7 @@ public static class RuleCompiler
     private static bool NamesGroup(Condition? c) =>
         c is not null && (c.Field is "group" or "groupId" || (c.Children?.Any(NamesGroup) ?? false));
 
-    private static bool IsGame(ProcessInfo p, EvalContext x) =>
-        (x.GamePid != 0 && (p.Key.Pid == x.GamePid || (x.GameName is { } n && p.Name.Equals(n, StringComparison.OrdinalIgnoreCase))))
-        || (x.AlwaysGames is { Count: > 0 } always && always.Contains(p.Name));
+    private static bool IsGame(ProcessInfo p, EvalContext x) => p.IsGame;
 
     public static bool IsTruthy(string v) =>
         v.Equals("true", StringComparison.OrdinalIgnoreCase) || v == "1" ||

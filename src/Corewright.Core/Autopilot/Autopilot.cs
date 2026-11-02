@@ -6,25 +6,41 @@ namespace Corewright.Core.Autopilot;
 public sealed class AppSettings
 {
     /// <summary>2: background placement on by default. 3: screen tools added to "never games" (owner, 2026-11-02).</summary>
-    public const int CurrentVersion = 3;
+    public const int CurrentVersion = 5;
 
     public int Version { get; set; } = CurrentVersion;
     public AutopilotSettings Autopilot { get; set; } = new();
+    public string[] Warnings { get; set; } = [];
 }
 
 /// <summary>
 /// Autopilot: automatic scheduling on top of the rule engine. It never acts on its own; it generates low-priority
-/// built-in rules (ids "autopilot-…") from these settings, so the user's rules always win and Explain shows why.
+/// built-in rules (ids "autopilot-...") from these settings, so the user's rules always win and Explain shows why.
 /// </summary>
 public sealed class AutopilotSettings
 {
     /// <summary>Off by default: turning it on changes how every process is scheduled (owner confirms defaults).</summary>
-    public bool Enabled { get; set; }
+    private bool _legacyEnabled;
+    public bool Enabled { get => Mode == "on"; set => _legacyEnabled = value; }
+    public string Mode { get; set; } = "observe";
+    [System.Text.Json.Serialization.JsonIgnore]
+    public bool LegacyEnabled => _legacyEnabled;
+    [System.Text.Json.Serialization.JsonIgnore]
+    public bool Active => Mode is "observe" or "on";
+    public int PlacementLimit { get; set; } = 40;
 
     public GameModeSettings GameMode { get; set; } = new();
     public BalanceSettings Balance { get; set; } = new();
     public BackgroundSettings Background { get; set; } = new();
     public BuildToolsSettings BuildTools { get; set; } = new();
+
+    public List<string> Launchers { get; set; } =
+    [
+        "cmd.exe", "pwsh.exe", "powershell.exe", "bash.exe", "sh.exe", "conhost.exe", "OpenConsole.exe",
+        "WindowsTerminal.exe", "explorer.exe", "claude.exe", "codex.exe", "node.exe", "Code.exe", "devenv.exe",
+        "rider64.exe", "idea64.exe", "cargo.exe", "MSBuild.exe", "dotnet.exe", "ninja.exe", "cmake.exe", "make.exe",
+        "gradle.exe", "java.exe", "Unity.exe", "UnityHub.exe", "steam.exe", "EpicGamesLauncher.exe", "T3 Code (Nightly).exe",
+    ];
 }
 
 /// <summary>
@@ -121,6 +137,13 @@ public sealed class GameModeSettings
         "devenv.exe", "rider64.exe", "Unity.exe", "UnrealEditor.exe", "blender.exe", "obs64.exe",
         "Corewright.Dashboard.exe", "msedgewebview2.exe", "ApplicationFrameHost.exe",
         .. ScreenTools,
+        .. GameLaunchers,
+    ];
+
+    public static readonly string[] GameLaunchers =
+    [
+        "Battle.net.exe", "RiotClientServices.exe", "RiotClientUx.exe", "EADesktop.exe", "EABackgroundService.exe",
+        "EpicGamesLauncher.exe", "GalaxyClient.exe", "upc.exe", "UbisoftConnect.exe", "steam.exe", "steamwebhelper.exe",
     ];
 
     /// <summary>
@@ -149,24 +172,31 @@ public sealed class BalanceSettings
     /// <summary>ProBalance-style restraint of background processes that hog the CPU.</summary>
     public bool Enabled { get; set; } = true;
 
-    /// <summary>Per-process CPU, as percent of the whole machine, that counts as hogging.</summary>
-    public double CpuPercent { get; set; } = 8;
+    /// <summary>Core-relative contribution, independent of the machine's logical processor count.</summary>
+    public double CpuCores { get; set; } = 0.7;
+
+    /// <summary>Settings before version 5 stored a share of the whole machine; read once by the migration, never written.</summary>
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public double? CpuPercent { get => null; set => LegacyCpuPercent = value; }
+    [System.Text.Json.Serialization.JsonIgnore]
+    public double? LegacyCpuPercent { get; private set; }
 
     public double SustainSeconds { get; set; } = 2;
-    public double ReleaseSeconds { get; set; } = 6;
+    public double ReleaseSeconds { get; set; } = 30;
     public string Priority { get; set; } = "belowNormal";
     public List<string> Exclusions { get; set; } = [];
 }
 
-/// <summary>Built-in rules from the Autopilot settings. Priorities 1–9: below every user rule.</summary>
+/// <summary>Built-in rules from the Autopilot settings. Priorities 1-9: below every user rule.</summary>
 public static class AutopilotRules
 {
     public const string IdPrefix = "autopilot-";
+    public const string GameRuleId = IdPrefix + "game";
 
     public static List<Rule> Build(AutopilotSettings s, SystemTopology topo, IReadOnlyList<BackgroundVerdict>? background = null)
     {
         var rules = new List<Rule>();
-        if (!s.Enabled) return rules;
+        if (!s.Active) return rules;
         var keep = s.GameMode.KeepResponsive;
 
         if (s.GameMode.Enabled)
@@ -179,13 +209,16 @@ public static class AutopilotRules
                 _ when gameCcd >= 0 => $"ccd{gameCcd}",
                 _ => g.Placement is "auto" ? null : g.Placement,
             };
+            if (gameAffinity is not null && !AffinityParser.TryParse(gameAffinity, topo, out _, out _)) gameAffinity = null;
 
             rules.Add(new Rule
             {
-                Id = IdPrefix + "game",
+                Id = GameRuleId,
                 Name = "Autopilot: game",
                 Priority = 9,
                 AllowRealtime = false,
+                // No launcher guard here: nearly every game starts helpers (anti-cheat, crash handler, overlay), and the
+                // game tree is this rule's target, not a bystander (review M2). Its children belong to the game tree.
                 When = Condition.All(Condition.Leaf("isGame", "isTrue", null)),
                 Actions = new RuleActions { CpuPriority = g.GamePriority, GpuPriority = g.GameGpuPriority, Affinity = gameAffinity, IoPriority = "normal" },
             });
@@ -214,48 +247,42 @@ public static class AutopilotRules
                     if (other != 0) backgroundAffinity = AffinityParser.Format(other & topo.AllMask);
                 }
                 var when = Condition.All(
+                    Condition.Leaf("sessionPresent", "isTrue", null),
                     Condition.Leaf("fact", "isTrue", null, "game.active"),
                     Condition.Leaf("isGame", "isFalse", null),
+                    Condition.Leaf("isLauncher", "isFalse", null),
                     // The whole app in front is left alone, and services are included except latency-critical ones (owner, 2026-11-02).
                     Condition.Leaf("isForegroundApp", "isFalse", null),
                     Condition.Leaf("latencyCritical", "isFalse", null),
-                    Condition.Leaf("cpu", "gt", "0.3"));
+                    Condition.Leaf("ageSeconds", "gt", "15"),
+                    Condition.Leaf("cpuCores", "gte", "0.5"));
                 if (keep.Count > 0) when.Children!.Add(Not(Condition.Leaf("name", "in", string.Join(", ", keep))));
                 rules.Add(new Rule
                 {
                     Id = IdPrefix + "game-background",
                     Name = "Autopilot: background while gaming",
                     Priority = 6,
-                    SustainSeconds = 1,
-                    ReleaseSeconds = 10,
+                    SustainSeconds = 5,
+                    ReleaseSeconds = 15,
                     When = when,
-                    Actions = new RuleActions { CpuPriority = g.BackgroundPriority, IoPriority = "low", Affinity = backgroundAffinity is null ? null : "auto-background" },
+                    Actions = new RuleActions { CpuPriority = g.BackgroundPriority, IoPriority = "low", Affinity = backgroundAffinity is null ? null : "non-game-ccd" },
                 });
             }
         }
 
-        if (s.Background.Enabled && background is not null)
+        if (s.Background.Enabled)
         {
-            // One rule per classified program; game mode (higher priority) still wins for its slots while gaming.
-            foreach (var v in background)
+            var when = Condition.All(Condition.Leaf("backgroundVerdict", "in", "single,multi"),
+                Condition.Leaf("ageSeconds", "gt", "15"), Condition.Leaf("sessionPresent", "isTrue", null),
+                Condition.Leaf("isLauncher", "isFalse", null), Condition.Leaf("isGame", "isFalse", null),
+                Condition.Any(Condition.Leaf("session", "eq", "0"), Condition.Leaf("isForegroundApp", "isFalse", null)));
+            if (!s.Background.IncludeServices) when.Children!.Add(Condition.Leaf("session", "ne", "0"));
+            rules.Add(new Rule
             {
-                // Short-lived tools (grep, cut, a script's helpers) are not worth an affinity write each.
-                var when = Condition.All(Condition.Leaf("program", "eq", v.Program), Condition.Leaf("ageSeconds", "gt", "15"));
-                // A program only counts as background while no window of its app is in front. Services have none.
-                if (!v.Service) when.Children!.Add(Condition.Leaf("isForegroundApp", "isFalse", null));
-                rules.Add(new Rule
-                {
-                    Id = IdPrefix + "background-" + Slug(v.Display) + "-" + Fnv(v.Program),
-                    Name = $"Autopilot: background {v.Display}",
-                    Priority = 5,
-                    When = when,
-                    // Placement is dynamic and sticky (AffinityPlacer): sized to the program's real demand, never on the
-                    // strongest cores, never on the game's CCD while a game runs.
-                    Actions = v.Kind == "single"
-                        ? new RuleActions { Affinity = "auto-background" }
-                        : new RuleActions { CpuPriority = s.Background.Priority, IoPriority = "low", Affinity = "auto-background" },
-                });
-            }
+                Id = IdPrefix + "background-learned", Name = "Autopilot: learned background program", Priority = 5,
+                When = when,
+                Actions = new RuleActions { Affinity = "auto-background", CpuPriority = s.Background.Priority, IoPriority = "low", BackgroundMultiOnly = true },
+            });
         }
 
         if (s.BuildTools.Enabled && s.BuildTools.Programs.Count > 0)
@@ -266,7 +293,7 @@ public static class AutopilotRules
                 Name = "Autopilot: compilers and build tools",
                 Priority = 7,
                 When = Condition.All(Condition.Leaf("name", "in", string.Join(", ", s.BuildTools.Programs))),
-                Actions = new RuleActions { CpuPriority = s.BuildTools.Priority, IoPriority = s.BuildTools.IoPriority, Affinity = "auto-background" },
+                Actions = new RuleActions { CpuPriority = s.BuildTools.Priority, IoPriority = s.BuildTools.IoPriority },
             });
         }
 
@@ -274,10 +301,13 @@ public static class AutopilotRules
         {
             var b = s.Balance;
             var when = Condition.All(
+                Condition.Leaf("sessionPresent", "isTrue", null),
+                Condition.Leaf("isLauncher", "isFalse", null),
                 Condition.Leaf("isForegroundApp", "isFalse", null),
                 Condition.Leaf("isGame", "isFalse", null),
                 Condition.Leaf("latencyCritical", "isFalse", null),
-                Condition.Leaf("cpu", "gt", b.CpuPercent.ToString(System.Globalization.CultureInfo.InvariantCulture)));
+                Condition.Leaf("systemPressure", "isTrue", null),
+                Condition.Leaf("cpuCores", "gte", b.CpuCores.ToString(System.Globalization.CultureInfo.InvariantCulture)));
             var excluded = b.Exclusions.Concat(keep).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
             if (excluded.Count > 0) when.Children!.Add(Not(Condition.Leaf("name", "in", string.Join(", ", excluded))));
             rules.Add(new Rule
@@ -288,10 +318,17 @@ public static class AutopilotRules
                 SustainSeconds = b.SustainSeconds,
                 ReleaseSeconds = b.ReleaseSeconds,
                 When = when,
-                Actions = new RuleActions { CpuPriority = b.Priority },
+                Actions = new RuleActions { CpuPriority = b.Priority, CpuPriorityLowerOnly = true },
             });
         }
 
+        foreach (var rule in rules)
+        {
+            rule.Origin = RuleOrigin.Autopilot;
+            // Build tools must not acquire affinity through a lower learned/gaming rule either.
+            if (rule.Actions.Affinity is not null && s.BuildTools.Programs.Count > 0)
+                rule.When = Condition.All(rule.When, Not(Condition.Leaf("name", "in", string.Join(", ", s.BuildTools.Programs))));
+        }
         return rules;
     }
 
@@ -301,12 +338,49 @@ public static class AutopilotRules
         if (topo.CcdMasks.Length < 2) return -1;
         return placement switch
         {
-            "auto" => topo.VCacheCcds.Length == 1 ? topo.VCacheCcds[0] : topo.FrequencyCcd,
-            "vcache-ccd" => topo.VCacheCcds.Length == 1 ? topo.VCacheCcds[0] : -1,
+            "auto" => topo.VCacheCcds.Length == 1 ? topo.VCacheCcds[0] : Fastest(topo),
+            "vcache-ccd" => FastestVCache(topo),
             "frequency-ccd" or "best-ccd" => topo.FrequencyCcd,
             _ when placement.StartsWith("ccd", StringComparison.OrdinalIgnoreCase) && int.TryParse(placement[3..], out int n) && n < topo.CcdMasks.Length => n,
             _ => -1,
         };
+    }
+
+    private static int Fastest(SystemTopology topo) => topo.FrequencyCcd >= 0 && topo.FrequencyCcd < topo.CcdMasks.Length
+        ? topo.FrequencyCcd : FastestVCache(topo);
+
+    private static int FastestVCache(SystemTopology topo)
+    {
+        foreach (ulong core in topo.CoresByRank)
+            foreach (int ccd in topo.VCacheCcds)
+                if (ccd >= 0 && ccd < topo.CcdMasks.Length && (topo.CcdMasks[ccd] & core) != 0) return ccd;
+        foreach (int ccd in topo.VCacheCcds) if (ccd >= 0 && ccd < topo.CcdMasks.Length) return ccd;
+        return 0;
+    }
+
+    public static List<RuleError> ValidateSettings(AppSettings settings, SystemTopology topo)
+    {
+        var errors = new List<RuleError>();
+        void Range(string field, double value, double min, double max)
+        { if (!double.IsFinite(value) || value < min || value > max) errors.Add(new("settings", field, $"{field} must be between {min} and {max}")); }
+        var a = settings.Autopilot;
+        if (a?.Background is null || a.Balance is null || a.GameMode is null || a.BuildTools is null)
+        { errors.Add(new("settings", "autopilot", "Autopilot sections must not be null")); return errors; }
+        if (a.Mode is not ("off" or "observe" or "on")) errors.Add(new("settings", "mode", "mode must be off, observe or on"));
+        Range("placementLimit", a.PlacementLimit, 1, 1000);
+        if (a.Launchers is null || a.Background.Exclusions is null || a.Balance.Exclusions is null || a.BuildTools.Programs is null ||
+            a.GameMode.Games is null || a.GameMode.NotGames is null || a.GameMode.KeepResponsive is null || a.GameMode.Placement is null)
+        { errors.Add(new("settings", "autopilot", "Autopilot lists and game placement must not be null")); return errors; }
+        Range("background.minObservedMinutes", a.Background.MinObservedMinutes, 1, 10080);
+        Range("background.maxForegroundPercent", a.Background.MaxForegroundPercent, 0, 100);
+        Range("background.singleCoreLoad", a.Background.SingleCoreLoad, 0.1, 64);
+        Range("background.keepBestCoresFree", a.Background.KeepBestCoresFree, 0, topo.PhysicalCores.Length > 0 ? topo.PhysicalCores.Length : topo.LogicalCount);
+        Range("balance.cpuCores", a.Balance.CpuCores, 0.1, 64);
+        Range("balance.sustainSeconds", a.Balance.SustainSeconds, 0, 3600);
+        Range("balance.releaseSeconds", a.Balance.ReleaseSeconds, 0, 3600);
+        settings.Warnings = a.GameMode.Placement is "auto" or "all" || AffinityParser.TryParse(a.GameMode.Placement, topo, out _, out _)
+            ? [] : ["Game placement is unavailable on this CPU; game priority remains active without affinity."];
+        return errors;
     }
 
     /// <summary>Stable short hash (string.GetHashCode is randomized per process), so two programs with one display name get two ids.</summary>
