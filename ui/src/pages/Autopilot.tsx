@@ -148,6 +148,7 @@ export function Autopilot() {
           ))}
         </div>
       )}
+      {status.data?.autopilotCapped && <p className="banner">Autopilot has reached its placement limit. No new processes will be placed.</p>}
 
       {a.mode === 'observe' && <section className="card">
         <h3>What Autopilot would do</h3>
@@ -266,6 +267,7 @@ export function Autopilot() {
               <Levels levels={LOW_LEVELS} value={bg.priority} onChange={(v) => update((x) => (x.autopilot.background.priority = v))} />
             </Row>
             <ListRow title="Never place" desc="Programs background placement leaves alone." value={bg.exclusions} onChange={(v) => update((x) => (x.autopilot.background.exclusions = v))} />
+            <Row title="Placement limit" desc="Maximum processes Autopilot may place at once."><NumberBox value={a.placementLimit ?? 40} min={1} max={1000} onChange={(v) => update((x) => (x.autopilot.placementLimit = v))} /></Row>
             <ListRow title="Launchers" desc="Never placed automatically. Node, Java and Gradle count when they have children." value={a.launchers ?? []} onChange={(v) => update((x) => (x.autopilot.launchers = v))} />
           </Group>
         </div>

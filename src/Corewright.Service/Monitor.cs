@@ -403,6 +403,7 @@ internal sealed class Monitor : BackgroundService
             _groups.Resolve(_sampler.Processes, _byPid);
             Engine.FreezeAutopilot = _groups.AnyFreeze;
             Engine.ObserveAutopilot = ap.Mode == "observe";
+            Engine.AutopilotPlacementLimit = ap.PlacementLimit;
             if (_groups.AnyFreeze) _facts["autopilot.frozen"] = "true";
             else _facts.Remove("autopilot.frozen");
             _ctx.ForegroundBusy = _sampler.TryGet(_ctx.ForegroundPid, out var front) && front.CpuPercent * Topology.LogicalCount / 100 >= 0.5;

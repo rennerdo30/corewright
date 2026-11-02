@@ -66,6 +66,10 @@ public sealed class RuleEngine(IActuator actuator, IEngineEventSink sink, Func<l
     /// </summary>
     public bool FreezeAutopilot { get; set; }
     public bool ObserveAutopilot { get; set; }
+    public int AutopilotPlacementLimit { get; set; } = 40;
+    public int AutopilotPlaced { get; private set; }
+    public bool AutopilotCapped { get; private set; }
+    private int _previewPlacements;
 
     /// <summary>Resolves "auto-…" affinity modes; without one they fall back to leaving affinity unchanged.</summary>
     public IAffinityPlacer? Placer { get; set; }
@@ -104,6 +108,9 @@ public sealed class RuleEngine(IActuator actuator, IEngineEventSink sink, Func<l
     {
         _ctx = ctx;
         _tick++;
+        AutopilotPlaced = CountAutopilotPlaced();
+        AutopilotCapped = false;
+        _previewPlacements = 0;
         bool track = _set.Rules.Length > 0 || _states.Count != 0;
         if (track)
         {
@@ -137,6 +144,14 @@ public sealed class RuleEngine(IActuator actuator, IEngineEventSink sink, Func<l
             _states.Remove(key);
         }
         _gone.Clear();
+        AutopilotPlaced = CountAutopilotPlaced();
+    }
+
+    private int CountAutopilotPlaced()
+    {
+        int count = 0, s = (int)Slot.Affinity;
+        foreach (var st in _states.Values) if (st.IsApplied[s] && st.AppliedRule[s] is { IsAutopilot: true }) count++;
+        return count;
     }
 
     private static bool IsListed(IReadOnlyList<ProcessInfo> processes, ProcessKey key)
@@ -341,6 +356,9 @@ public sealed class RuleEngine(IActuator actuator, IEngineEventSink sink, Func<l
         {
             if (s < 2 && st.InheritAttempts[s] > 0 && st.InheritAttempts[s] < 4) continue;
             bool has = (claimed & (1 << s)) != 0;
+            if (has && ObserveAutopilot && s == (int)Slot.Affinity && rules[wantRule[s]].IsAutopilot &&
+                (!AffinityModes.IsDynamic(want[s]) || (Placer?.Resolve(p, want[s], ctx) ?? 0) != 0) && ++_previewPlacements > AutopilotPlacementLimit)
+                AutopilotCapped = true;
             if (has && ObserveAutopilot && rules[wantRule[s]].IsAutopilot) has = false;
             // Frozen: what Autopilot set on a process outside any group stays exactly as it is.
             if (!has && !ObserveAutopilot && FreezeAutopilot && p.GroupId is null && st.IsApplied[s] && st.AppliedRule[s] is { IsAutopilot: true } frozen &&
@@ -465,6 +483,10 @@ public sealed class RuleEngine(IActuator actuator, IEngineEventSink sink, Func<l
             else value = Placer.Resolve(p, value, _ctx ?? new EvalContext());
             if (value == 0) has = false;
         }
+        bool wasAutopilot = slot == Slot.Affinity && st.IsApplied[s] && st.AppliedRule[s] is { IsAutopilot: true };
+        if (has && slot == Slot.Affinity && rule!.IsAutopilot &&
+            ((!wasAutopilot && AutopilotPlaced >= AutopilotPlacementLimit) || (wasAutopilot && AutopilotPlaced > AutopilotPlacementLimit)))
+        { AutopilotCapped = true; has = false; }
         if (!has)
         {
             if (st.Owned[s]) Revert(st, s);
@@ -489,6 +511,7 @@ public sealed class RuleEngine(IActuator actuator, IEngineEventSink sink, Func<l
 
         if (st.IsApplied[s] && st.Applied[s] == value && (st.Pending & (1 << s)) == 0)
         {
+            if (slot == Slot.Affinity && wasAutopilot != rule!.IsAutopilot) AutopilotPlaced += rule.IsAutopilot ? 1 : -1;
             st.AppliedRule[s] = rule;
             if (slot == Slot.CpuPriority && p.BasePriority != 0 &&
                 p.BasePriority != Slots.BasePriorityOf((CpuPriorityLevel)value) && st.DriftCount < MaxDriftReapply)
@@ -532,6 +555,7 @@ public sealed class RuleEngine(IActuator actuator, IEngineEventSink sink, Func<l
         }
         else if (result.Status == WriteStatus.Succeeded)
         {
+            if (slot == Slot.Affinity && wasAutopilot != rule!.IsAutopilot) AutopilotPlaced += rule.IsAutopilot ? 1 : -1;
             long nowFt = DateTime.UtcNow.ToFileTimeUtc();
             // Inheritance bookkeeping: the modification interval starts when the slot first leaves its original and
             // only ends with a confirmed restore; a reapply of the same value after a failed restore keeps it.
@@ -600,6 +624,7 @@ public sealed class RuleEngine(IActuator actuator, IEngineEventSink sink, Func<l
         if (s < 2 && st.History[s].From != 0)
             st.History[s] = st.History[s] with { Until = DateTime.UtcNow.ToFileTimeUtc() };
         st.RevertFailed &= ~(1 << s);
+        if (slot == Slot.Affinity && st.IsApplied[s] && st.AppliedRule[s] is { IsAutopilot: true }) AutopilotPlaced--;
         st.IsApplied[s] = false;
         st.Owned[s] = false;
         st.Pending &= ~(1 << s);

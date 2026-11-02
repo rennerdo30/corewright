@@ -9,6 +9,8 @@ export interface Status {
   activeRules: number
   foregroundPid: number
   autopilot: boolean
+  autopilotPlaced?: number
+  autopilotCapped?: boolean
   game?: { pid: number; name: string; reason?: string } | null
   dataDirectory: string
 }
@@ -27,6 +29,7 @@ export interface AppSettings {
   autopilot: {
     enabled: boolean
     mode?: 'off' | 'observe' | 'on'
+    placementLimit?: number
     launchers?: string[]
     gameMode: {
       enabled: boolean

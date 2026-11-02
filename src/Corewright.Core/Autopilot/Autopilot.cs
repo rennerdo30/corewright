@@ -27,6 +27,7 @@ public sealed class AutopilotSettings
     public bool LegacyEnabled => _legacyEnabled;
     [System.Text.Json.Serialization.JsonIgnore]
     public bool Active => Mode is "observe" or "on";
+    public int PlacementLimit { get; set; } = 40;
 
     public GameModeSettings GameMode { get; set; } = new();
     public BalanceSettings Balance { get; set; } = new();
@@ -342,6 +343,7 @@ public static class AutopilotRules
         if (a?.Background is null || a.Balance is null || a.GameMode is null || a.BuildTools is null)
         { errors.Add(new("settings", "autopilot", "Autopilot sections must not be null")); return errors; }
         if (a.Mode is not ("off" or "observe" or "on")) errors.Add(new("settings", "mode", "mode must be off, observe or on"));
+        Range("placementLimit", a.PlacementLimit, 1, 1000);
         if (a.Launchers is null || a.Background.Exclusions is null || a.Balance.Exclusions is null || a.BuildTools.Programs is null ||
             a.GameMode.Games is null || a.GameMode.NotGames is null || a.GameMode.KeepResponsive is null || a.GameMode.Placement is null)
         { errors.Add(new("settings", "autopilot", "Autopilot lists and game placement must not be null")); return errors; }

@@ -10,7 +10,7 @@ using Corewright.Service.Windows;
 namespace Corewright.Service;
 
 public sealed record StatusDto(string Version, string Mode, bool Elevated, bool Paused, int IntervalMs, int ProcessCount,
-    int RulesVersion, int ActiveRules, int ForegroundPid, bool Autopilot, GameDto? Game, string DataDirectory, string AutopilotMode);
+    int RulesVersion, int ActiveRules, int ForegroundPid, bool Autopilot, GameDto? Game, string DataDirectory, string AutopilotMode, int AutopilotPlaced, bool AutopilotCapped);
 
 public sealed record AutopilotPreviewDto(int Pid, string Process, string Rule, string Slot, string Value, string Reason);
 
@@ -115,7 +115,7 @@ internal static class Api
                     Environment.IsPrivilegedProcess, m.Engine.Paused, m.IntervalMs, m.Sampler.Processes.Count,
                     m.Engine.Version, m.Engine.Rules.Rules.Count(r => !r.Id.StartsWith(AutopilotRules.IdPrefix, StringComparison.Ordinal)),
                     m.Context.ForegroundPid, m.Settings.Autopilot.Enabled,
-                    m.Game.Game is { } g ? new GameDto(g.Pid, m.Game.GameName ?? "", m.Game.Reason) : null, m.DataDirectory, m.Settings.Autopilot.Mode));
+                    m.Game.Game is { } g ? new GameDto(g.Pid, m.Game.GameName ?? "", m.Game.Reason) : null, m.DataDirectory, m.Settings.Autopilot.Mode, m.Engine.AutopilotPlaced, m.Engine.AutopilotCapped));
         });
 
         api.MapGet("/system", () =>
@@ -305,6 +305,7 @@ internal static class Api
             lock (m.Sync)
             {
                 var rows = new List<AutopilotPreviewDto>();
+                int placements = 0;
                 foreach (var p in m.Sampler.Processes)
                     foreach (var e in m.Engine.Explain(p, m.Context))
                     {
@@ -314,6 +315,7 @@ internal static class Api
                             for (int s = 0; s < Slots.Count; s++)
                                 if (Slots.Name((Slot)s) == name)
                                 {
+                                    if ((Slot)s == Slot.Affinity && ++placements > m.Settings.Autopilot.PlacementLimit) continue;
                                     long value = r.Values[s];
                                     if ((Slot)s == Slot.Affinity && AffinityModes.IsDynamic(value)) value = m.Placer.Resolve(p, value, m.Context);
                                     rows.Add(new(p.Key.Pid, p.Name, r.Name, name, Slots.FormatValue((Slot)s, value), e.Reason ?? r.Name));
