@@ -3,6 +3,18 @@
 Release notes for every Corewright version, newest first. The release workflow publishes the section of a version
 as its GitHub release notes.
 
+## 0.1.0-beta.9
+
+### Fixed
+
+- **Updates failed for standard users who approve the administrator prompt with another account.** The setup runs
+  as that administrator and could not close the Corewright window, so it stopped. The window now lets administrators
+  close it for an update. Because the window that is open during an update comes from your installed version, the
+  first update to beta 9 may still fail: close Corewright (tray icon → Exit Corewright), then run the beta 9 setup from
+  the website once.
+- **Update errors showed the wrong line** of the setup log ("does not match the interactive session user"). The setup
+  wrote its error lines over the start of its log; it now appends them, and the update message shows the actual error.
+
 ## 0.1.0-beta.8
 
 ### Fixed

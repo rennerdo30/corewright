@@ -44,7 +44,7 @@ internal sealed partial class MainForm : Form
 
     private readonly WebView2 _web = new() { Dock = DockStyle.Fill };
     private readonly EventWaitHandle _show = new(false, EventResetMode.AutoReset, Program.ShowEvent);
-    private readonly EventWaitHandle _exit = new(false, EventResetMode.ManualReset, Program.ExitEvent);
+    private readonly EventWaitHandle _exit = ExitEventForSetup();
     private readonly RegisteredWaitHandle _showWait;
     private readonly RegisteredWaitHandle _exitWait;
     private static readonly string PlacementFile = Path.Combine(AppPaths.UserDataDirectory, "dashboard-window.json");
@@ -260,6 +260,49 @@ internal sealed partial class MainForm : Form
 
     [LibraryImport("dwmapi.dll")]
     private static partial int DwmSetWindowAttribute(nint hwnd, int attribute, ref int value, int size);
+
+    /// <summary>
+    /// The event the setup signals to close this window before it replaces files. With the default security only this
+    /// user may open it, so a setup that runs as another administrator account (a standard user approving the prompt
+    /// with an administrator's password) could not close the window and failed (2026-11-02). Administrators and SYSTEM
+    /// may now signal it (EVENT_MODIFY_STATE | SYNCHRONIZE only).
+    /// </summary>
+    private static EventWaitHandle ExitEventForSetup()
+    {
+        string? user = System.Security.Principal.WindowsIdentity.GetCurrent().User?.Value;
+        if (user is not null &&
+            ConvertStringSecurityDescriptorToSecurityDescriptorW($"D:(A;;GA;;;{user})(A;;GA;;;SY)(A;;0x100002;;;BA)", 1, out nint sd, 0))
+        {
+            try
+            {
+                var sa = new SecurityAttributes { Length = Marshal.SizeOf<SecurityAttributes>(), Descriptor = sd };
+                nint handle = CreateEventW(ref sa, true, false, Program.ExitEvent);
+                if (handle != 0)
+                    return new EventWaitHandle(false, EventResetMode.ManualReset) { SafeWaitHandle = new Microsoft.Win32.SafeHandles.SafeWaitHandle(handle, true) };
+            }
+            finally { LocalFree(sd); }
+        }
+        return new EventWaitHandle(false, EventResetMode.ManualReset, Program.ExitEvent);
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct SecurityAttributes
+    {
+        public int Length;
+        public nint Descriptor;
+        public int Inherit;
+    }
+
+    [LibraryImport("advapi32.dll", StringMarshalling = StringMarshalling.Utf16, SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static partial bool ConvertStringSecurityDescriptorToSecurityDescriptorW(string sddl, int revision, out nint descriptor, nint size);
+
+    [LibraryImport("kernel32.dll", StringMarshalling = StringMarshalling.Utf16, SetLastError = true)]
+    private static partial nint CreateEventW(ref SecurityAttributes attributes, [MarshalAs(UnmanagedType.Bool)] bool manualReset,
+        [MarshalAs(UnmanagedType.Bool)] bool initialState, string name);
+
+    [LibraryImport("kernel32.dll")]
+    private static partial nint LocalFree(nint memory);
 
     /// <summary>The user's Windows accent palette (light to dark shades), so buttons and selection use their colour.</summary>
     private static string[] AccentPalette()

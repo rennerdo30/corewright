@@ -87,6 +87,7 @@ Var DataPathUnsafe
   Call ${prefix}RestoreService
   DetailPrint "ERROR: ${text}"
   FileOpen $9 "$LogPath" a
+  FileSeek $9 0 END ; "a" keeps the contents but starts at the beginning
   FileWrite $9 "ERROR: ${text}$\r$\n"
   FileClose $9
   MessageBox MB_OK|MB_ICONSTOP "${text}$\r$\nSee $LogPath." /SD IDOK
@@ -197,6 +198,7 @@ Function ${prefix}Sc
   nsExec::ExecToLog /TIMEOUT=10000 '"$SYSDIR\sc.exe" $ScCommand'
   Pop $ScResult
   FileOpen $9 "$LogPath" a
+  FileSeek $9 0 END ; "a" keeps the contents but starts at the beginning
   FileWrite $9 "sc.exe $ScCommand => $ScResult$\r$\n"
   FileClose $9
 FunctionEnd
@@ -323,6 +325,7 @@ Function ${prefix}RestoreService
   ${If} $ServiceTouched == 1
     DetailPrint "ERROR: Immediate service restore failed or timed out; callback will retry."
     FileOpen $9 "$LogPath" a
+    FileSeek $9 0 END ; "a" keeps the contents but starts at the beginning
     FileWrite $9 "ERROR: Immediate service restore failed or timed out.$\r$\n"
     FileClose $9
   ${EndIf}
@@ -368,6 +371,7 @@ FunctionEnd
   Pop $SameUser
   ${If} $SameUser != 0
     FileOpen $9 "$LogPath" a
+    FileSeek $9 0 END ; "a" keeps the contents but starts at the beginning
     FileWrite $9 "Per-user work skipped: elevated identity does not match the interactive session user (or could not be verified).$\r$\n"
     FileClose $9
   ${EndIf}

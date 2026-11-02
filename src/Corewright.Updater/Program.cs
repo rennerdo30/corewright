@@ -71,8 +71,13 @@ catch (Exception e)
     {
         string reason = e.Message;
         string log = Path.Combine(Path.GetTempPath(), $"Corewright-installer-{version}.log");
-        if (version is not null && File.Exists(log) && File.ReadLines(log).LastOrDefault() is { Length: > 0 } last)
-            reason += " Setup said: " + last.Trim();
+        // The setup's own error line, not just the log's last line (which may be an unrelated note).
+        if (version is not null && File.Exists(log))
+        {
+            var lines = File.ReadAllLines(log);
+            string? said = lines.LastOrDefault(l => l.StartsWith("ERROR:", StringComparison.Ordinal)) ?? lines.LastOrDefault(l => l.Trim().Length > 0);
+            if (said is not null) reason += " Setup said: " + said.Trim();
+        }
         string dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "Corewright");
         if (Directory.Exists(dir)) File.WriteAllText(Path.Combine(dir, "update-last-error.txt"), reason, Encoding.UTF8);
     }
