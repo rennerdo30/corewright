@@ -395,6 +395,8 @@ internal sealed class Monitor : BackgroundService
             }
 
             _ctx.ForegroundRoot = _background.ForegroundRoot;
+            _ctx.ForegroundProgram = _sampler.TryGet(_ctx.ForegroundPid, out var foregroundApp) ? foregroundApp.Program : null;
+            _ctx.ForegroundFrameHost = foregroundApp?.Name.Equals("ApplicationFrameHost.exe", StringComparison.OrdinalIgnoreCase) ?? false;
             // PM-39: process groups. Expiry rebuilds the rules; membership is decided once per new process.
             if (_groups.Expire(_ctx.NowMs)) RebuildRules();
             _groups.Resolve(_sampler.Processes, _byPid);

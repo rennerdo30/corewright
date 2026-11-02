@@ -156,6 +156,7 @@ internal sealed unsafe class ProcessSampler : IDisposable
                 foreach (var recent in _recentParents)
                     if (recent.Key.Pid == parentPid && recent.Key.CreateTime <= info.Key.CreateTime && recent.Expires > Environment.TickCount64)
                     { info.Parent = recent.Key; break; }
+                info.HasUnknownParent = parentPid != 0;
             }
         }
         _new.Clear();

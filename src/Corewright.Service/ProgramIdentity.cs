@@ -24,7 +24,7 @@ internal static partial class ProgramIdentity
     {
         "explorer.exe", "services.exe", "svchost.exe", "wininit.exe", "winlogon.exe", "userinit.exe", "sihost.exe", "smss.exe",
         "csrss.exe", "RuntimeBroker.exe", "taskhostw.exe", "ShellExperienceHost.exe", "StartMenuExperienceHost.exe",
-        "Corewright.Tray.exe", "Corewright.Service.exe",
+        "Corewright.Tray.exe", "Corewright.Service.exe", "ApplicationFrameHost.exe",
     };
 
     /// <summary>

@@ -76,6 +76,7 @@ internal sealed class BackgroundClassifier
     private HashSet<string> _launchers = new(StringComparer.OrdinalIgnoreCase);
     private bool _wasPresent;
     private readonly HashSet<string> _verdictPrograms = new(StringComparer.Ordinal);
+    private readonly EvalContext _foreground = new();
 
     public BackgroundClassifier(string dataDirectory)
     {
@@ -139,6 +140,10 @@ internal sealed class BackgroundClassifier
         }
 
         ForegroundRoot = _byPid.TryGetValue(foregroundPid, out var fg) ? fg.AppRoot : default;
+        _foreground.ForegroundPid = foregroundPid;
+        _foreground.ForegroundRoot = ForegroundRoot;
+        _foreground.ForegroundProgram = fg?.Program;
+        _foreground.ForegroundFrameHost = fg?.Name.Equals("ApplicationFrameHost.exe", StringComparison.OrdinalIgnoreCase) ?? false;
 
         double dt = _lastTickMs == 0 ? 0 : Math.Min(10, (nowMs - _lastTickMs) / 1000.0);
         _lastTickMs = nowMs;
@@ -155,10 +160,11 @@ internal sealed class BackgroundClassifier
         foreach (var p in processes)
         {
             if (p.IsProtected || p.Key.Pid is 0 or 4 || p.Program is null) continue;
+            if (fg is not null && p.SessionId != 0 && p.SessionId != fg.SessionId) continue;
             // All instances of a program add up: CpuPercent is a share of the whole machine.
             _coresThisTick[p.Program] = _coresThisTick.GetValueOrDefault(p.Program) + p.CpuPercent * logical / 100.0;
             if (p.SessionId == 0) _serviceThisTick[p.Program] = true;
-            if (p.Key.Pid == foregroundPid || (ForegroundRoot.Pid != 0 && p.AppRoot == ForegroundRoot)) _frontThisTick.Add(p.Program);
+            if (_foreground.IsForegroundApp(p)) _frontThisTick.Add(p.Program);
         }
 
         long unix = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
@@ -199,10 +205,12 @@ internal sealed class BackgroundClassifier
         var cur = p;
         for (int depth = 0; depth < 16; depth++)
         {
-            if (cur.Parent is not { } parent || !_byPid.TryGetValue(parent.Pid, out var pp) || pp.Key != parent) break;
-            if (ProgramIdentity.IsShell(pp.Name) || pp.IsProtected) break;
+            if (cur.Parent is not { } parent) { p.AppRootUncertain |= cur.HasUnknownParent; return cur.Key; }
+            if (!_byPid.TryGetValue(parent.Pid, out var pp) || pp.Key != parent) { p.AppRootUncertain = true; return cur.Key; }
+            if (ProgramIdentity.IsShell(pp.Name) || _launchers.Contains(pp.Name) || pp.IsProtected) return cur.Key;
             cur = pp;
         }
+        p.AppRootUncertain = true;
         return cur.Key;
     }
 

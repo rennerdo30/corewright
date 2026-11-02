@@ -28,6 +28,8 @@ public sealed class ProcessInfo(ProcessKey key, string name)
     public int IdentityAttempts;
     /// <summary>The topmost ancestor below the shell (explorer, services, …): processes with the same root are one app.</summary>
     public ProcessKey AppRoot;
+    public bool AppRootUncertain;
+    public bool HasUnknownParent;
     /// <summary>Audio, input, display-driver and network-core processes: Autopilot never slows them down.</summary>
     public bool LatencyCritical;
     public bool IsLauncher;
@@ -102,9 +104,14 @@ public sealed class EvalContext
 
     /// <summary>App root of the foreground process: every process of that app counts as "in front" (rule field isForegroundApp).</summary>
     public ProcessKey ForegroundRoot { get; set; }
+    public string? ForegroundProgram { get; set; }
+    public bool ForegroundFrameHost { get; set; }
 
-    public bool IsForegroundApp(ProcessInfo p) => p.Key.Pid == ForegroundPid ||
-        (ForegroundRoot.Pid != 0 && p.AppRoot == ForegroundRoot);
+    public bool IsForegroundApp(ProcessInfo p) => p.Key.Pid == ForegroundPid || p.AppRootUncertain ||
+        (ForegroundRoot.Pid != 0 && p.AppRoot == ForegroundRoot) ||
+        (ForegroundProgram is not null && p.Program == ForegroundProgram) ||
+        (ForegroundFrameHost && (p.Name.Equals("ApplicationFrameHost.exe", StringComparison.OrdinalIgnoreCase) ||
+            (p.Path?.Contains("\\WindowsApps\\", StringComparison.OrdinalIgnoreCase) ?? false)));
 
     /// <summary>The detected game (Autopilot game mode); 0 when none. Every process with the same exe name counts.</summary>
     public int GamePid { get; set; }
