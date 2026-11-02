@@ -206,6 +206,16 @@ public sealed class RuleEngine(IActuator actuator, IEngineEventSink sink, Func<l
         return list;
     }
 
+    public List<(ProcessKey Key, string Name, long Mask, long Since, string Rule)> GetAutopilotAffinity()
+    {
+        var rows = new List<(ProcessKey, string, long, long, string)>();
+        int s = (int)Slot.Affinity;
+        foreach (var st in _states.Values)
+            if (st.IsApplied[s] && st.AppliedRule[s] is { IsAutopilot: true } r)
+                rows.Add((st.Key, st.Name, st.Applied[s], st.ModifiedSince[s], r.Name));
+        return rows;
+    }
+
     /// <summary>Slots whose last write to this process failed (with the value that was refused).</summary>
     public List<(Slot Slot, long Value)> GetFailed(ProcessKey key)
     {

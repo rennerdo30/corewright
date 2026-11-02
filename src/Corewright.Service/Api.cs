@@ -293,7 +293,7 @@ internal static class Api
 
         api.MapGet("/autopilot/placements", () =>
         {
-            lock (m.Sync) return TypedResults.Ok(m.Placer.Snapshot(Environment.TickCount64).ToArray());
+            lock (m.Sync) return TypedResults.Ok(m.Placer.Snapshot(Environment.TickCount64, m.Engine).ToArray());
         });
 
         api.MapGet("/api-calls", () => TypedResults.Ok(m.ApiCalls.Recent()));

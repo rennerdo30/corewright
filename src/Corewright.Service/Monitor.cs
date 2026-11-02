@@ -81,7 +81,7 @@ internal sealed class Monitor : BackgroundService
         _settingsStore = settingsStore;
         Settings = settingsStore.Load();
         _ctx.AlwaysGames = AlwaysGamesOf(Settings);
-        _placer = new AffinityPlacer(() => Topology, () => _cores.Usage,
+        _placer = new AffinityPlacer(() => Topology,
             () => AutopilotRules.GameCcd(Settings.Autopilot.GameMode.Placement, Topology),
             () => Settings.Autopilot.Background.KeepBestCoresFree,
             () => _groups.ExclusiveMask);
@@ -142,6 +142,7 @@ internal sealed class Monitor : BackgroundService
             VCacheCcds = [.. layout.Ccds.Where(c => c.VCache).Select(c => c.Id)],
             FrequencyCcd = freq,
             CoresByRank = ranked,
+            PhysicalCores = cores.Select(k => Mask(k.Threads)).ToArray(),
         };
     }
     public RuleEngine Engine { get; }
@@ -381,13 +382,13 @@ internal sealed class Monitor : BackgroundService
             Engine.FreezeAutopilot = _groups.AnyFreeze;
             if (_groups.AnyFreeze) _facts["autopilot.frozen"] = "true";
             else _facts.Remove("autopilot.frozen");
+            _ctx.ForegroundBusy = _sampler.TryGet(_ctx.ForegroundPid, out var front) && front.CpuPercent * Topology.LogicalCount / 100 >= 0.5;
+            if (IsClientActive) _cores.Sample(); // Loose masks do not need per-thread load.
             Engine.Evaluate(_sampler.Processes, _ctx);
 
             // Cheap system counters always; the costly ones (GPU counters, per-thread load) only while someone watches.
             Devices.BeginSample(IsClientActive);
             _network.Sample(Devices, IsClientActive);
-            _cores.Sample(); // one call; the placer needs per-thread load for dynamic placement
-            _placer.Prune(_sampler.IsAlive);
             if (!IsClientActive)
             {
                 Details.DropIfIdle();

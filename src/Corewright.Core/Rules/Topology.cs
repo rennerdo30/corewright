@@ -33,6 +33,9 @@ public sealed class SystemTopology
     /// <summary>Physical cores (their logical processors) ordered fastest first by CPPC; empty without a ranking.</summary>
     public ulong[] CoresByRank { get; init; } = [];
 
+    /// <summary>Physical cores from RelationProcessorCore, independent of CPPC availability.</summary>
+    public ulong[] PhysicalCores { get; init; } = [];
+
     public static SystemTopology Uniform(int logicalCount) => new(logicalCount, ulong.MaxValue, 0);
 }
 
