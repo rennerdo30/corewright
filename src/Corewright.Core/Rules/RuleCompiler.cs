@@ -32,6 +32,7 @@ public sealed class CompiledRule
 
     /// <summary>Built-in Autopilot rule (frozen while a group freezes Autopilot).</summary>
     public bool IsAutopilot => Source.Id.StartsWith("autopilot-", StringComparison.Ordinal);
+    public bool ForegroundDependent => IsAutopilot && (Id == "autopilot-balance" || Id == "autopilot-game-background" || Id.StartsWith("autopilot-background-", StringComparison.Ordinal));
 
     public long SustainMs { get; }
     public long ReleaseMs { get; }
@@ -232,6 +233,13 @@ public static class RuleCompiler
         dynamic = true;
         switch (field)
         {
+            case "sessionPresent":
+                return op switch
+                {
+                    "isTrue" => static (p, x) => x.ForegroundKnown && (p.SessionId == 0 || p.SessionId == x.ForegroundSessionId),
+                    "isFalse" => static (p, x) => !x.ForegroundKnown || (p.SessionId != 0 && p.SessionId != x.ForegroundSessionId),
+                    _ => Error("sessionPresent uses isTrue or isFalse"),
+                };
             case "isLauncher":
                 return op switch
                 {

@@ -222,6 +222,7 @@ public static class AutopilotRules
                     if (other != 0) backgroundAffinity = AffinityParser.Format(other & topo.AllMask);
                 }
                 var when = Condition.All(
+                    Condition.Leaf("sessionPresent", "isTrue", null),
                     Condition.Leaf("fact", "isTrue", null, "game.active"),
                     Condition.Leaf("isGame", "isFalse", null),
                     Condition.Leaf("isLauncher", "isFalse", null),
@@ -250,6 +251,7 @@ public static class AutopilotRules
             {
                 // Short-lived tools (grep, cut, a script's helpers) are not worth an affinity write each.
                 var when = Condition.All(Condition.Leaf("program", "eq", v.Program), Condition.Leaf("ageSeconds", "gt", "15"),
+                    Condition.Leaf("sessionPresent", "isTrue", null),
                     Condition.Leaf("isLauncher", "isFalse", null), Condition.Leaf("isGame", "isFalse", null));
                 // A program only counts as background while no window of its app is in front. Services have none.
                 if (!v.Service) when.Children!.Add(Condition.Leaf("isForegroundApp", "isFalse", null));
@@ -284,6 +286,7 @@ public static class AutopilotRules
         {
             var b = s.Balance;
             var when = Condition.All(
+                Condition.Leaf("sessionPresent", "isTrue", null),
                 Condition.Leaf("isLauncher", "isFalse", null),
                 Condition.Leaf("isForegroundApp", "isFalse", null),
                 Condition.Leaf("isGame", "isFalse", null),

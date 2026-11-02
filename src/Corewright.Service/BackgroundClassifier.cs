@@ -21,6 +21,7 @@ public sealed class ProgramStats
     public bool Service { get; set; }
     /// <summary>Unix seconds when the program (or its app) was last in front; 0 = never.</summary>
     public long LastForeground { get; set; }
+    public double RecentForegroundRemaining { get; set; } = 1800;
     public long LastSeen { get; set; }
     /// <summary>Child processes it started (aged like the time counters). Launchers are never placed.</summary>
     public double ChildStarts { get; set; }
@@ -72,6 +73,7 @@ internal sealed class BackgroundClassifier
     private string _signature = "";
     private List<string>? _launcherSource;
     private HashSet<string> _launchers = new(StringComparer.OrdinalIgnoreCase);
+    private bool _wasPresent;
 
     public BackgroundClassifier(string dataDirectory)
     {
@@ -140,7 +142,10 @@ internal sealed class BackgroundClassifier
         _lastTickMs = nowMs;
         // Without foreground reports (the service learns them from the tray) every program would look "never in
         // front" and the user's own apps would be classified as background (2026-11-02). Learn nothing then.
-        if (dt <= 0 || !foregroundKnown) return false;
+        bool observing = _wasPresent && foregroundKnown;
+        _wasPresent = foregroundKnown;
+        if (dt <= 0 || !observing) return false;
+        foreach (var stats in _stats.Values) stats.RecentForegroundRemaining = Math.Max(0, stats.RecentForegroundRemaining - dt);
 
         _coresThisTick.Clear();
         _serviceThisTick.Clear();
@@ -167,6 +172,7 @@ internal sealed class BackgroundClassifier
             {
                 s.ForegroundSeconds += dt;
                 s.LastForeground = unix;
+                s.RecentForegroundRemaining = RecentForegroundSeconds;
             }
             s.LastSeen = unix;
         }
@@ -261,7 +267,7 @@ internal sealed class BackgroundClassifier
         if (ProgramIdentity.IsCritical(exe, s.Display)) return ("critical", "Left alone: latency critical");
         if (s.Service && !settings.IncludeServices) return ("service", "Service (services are off)");
         if (s.ObservedSeconds < settings.MinObservedMinutes * 60) return ("observing", "Observing");
-        if (s.LastForeground != 0 && unix - s.LastForeground < RecentForegroundSeconds) return ("interactive", "Interactive: in front recently");
+        if (s.RecentForegroundRemaining > 0) return ("interactive", "Interactive: in front recently");
         if (100 * s.ForegroundSeconds / s.ObservedSeconds > settings.MaxForegroundPercent) return ("interactive", "Interactive");
         if (IsLauncher(s)) return ("launcher", "Left alone: starts other programs");
         double avg = s.CoreSeconds / s.ObservedSeconds;

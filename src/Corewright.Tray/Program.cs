@@ -26,6 +26,12 @@ internal static unsafe class Program
     private static int _lastForeground;
     private static bool _lastFullscreen;
     private const nuint RecheckTimer = 1;
+    private const nuint PresenceTimer = 2;
+    private const uint IdleMs = 600_000;
+    private static bool _locked, _present = true;
+    private static readonly int SessionId = Process.GetCurrentProcess().SessionId;
+    private static Task _send = Task.CompletedTask;
+    private static readonly object SendSync = new();
     private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(2) };
 
     [STAThread]
@@ -61,6 +67,7 @@ internal static unsafe class Program
         _taskbarCreated = RegisterWindowMessageW("TaskbarCreated");
         _icon = LoadTrayIcon();
         AddIcon();
+        WTSRegisterSessionNotification(_hwnd, 0);
 
         nint hook = SetWinEventHook(EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND, 0, &OnWinEvent, 0, 0,
             WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS);
@@ -76,6 +83,8 @@ internal static unsafe class Program
         }
 
         if (hook != 0) UnhookWinEvent(hook);
+        WTSUnRegisterSessionNotification(_hwnd);
+        KillTimer(_hwnd, PresenceTimer);
         // Tell the service the foreground is unknown from now on, so it does not learn from a stale window.
         Call(HttpMethod.Put, "/api/v1/session/foreground", "{\"pid\":0,\"fullscreen\":false}");
         RemoveIcon();
@@ -111,6 +120,25 @@ internal static unsafe class Program
             SendForeground((int)w, l != 0);
             return 0;
         }
+        if (msg == 0x02B1 && ((int)w == 7 || (int)w == 8)) // WM_WTSSESSION_CHANGE: lock/unlock
+        {
+            _locked = (int)w == 7;
+            ReportForeground(GetForegroundWindow(), force: true);
+            return 0;
+        }
+        if (msg == WM_TIMER && (nuint)w == PresenceTimer)
+        {
+            KillTimer(hwnd, PresenceTimer);
+            var input = new LASTINPUTINFO { Size = (uint)sizeof(LASTINPUTINFO) };
+            if (GetLastInputInfo(ref input))
+            {
+                uint idle = unchecked((uint)Environment.TickCount - input.Time);
+                if (idle >= IdleMs)
+                { _present = false; SendForeground(_lastForeground, _lastFullscreen); }
+                else if (!_locked) SetTimer(hwnd, PresenceTimer, IdleMs - idle, 0);
+            }
+            return 0;
+        }
         if (msg == WM_TIMER && (nuint)w == RecheckTimer)
         {
             // One-shot: borderless games often go full screen a moment after they take focus.
@@ -141,7 +169,10 @@ internal static unsafe class Program
         GetWindowThreadProcessId(hwnd, out uint pid);
         bool fullscreen = IsFullscreen(hwnd);
         bool changedProcess = pid != (uint)_lastForeground;
-        if (pid == 0 || (!changedProcess && fullscreen == _lastFullscreen)) return;
+        if (pid == 0 || (!force && !changedProcess && fullscreen == _lastFullscreen)) return;
+        _present = !_locked && !IsLockScreen(pid);
+        KillTimer(_hwnd, PresenceTimer);
+        if (_present) SetTimer(_hwnd, PresenceTimer, IdleMs, 0);
         _lastForeground = (int)pid;
         _lastFullscreen = fullscreen;
         PostMessageW(_hwnd, WM_FOREGROUND, (nint)pid, fullscreen ? 1 : 0);
@@ -162,8 +193,27 @@ internal static unsafe class Program
         return r.Left <= info.Monitor.Left && r.Top <= info.Monitor.Top && r.Right >= info.Monitor.Right && r.Bottom >= info.Monitor.Bottom;
     }
 
-    private static void SendForeground(int pid, bool fullscreen) =>
-        _ = Task.Run(() => Call(HttpMethod.Put, "/api/v1/session/foreground", $"{{\"pid\":{pid},\"fullscreen\":{(fullscreen ? "true" : "false")}}}"));
+    private static void SendForeground(int pid, bool fullscreen)
+    {
+        string body = $"{{\"pid\":{pid},\"fullscreen\":{(fullscreen ? "true" : "false")},\"sessionId\":{SessionId},\"present\":{(_present ? "true" : "false")}}}";
+        lock (SendSync) _send = _send.ContinueWith(_ => Call(HttpMethod.Put, "/api/v1/session/foreground", body), TaskScheduler.Default);
+    }
+
+    private static bool IsLockScreen(uint pid)
+    {
+        nint h = OpenProcess(0x1000, false, pid);
+        if (h == 0) return true;
+        try
+        {
+            char* path = stackalloc char[512];
+            uint size = 512;
+            if (!QueryFullProcessImageNameW(h, 0, path, ref size)) return true;
+            var name = new ReadOnlySpan<char>(path, (int)size);
+            return name.EndsWith("\\LockApp.exe", StringComparison.OrdinalIgnoreCase) ||
+                name.EndsWith("\\LogonUI.exe", StringComparison.OrdinalIgnoreCase) || name.EndsWith(".scr", StringComparison.OrdinalIgnoreCase);
+        }
+        finally { CloseHandle(h); }
+    }
 
     private static void AddIcon()
     {

@@ -32,6 +32,9 @@ internal sealed class Monitor : BackgroundService
     private long _lastClientMs;
     private int _reportedForegroundPid;
     private long _reportedForegroundMs;
+    private ProcessKey? _reporter, _foregroundKey;
+    private bool _reportedPresent;
+    private int? _reportedSessionId;
 
     // History ring.
     private readonly NetworkSampler _network = new();
@@ -231,15 +234,28 @@ internal sealed class Monitor : BackgroundService
         Wake();
     }
 
-    public void ReportForeground(int pid, bool fullscreen)
+    public void ReportForeground(int pid, bool fullscreen, int? sessionId, bool present, int? reporterPid)
     {
         lock (Sync)
         {
             _reportedForegroundPid = pid;
             _reportedFullscreen = fullscreen;
             _reportedForegroundMs = Environment.TickCount64;
+            _reporter = reporterPid is { } rp ? ReadIdentity(rp) : null;
+            _foregroundKey = ReadIdentity(pid);
+            _reportedSessionId = sessionId;
+            _reportedPresent = present;
         }
         Wake();
+    }
+
+    private static ProcessKey? ReadIdentity(int pid)
+    {
+        if (pid <= 0) return null;
+        nint h = Native.OpenProcess(Native.PROCESS_QUERY_LIMITED_INFORMATION, false, pid);
+        if (h == 0) return null;
+        try { return Native.GetProcessTimes(h, out long created, out _, out _, out _) ? new ProcessKey(pid, created) : null; }
+        finally { Native.CloseHandle(h); }
     }
 
     public (long[] Time, float[] Cpu, float[] Mem, float[] Io, float[] Gpu, float[] NetRx, float[] NetTx) History()
@@ -345,11 +361,11 @@ internal sealed class Monitor : BackgroundService
 
             // A service in session 0 cannot see the desktop; the tray reports the foreground process.
             // In console mode the service can read it itself unless the tray reported recently.
-            bool fullscreen;
-            if (!IsWindowsService && _ctx.NowMs - _reportedForegroundMs > 10_000)
-                (_ctx.ForegroundPid, fullscreen) = SystemProbe.ForegroundInfo();
-            else
-                (_ctx.ForegroundPid, fullscreen) = (_reportedForegroundPid, _reportedFullscreen);
+            bool fullscreen = _reportedFullscreen;
+            _ctx.ForegroundPid = _reportedForegroundPid;
+            _ctx.ForegroundKnown = _reportedPresent && _reporter is { } reporter && _sampler.IsAlive(reporter) &&
+                _foregroundKey is { } foreground && _sampler.IsAlive(foreground);
+            _ctx.ForegroundSessionId = _reportedSessionId ?? (_reporter is { } rk && _sampler.TryGet(rk.Pid, out var tray) ? tray.SessionId : -1);
 
             // Autopilot game mode: only re-classifies when the foreground or its full-screen state changes.
             var ap = Settings.Autopilot;
@@ -364,7 +380,7 @@ internal sealed class Monitor : BackgroundService
             // PM-12: long-term observation; a changed classification rebuilds the rule set (at most once a minute).
             _background ??= new BackgroundClassifier(DataDirectory);
             // As a service the foreground comes from the tray: known once it reported, unknown after it said goodbye (pid 0).
-            bool foregroundKnown = !IsWindowsService || (_reportedForegroundMs != 0 && _reportedForegroundPid > 0);
+            bool foregroundKnown = _ctx.ForegroundKnown;
             if (_background.Observe(_sampler.Processes, _ctx.ForegroundPid, foregroundKnown, Topology.LogicalCount, _ctx.NowMs,
                     Settings.Autopilot.Background, Settings.Autopilot.GameMode, Topology, ap.Launchers)
                 && Settings.Autopilot.Enabled && Settings.Autopilot.Background.Enabled)

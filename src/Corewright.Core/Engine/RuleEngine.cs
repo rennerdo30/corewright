@@ -272,6 +272,8 @@ public sealed class RuleEngine(IActuator actuator, IEngineEventSink sink, Func<l
         {
             var r = rules[i];
             if (r.UsesNetwork && !p.NetAvailable) { st.ClearTiming(i); continue; }
+            if (r.ForegroundDependent && (!ctx.ForegroundKnown || (p.SessionId != 0 && p.SessionId != ctx.ForegroundSessionId)))
+            { st.ClearTiming(i); continue; }
             if ((r.SlotMask & ~claimed) == 0)
             {
                 // Every slot of this rule is already owned by a higher rule: skip the evaluation entirely.
@@ -301,7 +303,8 @@ public sealed class RuleEngine(IActuator actuator, IEngineEventSink sink, Func<l
             if (s < 2 && st.InheritAttempts[s] > 0 && st.InheritAttempts[s] < 4) continue;
             bool has = (claimed & (1 << s)) != 0;
             // Frozen: what Autopilot set on a process outside any group stays exactly as it is.
-            if (!has && FreezeAutopilot && p.GroupId is null && st.IsApplied[s] && st.AppliedRule[s] is { IsAutopilot: true }) continue;
+            if (!has && FreezeAutopilot && p.GroupId is null && st.IsApplied[s] && st.AppliedRule[s] is { IsAutopilot: true } frozen &&
+                (!frozen.ForegroundDependent || ctx.ForegroundKnown)) continue;
             Reconcile(p, st, s, has, want[s], has ? rules[wantRule[s]] : null);
         }
     }

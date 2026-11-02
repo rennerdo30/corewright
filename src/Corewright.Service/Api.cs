@@ -46,7 +46,7 @@ public sealed record EventsDto(long Last, EventDto[] Events);
 
 public sealed record FactValueDto(string? Value);
 
-public sealed record ForegroundDto(int Pid, bool Fullscreen = false);
+public sealed record ForegroundDto(int Pid, bool Fullscreen = false, int? SessionId = null, bool Present = true);
 
 public sealed record GameDto(int Pid, string Name, string? Reason);
 
@@ -235,9 +235,10 @@ internal static class Api
 
         api.MapDelete("/facts/{key}", (string key) => { m.SetFact(key, null); return TypedResults.NoContent(); });
 
-        api.MapPut("/session/foreground", (ForegroundDto body) =>
+        api.MapPut("/session/foreground", (ForegroundDto body, HttpContext http) =>
         {
-            m.ReportForeground(body.Pid, body.Fullscreen);
+            m.ReportForeground(body.Pid, body.Fullscreen, body.SessionId, body.Present,
+                ApiLog.OwnerOf(http.Connection.RemotePort, http.Connection.LocalPort));
             return TypedResults.NoContent();
         });
 

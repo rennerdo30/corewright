@@ -91,6 +91,8 @@ public sealed class EvalContext
     public IReadOnlyDictionary<string, string> Facts { get; set; } = NoFacts;
     public int ForegroundPid { get; set; }
     public bool ForegroundBusy { get; set; }
+    public bool ForegroundKnown { get; set; }
+    public int ForegroundSessionId { get; set; } = -1;
 
     /// <summary>App root of the foreground process: every process of that app counts as "in front" (rule field isForegroundApp).</summary>
     public ProcessKey ForegroundRoot { get; set; }
