@@ -24,7 +24,7 @@ internal sealed unsafe class ProcessSampler : IDisposable
     private readonly List<ProcessInfo> _list = [];
     private readonly List<ProcessInfo> _new = [];
     private readonly List<ProcessKey> _gone = [];
-    private readonly (ProcessKey Key, long Expires)[] _recentParents = new (ProcessKey, long)[512];
+    private readonly (ProcessKey Key, ProcessKey? GameRoot, long Expires)[] _recentParents = new (ProcessKey, ProcessKey?, long)[512];
     private int _nextParent;
     private readonly int _cpuCount = (int)Math.Max(1, Native.GetActiveProcessorCount(Native.ALL_PROCESSOR_GROUPS));
     private readonly int _selfPid = Environment.ProcessId;
@@ -85,7 +85,7 @@ internal sealed unsafe class ProcessSampler : IDisposable
                 {
                     SessionId = *(int*)(p + OffSession),
                     IsProtected = ProtectedProcesses.Is(pid, name, _selfPid),
-                    Path = pid is 0 or 4 ? null : QueryPath(pid),
+                    Path = pid is 0 or 4 ? null : QueryPath(key),
                     // Parent pid only; resolved to a full key (with PID-reuse check) after the pass.
                     Parent = new ProcessKey((int)*(nint*)(p + OffParent), 0),
                 };
@@ -97,7 +97,7 @@ internal sealed unsafe class ProcessSampler : IDisposable
             }
 
             long cpu = *(long*)(p + OffUser) + *(long*)(p + OffKernel);
-            if (!isNew && info.Path is null && info.IdentityAttempts < 4 && pid is not (0 or 4)) info.Path = QueryPath(pid);
+            if (!isNew && info.Path is null && info.IdentityAttempts < 4 && pid is not (0 or 4)) info.Path = QueryPath(key);
             long io = *(long*)(p + OffReadXfer) + *(long*)(p + OffWriteXfer) + *(long*)(p + OffOtherXfer);
             if (!isNew && dt > 0)
             {
@@ -149,13 +149,14 @@ internal sealed unsafe class ProcessSampler : IDisposable
             {
                 info.Parent = parent.Key;
                 info.ParentName = parent.Name;
+                info.GameRoot = parent.GameRoot;
             }
             else
             {
                 info.Parent = null;
                 foreach (var recent in _recentParents)
                     if (recent.Key.Pid == parentPid && recent.Key.CreateTime <= info.Key.CreateTime && recent.Expires > Environment.TickCount64)
-                    { info.Parent = recent.Key; break; }
+                    { info.Parent = recent.Key; info.GameRoot = recent.GameRoot; break; }
                 info.HasUnknownParent = parentPid != 0;
             }
         }
@@ -165,7 +166,7 @@ internal sealed unsafe class ProcessSampler : IDisposable
             if (v.LastSeenTick != _tick) _gone.Add(k);
         foreach (var k in _gone)
         {
-            _recentParents[_nextParent++ % _recentParents.Length] = (k, Environment.TickCount64 + 30_000);
+            _recentParents[_nextParent++ % _recentParents.Length] = (k, _live[k].GameRoot, Environment.TickCount64 + 30_000);
             if (_byPid.TryGetValue(k.Pid, out var old) && old.Key == k) _byPid.Remove(k.Pid);
             _live.Remove(k);
         }
@@ -202,12 +203,13 @@ internal sealed unsafe class ProcessSampler : IDisposable
         return len == 0 || buf == null ? "" : new string(buf, 0, len);
     }
 
-    private static string? QueryPath(int pid)
+    private static string? QueryPath(ProcessKey key)
     {
-        nint h = Native.OpenProcess(Native.PROCESS_QUERY_LIMITED_INFORMATION, false, pid);
+        nint h = Native.OpenProcess(Native.PROCESS_QUERY_LIMITED_INFORMATION, false, key.Pid);
         if (h == 0) return null;
         try
         {
+            if (!Native.GetProcessTimes(h, out long created, out _, out _, out _) || created != key.CreateTime) return null;
             char* buf = stackalloc char[1024];
             uint size = 1024;
             return Native.QueryFullProcessImageNameW(h, 0, buf, ref size) ? new string(buf, 0, (int)size) : null;

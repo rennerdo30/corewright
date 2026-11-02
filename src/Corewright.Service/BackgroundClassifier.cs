@@ -110,7 +110,8 @@ internal sealed class BackgroundClassifier
     public bool Observe(IReadOnlyList<ProcessInfo> processes, int foregroundPid, bool foregroundKnown, int logical, long nowMs,
         BackgroundSettings settings, GameModeSettings game, SystemTopology topo, List<string> launchers)
     {
-        if (!ReferenceEquals(_launcherSource, launchers))
+        bool refreshRoots = !ReferenceEquals(_launcherSource, launchers);
+        if (refreshRoots)
         {
             _launcherSource = launchers;
             _launchers = new(launchers, StringComparer.OrdinalIgnoreCase);
@@ -130,6 +131,8 @@ internal sealed class BackgroundClassifier
             else if (_stats.Count < MaxPrograms && !p.IsProtected && p.Key.Pid is not (0 or 4)) _stats[key] = new ProgramStats { Display = display, Critical = critical };
             if (p.IdentityAttempts == 1) _new.Add(p);
         }
+        if (refreshRoots)
+            foreach (var p in processes) { p.AppRootUncertain = false; p.AppRoot = RootOf(p); }
         // Each new process counts as a start for its parent's program (after the loop: the parent may be new too).
         // Processes already running when the service starts are not starts; counting them would inflate every restart.
         foreach (var p in _new)
@@ -286,7 +289,7 @@ internal sealed class BackgroundClassifier
         foreach (var (key, s) in _stats)
         {
             var (kind, _) = Decide(key, s, settings, excluded, unix);
-            if (kind is "single" or "multi") verdicts.Add(new BackgroundVerdict(key, s.Display, kind, s.Service, Describe(s)));
+            if (kind is "single" or "multi") verdicts.Add(new BackgroundVerdict(key, s.Display, kind, s.Service, $"{s.Display} ({kind}): {Describe(s)}"));
         }
         verdicts.Sort((a, b) => string.CompareOrdinal(a.Program, b.Program));
         Verdicts = verdicts;
@@ -399,7 +402,8 @@ internal sealed class BackgroundClassifier
             else
             {
                 string old = Path.Combine(Path.GetDirectoryName(path)!, "background-stats-v3.json");
-                if (File.Exists(old)) file = new StatsFile { Programs = JsonSerializer.Deserialize(File.ReadAllText(old), StatsJson.Default.DictionaryStringProgramStats) ?? [] };
+                if (File.Exists(old)) file = new StatsFile { LastDecayUnix = new DateTimeOffset(File.GetLastWriteTimeUtc(old)).ToUnixTimeSeconds(),
+                    Programs = JsonSerializer.Deserialize(File.ReadAllText(old), StatsJson.Default.DictionaryStringProgramStats) ?? [] };
             }
             if (file is not null)
             {

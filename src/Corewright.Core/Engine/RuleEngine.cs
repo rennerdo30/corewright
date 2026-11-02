@@ -79,6 +79,7 @@ public sealed class RuleEngine(IActuator actuator, IEngineEventSink sink, Func<l
     public int AutopilotPlaced { get; private set; }
     public bool AutopilotCapped { get; private set; }
     private int _previewPlacements;
+    private readonly HashSet<ProcessKey> _previewAllowed = [];
 
     /// <summary>Resolves "auto-…" affinity modes; without one they fall back to leaving affinity unchanged.</summary>
     public IAffinityPlacer? Placer { get; set; }
@@ -121,6 +122,7 @@ public sealed class RuleEngine(IActuator actuator, IEngineEventSink sink, Func<l
         AutopilotPlaced = CountAutopilotPlaced();
         AutopilotCapped = AutopilotPlaced > AutopilotPlacementLimit;
         _previewPlacements = 0;
+        _previewAllowed.Clear();
         bool track = _set.Rules.Length > 0 || _states.Count != 0 || _nowMs() < _tombsUntil;
         if (track)
         {
@@ -310,6 +312,10 @@ public sealed class RuleEngine(IActuator actuator, IEngineEventSink sink, Func<l
                     long value = r.Values[s];
                     if (!retained && (Slot)s == Slot.Affinity && AffinityModes.IsDynamic(value) && (Placer?.Resolve(p, value, ctx) ?? 0) == 0)
                         lost.Add("affinity (no placement: no useful safe mask)");
+                    else if (!retained && (Slot)s == Slot.Affinity && r.IsAutopilot &&
+                        (ObserveAutopilot ? _previewPlacements > AutopilotPlacementLimit && !_previewAllowed.Contains(p.Key) :
+                            AutopilotPlaced >= AutopilotPlacementLimit && !(st?.IsApplied[s] == true && st.AppliedRule[s] is { IsAutopilot: true })))
+                        lost.Add("affinity (placement cap reached)");
                     else if ((Slot)s == Slot.CpuPriority && r.Source.Actions.CpuPriorityLowerOnly && p.BasePriority != 0 && p.BasePriority < Slots.BasePriorityOf((CpuPriorityLevel)value))
                         lost.Add("cpuPriority (already lower; left alone)");
                     else won.Add(Slots.Name((Slot)s));
@@ -317,7 +323,8 @@ public sealed class RuleEngine(IActuator actuator, IEngineEventSink sink, Func<l
                 else lost.Add($"{Slots.Name((Slot)s)} (to {owner[s]!.Name})");
             }
             result.Add(new ExplainEntry(r.Id, r.Name, r.Priority, matches, active, [.. won], [.. lost],
-                gate ?? (frozen ? "Autopilot frozen: confirmed values kept, new decisions suspended" : null), r.ForegroundDependent ? p.BackgroundReason : null));
+                gate ?? (frozen ? "Autopilot frozen: confirmed values kept, new decisions suspended" : null),
+                r.IsAutopilot && ObserveAutopilot ? "Observe: proposed only. " + (p.BackgroundReason ?? r.Name) : r.ForegroundDependent ? p.BackgroundReason : null));
         }
         return result;
     }
@@ -326,6 +333,7 @@ public sealed class RuleEngine(IActuator actuator, IEngineEventSink sink, Func<l
     {
         var rules = _set.Rules;
         if (st.Version != _version) st.Reset(_stateCapacity, _version);
+        if (st.Program != p.Program) { st.Program = p.Program; Array.Clear(st.StaticCache); }
 
         Span<long> want = stackalloc long[Slots.Count];
         Span<int> wantRule = stackalloc int[Slots.Count];
@@ -368,8 +376,11 @@ public sealed class RuleEngine(IActuator actuator, IEngineEventSink sink, Func<l
             if (s < 2 && st.InheritAttempts[s] > 0 && st.InheritAttempts[s] < 4) continue;
             bool has = (claimed & (1 << s)) != 0;
             if (has && ObserveAutopilot && s == (int)Slot.Affinity && rules[wantRule[s]].IsAutopilot &&
-                (!AffinityModes.IsDynamic(want[s]) || (Placer?.Resolve(p, want[s], ctx) ?? 0) != 0) && ++_previewPlacements > AutopilotPlacementLimit)
-                AutopilotCapped = true;
+                (!AffinityModes.IsDynamic(want[s]) || (Placer?.Resolve(p, want[s], ctx) ?? 0) != 0))
+            {
+                if (++_previewPlacements > AutopilotPlacementLimit) AutopilotCapped = true;
+                else _previewAllowed.Add(p.Key);
+            }
             if (has && ObserveAutopilot && rules[wantRule[s]].IsAutopilot) has = false;
             // Frozen: what Autopilot set on a process outside any group stays exactly as it is.
             if (!has && !ObserveAutopilot && FreezeAutopilot && p.GroupId is null && st.IsApplied[s] && st.AppliedRule[s] is { IsAutopilot: true } frozen &&
@@ -419,7 +430,13 @@ public sealed class RuleEngine(IActuator actuator, IEngineEventSink sink, Func<l
             long inherited = p.Key.CreateTime < source.Changed ? source.Previous : source.Value;
             var slot = (Slot)s;
             if (slot == Slot.CpuPriority && !Slots.IsInheritedPriority(inherited)) { st.InheritAttempts[s] = 4; continue; }
-            if (!actuator.TryRead(p.Key, slot, out long current, out _)) continue;
+            if (!actuator.TryRead(p.Key, slot, out long current, out var readError))
+            {
+                if (st.InheritAttempts[s] == 4)
+                    sink.Emit(new(EngineEventKind.Failed, p.Key.Pid, p.Name, null, Slots.Name(slot), null,
+                        $"inherited from {name}; could not inspect value after four attempts: {readError}"));
+                continue;
+            }
             if (current != inherited) { st.InheritAttempts[s] = 4; continue; }
             st.InheritedMask |= 1 << s;
             st.InheritedValue[s] = inherited;
@@ -508,6 +525,7 @@ public sealed class RuleEngine(IActuator actuator, IEngineEventSink sink, Func<l
         }
 
         bool lowerOnly = slot == Slot.CpuPriority && rule!.Source.Actions.CpuPriorityLowerOnly;
+        if (st.Failed[s] && st.FailedValue[s] == value) return;
         long? lowerOriginal = null;
         if (lowerOnly && !st.Owned[s])
         {
@@ -516,11 +534,10 @@ public sealed class RuleEngine(IActuator actuator, IEngineEventSink sink, Func<l
             if (current <= value) return;
             lowerOriginal = current;
         }
-        if (lowerOnly && st.Owned[s] && st.Applied[s] != value &&
-            actuator.TryRead(p.Key, slot, out long held, out _) && held <= value)
+        if (lowerOnly && st.Owned[s] && st.Applied[s] != value)
         {
-            st.AppliedRule[s] = rule;
-            return;
+            if (!actuator.TryRead(p.Key, slot, out long held, out var error)) { Fail(p, st, s, value, rule!, error); return; }
+            if (held <= value) { st.AppliedRule[s] = rule; return; }
         }
 
         if (st.IsApplied[s] && st.Applied[s] == value && (st.Pending & (1 << s)) == 0)
@@ -679,6 +696,7 @@ public sealed class RuleEngine(IActuator actuator, IEngineEventSink sink, Func<l
         public readonly long[] PreviousApplied = new long[Slots.Count];
         /// <summary>Inheritance from a changed parent was checked (once per process).</summary>
         public ProcessKey? Parent;
+        public string? Program;
         public readonly Inheritance[] History = new Inheritance[2];
         public readonly byte[] InheritAttempts = new byte[2];
         public readonly long[] InheritedValue = new long[2], InheritedOriginal = new long[2];

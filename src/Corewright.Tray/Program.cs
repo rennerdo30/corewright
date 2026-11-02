@@ -30,7 +30,8 @@ internal static unsafe class Program
     private const uint IdleMs = 600_000;
     private static bool _locked, _present = true;
     private static readonly int SessionId = Process.GetCurrentProcess().SessionId;
-    private static Task _send = Task.CompletedTask;
+    private static string? _pendingForeground;
+    private static bool _sendingForeground;
     private static readonly object SendSync = new();
     private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(2) };
 
@@ -137,6 +138,7 @@ internal static unsafe class Program
                 { _present = false; SendForeground(_lastForeground, _lastFullscreen); }
                 else if (!_locked) SetTimer(hwnd, PresenceTimer, IdleMs - idle, 0);
             }
+            else { _present = false; SendForeground(_lastForeground, _lastFullscreen); }
             return 0;
         }
         if (msg == WM_TIMER && (nuint)w == RecheckTimer)
@@ -196,7 +198,25 @@ internal static unsafe class Program
     private static void SendForeground(int pid, bool fullscreen)
     {
         string body = $"{{\"pid\":{pid},\"fullscreen\":{(fullscreen ? "true" : "false")},\"sessionId\":{SessionId},\"present\":{(_present ? "true" : "false")}}}";
-        lock (SendSync) _send = _send.ContinueWith(_ => Call(HttpMethod.Put, "/api/v1/session/foreground", body), TaskScheduler.Default);
+        lock (SendSync)
+        {
+            _pendingForeground = body;
+            if (_sendingForeground) return;
+            _sendingForeground = true;
+        }
+        _ = Task.Run(static () =>
+        {
+            while (true)
+            {
+                string? next;
+                lock (SendSync)
+                {
+                    next = _pendingForeground; _pendingForeground = null;
+                    if (next is null) { _sendingForeground = false; return; }
+                }
+                Call(HttpMethod.Put, "/api/v1/session/foreground", next);
+            }
+        });
     }
 
     private static bool IsLockScreen(uint pid)

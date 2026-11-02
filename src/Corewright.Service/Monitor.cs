@@ -65,6 +65,7 @@ internal sealed class Monitor : BackgroundService
         _log = log;
         Devices.Start(Sync, log);
         Events = events;
+        SystemProbe.EnablePrivileges();
         Engine = new RuleEngine(_actuator, events);
         Engine.Journal = new AppliedJournal(dataDirectory, _actuator, events, log);
         _actuator.Network.Start(events);
@@ -77,7 +78,6 @@ internal sealed class Monitor : BackgroundService
         };
         _ctx.Facts = _facts;
         ProcessInfo.CommandLineReader = SystemProbe.ReadCommandLine;
-        SystemProbe.EnablePrivileges();
         var basic = SystemProbe.ReadTopology();
         try { CpuLayout = CpuTopologyProbe.Read(); }
         catch (Exception e) { log.LogWarning("CPU topology probe failed: {Message}", e.Message); }

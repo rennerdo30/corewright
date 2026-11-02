@@ -324,7 +324,7 @@ public static class AutopilotRules
         return placement switch
         {
             "auto" => topo.VCacheCcds.Length == 1 ? topo.VCacheCcds[0] : Fastest(topo),
-            "vcache-ccd" => topo.VCacheCcds.Contains(topo.FrequencyCcd) ? topo.FrequencyCcd : topo.VCacheCcds.Length > 0 ? topo.VCacheCcds[0] : 0,
+            "vcache-ccd" => FastestVCache(topo),
             "frequency-ccd" or "best-ccd" => topo.FrequencyCcd,
             _ when placement.StartsWith("ccd", StringComparison.OrdinalIgnoreCase) && int.TryParse(placement[3..], out int n) && n < topo.CcdMasks.Length => n,
             _ => -1,
@@ -332,7 +332,16 @@ public static class AutopilotRules
     }
 
     private static int Fastest(SystemTopology topo) => topo.FrequencyCcd >= 0 && topo.FrequencyCcd < topo.CcdMasks.Length
-        ? topo.FrequencyCcd : topo.VCacheCcds.Length > 0 ? topo.VCacheCcds[0] : 0;
+        ? topo.FrequencyCcd : FastestVCache(topo);
+
+    private static int FastestVCache(SystemTopology topo)
+    {
+        foreach (ulong core in topo.CoresByRank)
+            foreach (int ccd in topo.VCacheCcds)
+                if (ccd >= 0 && ccd < topo.CcdMasks.Length && (topo.CcdMasks[ccd] & core) != 0) return ccd;
+        foreach (int ccd in topo.VCacheCcds) if (ccd >= 0 && ccd < topo.CcdMasks.Length) return ccd;
+        return 0;
+    }
 
     public static List<RuleError> ValidateSettings(AppSettings settings, SystemTopology topo)
     {
