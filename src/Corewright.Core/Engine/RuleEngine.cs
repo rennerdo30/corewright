@@ -34,7 +34,7 @@ public interface IEngineEventSink
 public sealed record AppliedSlot(Slot Slot, long Value, string RuleId, string RuleName);
 
 public sealed record ExplainEntry(
-    string RuleId, string RuleName, int Priority, bool Matches, bool Active, string[] Won, string[] Lost, string? Unavailable = null);
+    string RuleId, string RuleName, int Priority, bool Matches, bool Active, string[] Won, string[] Lost, string? Unavailable = null, string? Reason = null);
 
 /// <summary>
 /// Evaluates compiled rules against processes and reconciles each slot: the highest-priority active rule
@@ -259,22 +259,37 @@ public sealed class RuleEngine(IActuator actuator, IEngineEventSink sink, Func<l
         for (int i = 0; i < rules.Length; i++)
         {
             var r = rules[i];
-            bool unavailable = r.UsesNetwork && !p.NetAvailable;
-            bool matches = !unavailable && r.Match(p, ctx);
+            string? gate = Paused ? "engine paused" : p.IsProtected ? "protected process" :
+                p.GroupId is not null && !r.GroupAware ? "grouped: only group-aware rules apply" :
+                r.ForegroundDependent && !ForegroundSafe(p, ctx) ? "foreground/session safety guard" :
+                r.UsesNetwork && !p.NetAvailable ? "network data unavailable; needs the installed service" : null;
+            bool matches = r.Match(p, ctx);
             bool active = st is not null && st.Version == _version && r.StateIndex < st.Active.Length
                 ? (r.SustainMs > 0 || r.ReleaseMs > 0 ? st.Active[r.StateIndex] : matches)
                 : matches;
-            if (unavailable) active = false;
+            bool frozen = FreezeAutopilot && r.IsAutopilot;
+            if (gate is not null || frozen) active = false;
             var won = new List<string>();
             var lost = new List<string>();
             for (int s = 0; s < Slots.Count; s++)
             {
                 if (!r.Sets((Slot)s)) continue;
-                if (!active) continue;
-                if (owner[s] is null) { owner[s] = r; won.Add(Slots.Name((Slot)s)); }
+                bool retained = frozen && gate is null && p.GroupId is null && st is not null && st.IsApplied[s] && st.AppliedRule[s]?.Id == r.Id;
+                if (!active && !retained) continue;
+                if (owner[s] is null)
+                {
+                    owner[s] = r;
+                    long value = r.Values[s];
+                    if (!retained && (Slot)s == Slot.Affinity && AffinityModes.IsDynamic(value) && (Placer?.Resolve(p, value, ctx) ?? 0) == 0)
+                        lost.Add("affinity (no placement: no useful safe mask)");
+                    else if ((Slot)s == Slot.CpuPriority && r.Source.Actions.CpuPriorityLowerOnly && p.BasePriority != 0 && p.BasePriority < Slots.BasePriorityOf((CpuPriorityLevel)value))
+                        lost.Add("cpuPriority (already lower; left alone)");
+                    else won.Add(Slots.Name((Slot)s));
+                }
                 else lost.Add($"{Slots.Name((Slot)s)} (to {owner[s]!.Name})");
             }
-            result.Add(new ExplainEntry(r.Id, r.Name, r.Priority, matches, active, [.. won], [.. lost], unavailable ? "network data unavailable; needs the installed service" : null));
+            result.Add(new ExplainEntry(r.Id, r.Name, r.Priority, matches, active, [.. won], [.. lost],
+                gate ?? (frozen ? "Autopilot frozen: confirmed values kept, new decisions suspended" : null), r.ForegroundDependent ? p.BackgroundReason : null));
         }
         return result;
     }

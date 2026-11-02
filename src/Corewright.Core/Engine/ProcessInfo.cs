@@ -32,6 +32,8 @@ public sealed class ProcessInfo(ProcessKey key, string name)
     public bool HasUnknownParent;
     /// <summary>Audio, input, display-driver and network-core processes: Autopilot never slows them down.</summary>
     public bool LatencyCritical;
+    public string? BackgroundVerdict;
+    public string? BackgroundReason;
     public bool IsLauncher;
     public bool IsGame;
     public ProcessKey? GameRoot;
