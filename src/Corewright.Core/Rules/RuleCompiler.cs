@@ -11,7 +11,8 @@ public sealed class CompiledRule
     internal CompiledRule(Rule source, Func<ProcessInfo, EvalContext, bool> match, bool isDynamic)
     {
         Source = source;
-        Fingerprint = System.Text.Json.JsonSerializer.Serialize(source, CoreJson.Default.Rule);
+        Fingerprint = source.Origin + Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
+            System.Text.Encoding.UTF8.GetBytes(System.Text.Json.JsonSerializer.Serialize(source, CoreJson.Default.Rule))));
         Match = match;
         IsDynamic = isDynamic;
         SustainMs = (long)(Math.Max(0, source.SustainSeconds) * 1000);
@@ -34,7 +35,7 @@ public sealed class CompiledRule
     public bool GroupAware { get; internal set; }
 
     /// <summary>Built-in Autopilot rule (frozen while a group freezes Autopilot).</summary>
-    public bool IsAutopilot => Source.Id.StartsWith("autopilot-", StringComparison.Ordinal);
+    public bool IsAutopilot => Source.Origin == RuleOrigin.Autopilot;
     public bool ForegroundDependent => IsAutopilot && (Id == "autopilot-balance" || Id == "autopilot-game-background" || Id.StartsWith("autopilot-background-", StringComparison.Ordinal));
 
     public long SustainMs { get; }
@@ -75,6 +76,8 @@ public static class RuleCompiler
         {
             var rule = set.Rules[i];
             var messages = new List<string>();
+            if (rule.Origin == RuleOrigin.User && (rule.Id.StartsWith("autopilot-", StringComparison.OrdinalIgnoreCase) || rule.Id.StartsWith("group-", StringComparison.OrdinalIgnoreCase)))
+                messages.Add("rule ids beginning with 'autopilot-' or 'group-' are reserved for built-ins");
             if (string.IsNullOrWhiteSpace(rule.Id)) messages.Add("rule id is empty");
             else if (!ids.Add(rule.Id)) messages.Add($"duplicate rule id '{rule.Id}'");
 
@@ -91,14 +94,15 @@ public static class RuleCompiler
             {
                 SlotMask = mask,
                 UsesNetwork = UsesNetwork(rule.When),
-                GroupAware = rule.Id.StartsWith(GroupRulePrefix, StringComparison.Ordinal) || NamesGroup(rule.When),
+                GroupAware = rule.Origin == RuleOrigin.Group || NamesGroup(rule.When),
             };
             values.CopyTo(cr.Values, 0);
             compiled.Add((cr, i));
         }
 
         var ordered = compiled
-            .OrderByDescending(c => c.Rule.Priority)
+            .OrderByDescending(c => c.Rule.Source.Origin)
+            .ThenByDescending(c => c.Rule.Priority)
             .ThenBy(c => c.Order)
             .Select(c => c.Rule)
             .ToArray();

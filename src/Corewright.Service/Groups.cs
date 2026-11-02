@@ -174,6 +174,7 @@ internal sealed class GroupStore
             yield return new Rule
             {
                 Id = RuleCompiler.GroupRulePrefix + g.Id,
+                Origin = RuleOrigin.Group,
                 Name = $"Group: {g.Owner} ({g.Label})",
                 Priority = GroupRulePriority,
                 When = Condition.All(Condition.Leaf("groupId", "eq", g.Id)),

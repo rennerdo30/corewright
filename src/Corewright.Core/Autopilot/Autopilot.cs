@@ -315,6 +315,7 @@ public static class AutopilotRules
             });
         }
 
+        foreach (var rule in rules) rule.Origin = RuleOrigin.Autopilot;
         return rules;
     }
 
