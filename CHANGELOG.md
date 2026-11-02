@@ -3,6 +3,15 @@
 Release notes for every Corewright version, newest first. The release workflow publishes the section of a version
 as its GitHub release notes.
 
+## 0.1.0-beta.4
+
+### Fixed
+
+- **Background placement no longer confines programs that start other programs**, such as AI agent hosts,
+  terminals, editors and launchers. Their work runs in the programs they start, and those inherited the
+  confinement for their first second, so short commands ran on two threads. Learned → "Left alone: starts other
+  programs".
+
 ## 0.1.0-beta.3
 
 ### New

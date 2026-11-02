@@ -22,6 +22,8 @@ public sealed class ProgramStats
     /// <summary>Unix seconds when the program (or its app) was last in front; 0 = never.</summary>
     public long LastForeground { get; set; }
     public long LastSeen { get; set; }
+    /// <summary>Child processes it started (aged like the time counters). Launchers are never placed.</summary>
+    public double ChildStarts { get; set; }
 }
 
 public sealed record BackgroundRowDto(string Name, string Program, double ObservedMinutes, double ForegroundPercent, double AverageCores,
@@ -40,6 +42,10 @@ internal sealed partial class StatsJson : JsonSerializerContext;
 /// helpers, browser tabs, a terminal's children). Anything in front in the last 30 minutes is interactive.</item>
 /// <item>Statistics age (3-day half-life); a load profile gives the 95th percentile, so bursts count.</item>
 /// <item>Services are judged like everything else, except latency-critical ones (audio, input, drivers, network core).</item>
+/// <item>Launchers are never placed: programs that keep starting other programs (agent hosts, terminals, IDEs, build
+/// drivers). Their work runs in the children, and Windows gives every child the parent's cores until the engine puts
+/// them back on its next tick, so a short command would run its whole life confined (2026-11-02: agent shells ran on
+/// 2 threads because their claude.exe host was placed).</item>
 /// </list>
 /// Cost: one dictionary update per process per tick; identity and app root once per process lifetime.
 /// </summary>
@@ -52,6 +58,8 @@ internal sealed class BackgroundClassifier
     private const int MaxPrograms = 3000;
     private const double HalfLifeSeconds = 3 * 86400;
     private const long RecentForegroundSeconds = 30 * 60;
+    /// <summary>Child starts per observed hour from which a program counts as a launcher.</summary>
+    private const double LauncherStartsPerHour = 6;
 
     private readonly string _path;
     private readonly Dictionary<string, ProgramStats> _stats;
@@ -59,6 +67,7 @@ internal sealed class BackgroundClassifier
     private readonly Dictionary<string, double> _coresThisTick = new(StringComparer.Ordinal);
     private readonly Dictionary<string, bool> _serviceThisTick = new(StringComparer.Ordinal);
     private readonly HashSet<string> _frontThisTick = new(StringComparer.Ordinal);
+    private readonly List<ProcessInfo> _new = [];
     private long _lastTickMs, _lastSaveMs, _lastClassifyMs, _lastDecayMs;
     private string _signature = "";
 
@@ -92,7 +101,16 @@ internal sealed class BackgroundClassifier
             p.AppRoot = RootOf(p);
             if (_stats.TryGetValue(key, out var known)) known.Display = display;
             else if (_stats.Count < MaxPrograms && !p.IsProtected && p.Key.Pid is not (0 or 4)) _stats[key] = new ProgramStats { Display = display };
+            _new.Add(p);
         }
+        // Each new process counts as a start for its parent's program (after the loop: the parent may be new too).
+        // Processes already running when the service starts are not starts; counting them would inflate every restart.
+        if (_lastTickMs != 0)
+            foreach (var p in _new)
+                if (p.Parent is { } parent && _byPid.TryGetValue(parent.Pid, out var pp) && pp.Key == parent && pp.Program is { } pk &&
+                    _stats.TryGetValue(pk, out var ps))
+                    ps.ChildStarts++;
+        _new.Clear();
 
         ForegroundRoot = _byPid.TryGetValue(foregroundPid, out var fg) ? fg.AppRoot : default;
 
@@ -175,6 +193,7 @@ internal sealed class BackgroundClassifier
             s.ForegroundSeconds *= f;
             s.CoreSeconds *= f;
             s.PeakCores *= f;
+            s.ChildStarts *= f;
             for (int i = 0; i < s.Profile.Length; i++) s.Profile[i] *= f;
         }
     }
@@ -222,11 +241,15 @@ internal sealed class BackgroundClassifier
         if (s.ObservedSeconds < settings.MinObservedMinutes * 60) return ("observing", "Observing");
         if (s.LastForeground != 0 && unix - s.LastForeground < RecentForegroundSeconds) return ("interactive", "Interactive: in front recently");
         if (100 * s.ForegroundSeconds / s.ObservedSeconds > settings.MaxForegroundPercent) return ("interactive", "Interactive");
+        if (IsLauncher(s)) return ("launcher", "Left alone: starts other programs");
         double avg = s.CoreSeconds / s.ObservedSeconds;
         double p95 = P95(s);
         if (avg < 0.02 && p95 <= 0.25) return ("idle", "Idle: nothing to gain");
         return p95 <= settings.SingleCoreLoad ? ("single", "Background: placed") : ("multi", "Background: placed, lower priority");
     }
+
+    private static bool IsLauncher(ProgramStats s) =>
+        s.ChildStarts >= 3 && s.ChildStarts / Math.Max(1.0 / 60, s.ObservedSeconds / 3600) >= LauncherStartsPerHour;
 
     private static string Describe(ProgramStats s)
     {
@@ -234,7 +257,7 @@ internal sealed class BackgroundClassifier
         double front = 100 * s.ForegroundSeconds / Math.Max(1, s.ObservedSeconds);
         double avg = s.CoreSeconds / Math.Max(1, s.ObservedSeconds);
         return $"{(s.Service ? "Service, " : "")}{hours:0.#} h observed, in front {front:0.##} % of the time, {avg:0.##} cores on average, " +
-               $"bursts to {P95(s):0.#} (95th percentile)";
+               $"bursts to {P95(s):0.#} (95th percentile), {s.ChildStarts / Math.Max(1.0 / 60, hours):0.#} child processes per hour";
     }
 
     public List<BackgroundRowDto> Rows(BackgroundSettings settings, GameModeSettings game)
