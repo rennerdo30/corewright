@@ -3,6 +3,17 @@
 Release notes for every Corewright version, newest first. The release workflow publishes the section of a version
 as its GitHub release notes.
 
+## 0.1.0-beta.7
+
+### Fixed
+
+- **The Corewright window crashed when the keyboard layout changed** ("Argument_CultureNotSupportedInInvariantMode,
+  1031" with a German layout). The window now knows every Windows language.
+
+### Changed
+
+- **Processes:** the summary line above the list reads as one even sentence; only the numbers stand out.
+
 ## 0.1.0-beta.6
 
 ### New

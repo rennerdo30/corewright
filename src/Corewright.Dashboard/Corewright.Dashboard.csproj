@@ -5,6 +5,10 @@
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
     <ApplicationIcon>..\..\assets\corewright.ico</ApplicationIcon>
     <!-- The dashboard only lives while its window is open, so it does not need NativeAOT. -->
+    <!-- WinForms looks up the culture of the keyboard layout when the user switches it (WM_INPUTLANGCHANGE); in
+         invariant mode that throws for every layout but English ("Argument_CultureNotSupportedInInvariantMode, 1031"
+         on a German PC, 2026-11-02). Windows' own ICU is used, no extra files. Service and tray stay invariant. -->
+    <InvariantGlobalization>false</InvariantGlobalization>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4314.35" />
