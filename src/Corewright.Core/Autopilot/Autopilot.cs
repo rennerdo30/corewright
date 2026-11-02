@@ -313,7 +313,13 @@ public static class AutopilotRules
             });
         }
 
-        foreach (var rule in rules) rule.Origin = RuleOrigin.Autopilot;
+        foreach (var rule in rules)
+        {
+            rule.Origin = RuleOrigin.Autopilot;
+            // Build tools must not acquire affinity through a lower learned/gaming rule either.
+            if (rule.Actions.Affinity is not null && s.BuildTools.Programs.Count > 0)
+                rule.When = Condition.All(rule.When, Not(Condition.Leaf("name", "in", string.Join(", ", s.BuildTools.Programs))));
+        }
         return rules;
     }
 
