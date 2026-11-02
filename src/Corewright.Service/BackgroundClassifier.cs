@@ -13,7 +13,7 @@ public sealed class ProgramStats
     public string Display { get; set; } = "";
     public double ObservedSeconds { get; set; }
     public double ForegroundSeconds { get; set; }
-    /// <summary>Sum of (cores in use Ãƒâ€” seconds); divided by ObservedSeconds gives the average load in cores.</summary>
+    /// <summary>Sum of (cores in use times seconds); divided by ObservedSeconds gives the average load in cores.</summary>
     public double CoreSeconds { get; set; }
     /// <summary>Seconds spent in each load band (<see cref="BackgroundClassifier.Bands"/>), for the 95th percentile.</summary>
     public double[] Profile { get; set; } = new double[BackgroundClassifier.Bands.Length];
@@ -76,6 +76,7 @@ internal sealed class BackgroundClassifier
     private const double LauncherStartsPerHour = 6;
 
     private readonly string _path;
+    private volatile bool _preserveUnreadable;
     private readonly Dictionary<string, ProgramStats> _stats;
     private readonly Dictionary<int, ProcessInfo> _byPid = [];
     private readonly Dictionary<string, double> _coresThisTick = new(StringComparer.Ordinal);
@@ -84,7 +85,6 @@ internal sealed class BackgroundClassifier
     private readonly List<ProcessInfo> _new = [];
     private long _lastDecayUnix;
     private long _lastTickMs, _lastSaveMs, _lastClassifyMs, _lastDecayMs;
-    private string _signature = "";
     private List<string>? _launcherSource;
     private HashSet<string> _launchers = new(StringComparer.OrdinalIgnoreCase);
     private bool _wasPresent;
@@ -101,6 +101,7 @@ internal sealed class BackgroundClassifier
     }
 
     public IReadOnlyList<BackgroundVerdict> Verdicts { get; private set; } = [];
+    public void Invalidate() => _lastClassifyMs = 0;
 
     /// <summary>App root of the current foreground process (for the isForegroundApp rule field).</summary>
     public ProcessKey ForegroundRoot { get; private set; }
@@ -127,18 +128,17 @@ internal sealed class BackgroundClassifier
             p.AppRoot = RootOf(p);
             if (_stats.TryGetValue(key, out var known)) { known.Display = display; known.Critical |= critical; }
             else if (_stats.Count < MaxPrograms && !p.IsProtected && p.Key.Pid is not (0 or 4)) _stats[key] = new ProgramStats { Display = display, Critical = critical };
-            _new.Add(p);
+            if (p.IdentityAttempts == 1) _new.Add(p);
         }
         // Each new process counts as a start for its parent's program (after the loop: the parent may be new too).
         // Processes already running when the service starts are not starts; counting them would inflate every restart.
-        if (_lastTickMs != 0)
-            foreach (var p in _new)
-                if (p.Parent is { } parent && _byPid.TryGetValue(parent.Pid, out var pp) && pp.Key == parent && pp.Program is { } pk &&
-                    _stats.TryGetValue(pk, out var ps))
-                {
-                    if (foregroundKnown) ps.ChildStarts++;
-                    pp.LastChildStartMs = nowMs;
-                }
+        foreach (var p in _new)
+            if (p.Parent is { } parent && _byPid.TryGetValue(parent.Pid, out var pp) && pp.Key == parent)
+            {
+                long ageMs = Math.Max(0, (DateTime.UtcNow.ToFileTimeUtc() - p.Key.CreateTime) / 10_000);
+                if (ageMs < 600_000) pp.LastChildStartMs = Math.Max(pp.LastChildStartMs, nowMs - ageMs);
+                if (_lastTickMs != 0 && foregroundKnown && pp.Program is { } pk && _stats.TryGetValue(pk, out var ps)) ps.ChildStarts++;
+            }
         _new.Clear();
 
         foreach (var p in processes) p.HasChildren = false;
@@ -241,8 +241,8 @@ internal sealed class BackgroundClassifier
     /// <summary>Ages every counter once a minute (cheaper than per tick, same result).</summary>
     private void Decay(long nowMs)
     {
-        if (_lastDecayMs == 0) { _lastDecayMs = nowMs; return; }
-        double f = Math.Pow(0.5, (nowMs - _lastDecayMs) / 1000.0 / HalfLifeSeconds);
+        long unix = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        double f = Math.Pow(0.5, Math.Max(0, unix - _lastDecayUnix) / HalfLifeSeconds);
         _lastDecayMs = nowMs;
         _lastDecayUnix = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
         foreach (var s in _stats.Values)
@@ -258,10 +258,11 @@ internal sealed class BackgroundClassifier
 
     internal static double P95(ProgramStats s)
     {
-        double total = s.Profile.Sum();
+        double total = 0;
+        foreach (double time in s.Profile) total += time;
         if (total <= 0) return 0;
         double acc = 0;
-        for (int i = 0; i < s.Profile.Length; i++)
+        for (int i = 0; i < Math.Min(s.Profile.Length, Bands.Length); i++)
         {
             acc += s.Profile[i];
             if (acc >= 0.95 * total) return Bands[i];
@@ -273,7 +274,7 @@ internal sealed class BackgroundClassifier
     {
         double total = 0;
         foreach (double time in s.Profile) total += time;
-        for (int i = s.Profile.Length - 1; i >= 0; i--)
+        for (int i = Math.Min(s.Profile.Length, Bands.Length) - 1; i >= 0; i--)
             if (s.Profile[i] > 0 && s.Profile[i] >= total * 0.005) return Bands[i];
         return 0;
     }
@@ -288,13 +289,10 @@ internal sealed class BackgroundClassifier
             if (kind is "single" or "multi") verdicts.Add(new BackgroundVerdict(key, s.Display, kind, s.Service, Describe(s)));
         }
         verdicts.Sort((a, b) => string.CompareOrdinal(a.Program, b.Program));
-        string signature = string.Join('|', verdicts.Select(v => $"{v.Program}:{v.Kind}"));
         Verdicts = verdicts;
         _verdictPrograms.Clear();
         _byProgram.Clear();
         foreach (var v in verdicts) { _verdictPrograms.Add(v.Program); _byProgram[v.Program] = v; }
-        if (signature == _signature) return false;
-        _signature = signature;
         return true;
     }
 
@@ -308,8 +306,13 @@ internal sealed class BackgroundClassifier
         }
     }
 
-    private static HashSet<string> Excluded(BackgroundSettings settings, GameModeSettings game) =>
-        new(settings.Exclusions.Concat(game.KeepResponsive).Concat(game.Games), StringComparer.OrdinalIgnoreCase);
+    private static HashSet<string> Excluded(BackgroundSettings settings, GameModeSettings game)
+    {
+        var excluded = new HashSet<string>(settings.Exclusions, StringComparer.OrdinalIgnoreCase);
+        foreach (var name in game.KeepResponsive) excluded.Add(name);
+        foreach (var name in game.Games) excluded.Add(name);
+        return excluded;
+    }
 
     /// <summary>The decision and its reason, in the words the Learned table shows.</summary>
     private static (string Kind, string Label) Decide(string key, ProgramStats s, BackgroundSettings settings, HashSet<string> excluded, long unix)
@@ -373,6 +376,11 @@ internal sealed class BackgroundClassifier
         {
             try
             {
+                if (_preserveUnreadable && File.Exists(_path))
+                {
+                    File.Copy(_path, _path + ".preserved-" + DateTime.UtcNow.ToString("yyyyMMddHHmmssfff"), overwrite: false);
+                    _preserveUnreadable = false;
+                }
                 string tmp = _path + ".tmp";
                 using (var output = File.Create(tmp)) JsonSerializer.Serialize(output, file, StatsJson.Default.StatsFile);
                 File.Move(tmp, _path, overwrite: true);
@@ -399,6 +407,8 @@ internal sealed class BackgroundClassifier
                 double f = file.LastDecayUnix > 0 ? Math.Pow(0.5, Math.Max(0, now - file.LastDecayUnix) / HalfLifeSeconds) : 1;
                 foreach (var stats in file.Programs.Values)
                 {
+                    stats.Profile ??= [];
+                    stats.Display ??= "";
                     if (stats.Profile.Length == 8)
                     {
                         var migrated = new double[Bands.Length];
@@ -415,7 +425,7 @@ internal sealed class BackgroundClassifier
                 return new Dictionary<string, ProgramStats>(file.Programs, StringComparer.Ordinal);
             }
         }
-        catch (Exception e) when (e is JsonException or IOException or UnauthorizedAccessException) { }
+        catch (Exception e) when (e is JsonException or IOException or UnauthorizedAccessException) { _preserveUnreadable = true; }
         _lastDecayUnix = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
         return new Dictionary<string, ProgramStats>(StringComparer.Ordinal);
     }

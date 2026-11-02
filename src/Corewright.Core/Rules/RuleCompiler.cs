@@ -76,7 +76,7 @@ public static class RuleCompiler
         {
             var rule = set.Rules[i];
             var messages = new List<string>();
-            if (rule.Origin == RuleOrigin.User && (rule.Id.StartsWith("autopilot-", StringComparison.OrdinalIgnoreCase) || rule.Id.StartsWith("group-", StringComparison.OrdinalIgnoreCase)))
+            if (rule.Origin == RuleOrigin.User && ((rule.Id ?? "").StartsWith("autopilot-", StringComparison.OrdinalIgnoreCase) || (rule.Id ?? "").StartsWith("group-", StringComparison.OrdinalIgnoreCase)))
                 messages.Add("rule ids beginning with 'autopilot-' or 'group-' are reserved for built-ins");
             if (string.IsNullOrWhiteSpace(rule.Id)) messages.Add("rule id is empty");
             else if (!ids.Add(rule.Id)) messages.Add($"duplicate rule id '{rule.Id}'");
@@ -87,7 +87,7 @@ public static class RuleCompiler
             int mask = CompileActions(rule, topo, values, messages);
             if (mask == 0) messages.Add("rule sets no action");
 
-            foreach (var m in messages) errors.Add(new RuleError(rule.Id, rule.Name, m));
+            foreach (var m in messages) errors.Add(new RuleError(rule.Id ?? "", rule.Name ?? "", m));
             if (messages.Count > 0 || !rule.Enabled || match is null) continue;
 
             var cr = new CompiledRule(rule, match, dynamic)

@@ -43,7 +43,18 @@ internal sealed class AppliedJournal : IAppliedJournal
             }
             foreach (var (id, entry) in _active)
             {
-                if (!actuator.TryRead(id.Key, id.Slot, out long current, out _)) continue;
+                if (!actuator.TryRead(id.Key, id.Slot, out long current, out _))
+                {
+                    nint h = Native.OpenProcess(Native.PROCESS_QUERY_LIMITED_INFORMATION, false, id.Key.Pid);
+                    if (h == 0)
+                    { if (System.Runtime.InteropServices.Marshal.GetLastPInvokeError() == 87) _gone.Add(id); }
+                    else
+                    {
+                        try { if (Native.GetProcessTimes(h, out long created, out _, out _, out _) && created != id.Key.CreateTime) _gone.Add(id); }
+                        finally { Native.CloseHandle(h); }
+                    }
+                    continue;
+                }
                 if (current != entry.Applied) { _gone.Add(id); continue; }
                 bool ok = actuator.TryWrite(id.Key, id.Slot, entry.Original, out var error);
                 sink.Emit(new(ok ? EngineEventKind.Reverted : EngineEventKind.Failed, entry.Pid, "", "Startup recovery", Slots.Name(entry.Slot),

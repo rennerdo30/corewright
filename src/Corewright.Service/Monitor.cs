@@ -85,7 +85,12 @@ internal sealed class Monitor : BackgroundService
         _ctx.LogicalCount = Topology.LogicalCount;
         _settingsStore = settingsStore;
         Settings = settingsStore.Load();
-        AutopilotRules.ValidateSettings(Settings, Topology);
+        var settingsErrors = AutopilotRules.ValidateSettings(Settings, Topology);
+        if (settingsErrors.Count > 0)
+        {
+            log.LogWarning("Invalid settings preserved; starting in Observe: {Message}", settingsErrors[0].Message);
+            Settings = new AppSettings();
+        }
         _ctx.AlwaysGames = AlwaysGamesOf(Settings);
         _placer = new AffinityPlacer(() => Topology,
             () => AutopilotRules.GameCcd(Settings.Autopilot.GameMode.Placement, Topology),
@@ -222,6 +227,9 @@ internal sealed class Monitor : BackgroundService
         {
             _settingsStore.Save(settings);
             Settings = settings;
+            Engine.ObserveAutopilot = settings.Autopilot.Mode == "observe";
+            Engine.AutopilotPlacementLimit = settings.Autopilot.PlacementLimit;
+            _background?.Invalidate();
             _ctx.AlwaysGames = AlwaysGamesOf(settings);
             Engine.SetRules(compiled);
         }
@@ -407,7 +415,7 @@ internal sealed class Monitor : BackgroundService
             Engine.AutopilotPlacementLimit = ap.PlacementLimit;
             if (_groups.AnyFreeze) _facts["autopilot.frozen"] = "true";
             else _facts.Remove("autopilot.frozen");
-            _ctx.ForegroundBusy = _sampler.TryGet(_ctx.ForegroundPid, out var front) && front.CpuPercent * Topology.LogicalCount / 100 >= 0.5;
+            _ctx.ForegroundBusy = _ctx.ForegroundKnown && _sampler.TryGet(_ctx.ForegroundPid, out var front) && front.CpuPercent * Topology.LogicalCount / 100 >= 0.5;
             _ctx.SystemUnderPressure = _sampler.SystemCpuPercent >= 60 || (_ctx.ForegroundKnown && _ctx.ForegroundBusy);
             if (IsClientActive) _cores.Sample(); // Loose masks do not need per-thread load.
             Engine.Evaluate(_sampler.Processes, _ctx);

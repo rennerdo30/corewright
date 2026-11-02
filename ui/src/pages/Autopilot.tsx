@@ -45,7 +45,8 @@ export function Autopilot() {
     window.clearTimeout(timer.current)
     timer.current = window.setTimeout(async () => {
       try {
-        await api.saveSettings(next)
+        const saved = await api.saveSettings(next)
+        if (saved.settings) setSettings(saved.settings)
         setErrors([])
         setSavedAt(Date.now())
       } catch (e) {
@@ -149,6 +150,7 @@ export function Autopilot() {
         </div>
       )}
       {status.data?.autopilotCapped && <p className="banner">Autopilot has reached its placement limit. No new processes will be placed.</p>}
+      {settings.warnings?.map((w) => <p className="banner" key={w}>{w}</p>)}
 
       {a.mode === 'observe' && <section className="card">
         <h3>What Autopilot would do</h3>
@@ -164,7 +166,7 @@ export function Autopilot() {
 
       <section className="ap-groups">
         <h3>What Autopilot does</h3>
-        <div className={a.enabled ? '' : 'groups-off'}>
+        <div className={a.mode === 'observe' || a.enabled ? '' : 'groups-off'}>
           <Group
             glyph={'\uE7FC'}
             role="game"

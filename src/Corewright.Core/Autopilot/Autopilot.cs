@@ -15,7 +15,7 @@ public sealed class AppSettings
 
 /// <summary>
 /// Autopilot: automatic scheduling on top of the rule engine. It never acts on its own; it generates low-priority
-/// built-in rules (ids "autopilot-â€¦") from these settings, so the user's rules always win and Explain shows why.
+/// built-in rules (ids "autopilot-...") from these settings, so the user's rules always win and Explain shows why.
 /// </summary>
 public sealed class AutopilotSettings
 {
@@ -181,7 +181,7 @@ public sealed class BalanceSettings
     public List<string> Exclusions { get; set; } = [];
 }
 
-/// <summary>Built-in rules from the Autopilot settings. Priorities 1â€“9: below every user rule.</summary>
+/// <summary>Built-in rules from the Autopilot settings. Priorities 1-9: below every user rule.</summary>
 public static class AutopilotRules
 {
     public const string IdPrefix = "autopilot-";

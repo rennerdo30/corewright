@@ -61,6 +61,8 @@ internal static partial class ProgramIdentity
         {
             var command = ProcessInfo.CommandLineReader?.Invoke(p.Key);
             if (command is not null) target = Target(p.Name, Tokenize(command));
+            if (target is not null && (target.Contains("://", StringComparison.Ordinal) || target.StartsWith("javascript:", StringComparison.OrdinalIgnoreCase) ||
+                target.StartsWith("vbscript:", StringComparison.OrdinalIgnoreCase))) target = null;
             if (target is not null && !Path.IsPathFullyQualified(target)) cwd = IdentityProbe.WorkingDirectory(p.Key);
         }
         bool critical = false;
@@ -138,7 +140,7 @@ internal static partial class ProgramIdentity
                 foreach (var a in args)
                 {
                     if (a.EndsWith(".dll", StringComparison.OrdinalIgnoreCase)) return a;
-                    if (!a.StartsWith('-')) return "dotnet " + a; // build, watch, test, run â€¦
+                    if (!a.StartsWith('-')) return "dotnet " + a; // build, watch, test, run ...
                 }
                 return null;
             case "pwsh.exe" or "powershell.exe":
@@ -172,7 +174,7 @@ internal static partial class ProgramIdentity
         return null;
     }
 
-    /// <summary>A script's file name, with its folder when the name alone says nothing (main.py, index.js, run.ps1, â€¦).</summary>
+    /// <summary>A script's file name, with its folder when the name alone says nothing (main.py, index.js, run.ps1, ...).</summary>
     private static string Script(string path) => path;
 
     private static string FileName(string path)

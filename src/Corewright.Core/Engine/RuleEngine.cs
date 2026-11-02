@@ -59,6 +59,7 @@ public sealed class RuleEngine(IActuator actuator, IEngineEventSink sink, Func<l
     private readonly List<ProcessKey> _gone = [];
     private readonly Tombstone[] _tombs = new Tombstone[256];
     private int _nextTomb;
+    private long _tombsUntil;
     private readonly record struct Inheritance(long From, long Until, long Changed, long Value, long Previous, long Original);
     private readonly record struct Tombstone(ProcessKey Key, ProcessKey? Parent, string Name, Inheritance Cpu, Inheritance Affinity, long Expires);
     private CompiledRuleSet _set = CompiledRuleSet.Empty;
@@ -118,9 +119,9 @@ public sealed class RuleEngine(IActuator actuator, IEngineEventSink sink, Func<l
         _ctx = ctx;
         _tick++;
         AutopilotPlaced = CountAutopilotPlaced();
-        AutopilotCapped = false;
+        AutopilotCapped = AutopilotPlaced > AutopilotPlacementLimit;
         _previewPlacements = 0;
-        bool track = _set.Rules.Length > 0 || _states.Count != 0;
+        bool track = _set.Rules.Length > 0 || _states.Count != 0 || _nowMs() < _tombsUntil;
         if (track)
         {
             // Build the whole lineage first, then correct all originals before any parent is reconciled/reverted.
@@ -380,6 +381,9 @@ public sealed class RuleEngine(IActuator actuator, IEngineEventSink sink, Func<l
     // Only two slots inherit on Windows. Keep their creation-time provenance even after a put-back.
     private void Remember(ProcState st)
     {
+        if (st.History[0].From == 0 && st.History[1].From == 0 &&
+            !FindInheritance(st.Parent, 0, st.Key.CreateTime, out _, out _) && !FindInheritance(st.Parent, 1, st.Key.CreateTime, out _, out _)) return;
+        _tombsUntil = _nowMs() + 30_000;
         _tombs[_nextTomb++ % _tombs.Length] = new(st.Key, st.Parent, st.Name,
             st.History[0], st.History[1], _nowMs() + 30_000);
     }

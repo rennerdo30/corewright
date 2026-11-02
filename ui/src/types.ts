@@ -26,6 +26,7 @@ export interface DevicesInfo { inventoryAt: number; sampling: boolean; devices: 
 
 export interface AppSettings {
   version: number
+  warnings?: string[]
   autopilot: {
     enabled: boolean
     mode?: 'off' | 'observe' | 'on'

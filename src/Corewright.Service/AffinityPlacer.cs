@@ -24,6 +24,7 @@ internal sealed class AffinityPlacer(Func<SystemTopology> topology, Func<int> ga
         if (ctx.ForegroundBusy || ctx.GamePid != 0)
         {
             var cores = topo.CoresByRank.Length > 0 ? topo.CoresByRank : topo.PhysicalCores;
+            if (keepBestFree() > 0 && cores.Length == 0) return 0;
             for (int i = 0, n = Math.Min(Math.Max(0, keepBestFree()), cores.Length); i < n; i++) strongest |= cores[i];
         }
         ulong allowed = topo.AllMask & ~strongest & ~groupCores();

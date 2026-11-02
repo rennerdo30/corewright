@@ -3,6 +3,17 @@
 Release notes for every Corewright version, newest first. The release workflow publishes the section of a version
 as its GitHub release notes.
 
+## Unreleased
+
+- Autopilot now offers Off, Observe and On. New installations start in Observe, showing proposed changes without applying them; existing choices are preserved.
+- Builds keep access to their CPU cores. Background placement uses a loose mask, respects exclusive reservations and stops when foreground information is missing, locked or idle.
+- Launchers and game process trees are protected consistently. Returning to an app releases background restrictions immediately.
+- Balancing responds to core-relative load under CPU pressure and never raises an already lower priority. Gaming background work uses whole non-game CCDs.
+- Multiple games can stay active together. Detection handles graphics modules, launcher exclusions, settings changes and missing CPU rankings more reliably.
+- Learned identities distinguish scripts, projects and hosted services. Statistics survive migration, age through downtime and no longer decay peak amplitudes.
+- User rules always beat Autopilot. Explain reports pause, groups, freeze and unavailable placement accurately; unchanged rule timing survives settings rebuilds.
+- A placement cap limits simultaneous changes. A bounded recovery journal restores matching process settings after an unexpected service exit.
+
 ## 0.1.0-beta.6
 
 ### New
