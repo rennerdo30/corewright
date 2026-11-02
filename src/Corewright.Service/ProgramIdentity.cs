@@ -1,3 +1,5 @@
+using System.Text.RegularExpressions;
+using Corewright.Service.Windows;
 using Corewright.Core.Engine;
 
 namespace Corewright.Service;
@@ -7,7 +9,7 @@ namespace Corewright.Service;
 /// brutal mistake"). Normal programs are identified by their exe path; generic hosts by what they run, read once from
 /// the command line: "python.exe (train.py)", "java.exe (server.jar)", "svchost.exe (wuauserv)".
 /// </summary>
-internal static class ProgramIdentity
+internal static partial class ProgramIdentity
 {
     private static readonly HashSet<string> Hosts = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -51,17 +53,47 @@ internal static class ProgramIdentity
     /// <summary>The identity key: lower-case so one program always gets one key.</summary>
     public static (string Key, string Display, bool Critical) Identify(ProcessInfo p)
     {
-        string display = p.Name;
-        if (Hosts.Contains(p.Name))
+        p.IdentityAttempts++;
+        string? target = null;
+        string? cwd = null;
+        bool host = Hosts.Contains(p.Name);
+        if (host)
         {
-            string? target = Target(p.Name, Tokenize(p.CommandLine));
-            if (!string.IsNullOrEmpty(target)) display = $"{p.Name} ({target})";
+            var command = ProcessInfo.CommandLineReader?.Invoke(p.Key);
+            if (command is not null) target = Target(p.Name, Tokenize(command));
+            if (target is not null && !Path.IsPathFullyQualified(target)) cwd = IdentityProbe.WorkingDirectory(p.Key);
         }
-        bool critical = IsCritical(p.Name, display);
-        // Normal programs: the exe path tells two programs with the same name apart.
-        string key = !Hosts.Contains(p.Name) && p.Path is { Length: > 0 } path ? path.ToLowerInvariant() : display.ToLowerInvariant();
-        return (key, display, critical);
+        bool critical = false;
+        if (p.Name.Equals("svchost.exe", StringComparison.OrdinalIgnoreCase))
+        {
+            var services = IdentityProbe.Services(p.Key.Pid);
+            if (services is not null)
+            {
+                target = string.Join(';', services);
+                foreach (string service in services) critical |= IsCritical(p.Name, $"svchost.exe ({service})");
+            }
+            else { target = null; critical = true; }
+        }
+        string display = target is null ? p.Name : $"{p.Name} ({ShortTarget(target)})";
+        p.IdentityKnown = p.Path is not null && (!host || target is not null);
+        if (host && target is not null && !Path.IsPathFullyQualified(target))
+        {
+            if (cwd is not null)
+                target = target.Contains(' ') || target.StartsWith('-') ? cwd + "|" + target : Path.GetFullPath(target, cwd);
+            else if (!p.Name.Equals("svchost.exe", StringComparison.OrdinalIgnoreCase)) p.IdentityKnown = false;
+        }
+        string key = Versions().Replace((p.Path ?? p.Name).ToLowerInvariant(), "{version}");
+        if (!host && !p.IdentityKnown) key += "|?";
+        if (host) key += p.IdentityKnown ? "|" + Versions().Replace(target!.ToLowerInvariant(), "{version}") : "|?";
+        return (key, display, critical || IsCritical(p.Name, display));
     }
+
+    [GeneratedRegex(@"(?i)(?:app-)?[0-9]+(?:\.[0-9]+){1,4}(?=[\\/_-]|$)")]
+    private static partial Regex Versions();
+    private static string ShortTarget(string target) => target.Contains(';') ? target : FileName(target);
+    public static bool CanClassify(string key, string display) => !key.EndsWith("|?", StringComparison.Ordinal) &&
+        !display.EndsWith("(command)", StringComparison.OrdinalIgnoreCase) && !display.EndsWith("(shell)", StringComparison.OrdinalIgnoreCase) &&
+        !display.EndsWith("(inline code)", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>What a host runs, from its arguments; null when nothing specific is found.</summary>
     internal static string? Target(string host, List<string> args)
@@ -94,17 +126,19 @@ internal static class ProgramIdentity
                 for (int i = 0; i < args.Count; i++)
                 {
                     string a = args[i];
-                    if (a == "-jar" && i + 1 < args.Count) return FileName(args[i + 1]);
+                    if (a == "-jar" && i + 1 < args.Count) return args[i + 1];
                     if (a is "-cp" or "-classpath" or "--class-path" or "-p" or "--module-path" or "--add-opens" or "--add-exports") { i++; continue; }
                     if ((a == "-m" || a == "--module") && i + 1 < args.Count) return args[i + 1];
-                    if (!a.StartsWith('-')) return a.Contains('.') ? a[(a.LastIndexOf('.') + 1)..] : a; // main class
+                    if (!a.StartsWith('-')) return a; // fully qualified main class
                 }
                 return null;
             case "dotnet.exe":
+                for (int i = 0; i < args.Count; i++)
+                    if (args[i] is "--project" or "-p" && i + 1 < args.Count) return args[i + 1];
                 foreach (var a in args)
                 {
-                    if (a.EndsWith(".dll", StringComparison.OrdinalIgnoreCase)) return FileName(a);
-                    if (!a.StartsWith('-')) return "dotnet " + a; // build, watch, test, run …
+                    if (a.EndsWith(".dll", StringComparison.OrdinalIgnoreCase)) return a;
+                    if (!a.StartsWith('-')) return "dotnet " + a; // build, watch, test, run â€¦
                 }
                 return null;
             case "pwsh.exe" or "powershell.exe":
@@ -118,7 +152,7 @@ internal static class ProgramIdentity
             case "cmd.exe":
                 for (int i = 0; i < args.Count; i++)
                     if (args[i].Equals("/c", StringComparison.OrdinalIgnoreCase) || args[i].Equals("/k", StringComparison.OrdinalIgnoreCase))
-                        return i + 1 < args.Count && args[i + 1].Trim() is { Length: > 0 } s && !s.StartsWith('-') ? Script(s.Split(' ')[0]) : "command";
+                        return "command";
                 return "shell";
             case "wscript.exe" or "cscript.exe" or "mshta.exe":
                 return args.Where(a => !a.StartsWith("//", StringComparison.Ordinal)).Select(Script).FirstOrDefault();
@@ -138,18 +172,8 @@ internal static class ProgramIdentity
         return null;
     }
 
-    /// <summary>A script's file name, with its folder when the name alone says nothing (main.py, index.js, run.ps1, …).</summary>
-    private static string Script(string path)
-    {
-        string name = FileName(path);
-        string stem = Path.GetFileNameWithoutExtension(name).ToLowerInvariant();
-        if (stem is "main" or "__main__" or "index" or "app" or "run" or "server" or "start" or "cli" or "manage" or "setup")
-        {
-            string? dir = Path.GetFileName(Path.GetDirectoryName(path.TrimEnd('\\', '/')));
-            if (!string.IsNullOrEmpty(dir)) return $"{dir}\\{name}";
-        }
-        return name;
-    }
+    /// <summary>A script's file name, with its folder when the name alone says nothing (main.py, index.js, run.ps1, â€¦).</summary>
+    private static string Script(string path) => path;
 
     private static string FileName(string path)
     {

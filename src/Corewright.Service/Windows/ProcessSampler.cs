@@ -97,6 +97,7 @@ internal sealed unsafe class ProcessSampler : IDisposable
             }
 
             long cpu = *(long*)(p + OffUser) + *(long*)(p + OffKernel);
+            if (!isNew && info.Path is null && info.IdentityAttempts < 4 && pid is not (0 or 4)) info.Path = QueryPath(pid);
             long io = *(long*)(p + OffReadXfer) + *(long*)(p + OffWriteXfer) + *(long*)(p + OffOtherXfer);
             if (!isNew && dt > 0)
             {

@@ -13,12 +13,13 @@ public sealed class ProgramStats
     public string Display { get; set; } = "";
     public double ObservedSeconds { get; set; }
     public double ForegroundSeconds { get; set; }
-    /// <summary>Sum of (cores in use × seconds); divided by ObservedSeconds gives the average load in cores.</summary>
+    /// <summary>Sum of (cores in use Ã— seconds); divided by ObservedSeconds gives the average load in cores.</summary>
     public double CoreSeconds { get; set; }
     /// <summary>Seconds spent in each load band (<see cref="BackgroundClassifier.Bands"/>), for the 95th percentile.</summary>
     public double[] Profile { get; set; } = new double[BackgroundClassifier.Bands.Length];
     public double PeakCores { get; set; }
     public bool Service { get; set; }
+    public bool Critical { get; set; }
     /// <summary>Unix seconds when the program (or its app) was last in front; 0 = never.</summary>
     public long LastForeground { get; set; }
     public double RecentForegroundRemaining { get; set; } = 1800;
@@ -104,13 +105,13 @@ internal sealed class BackgroundClassifier
         // Identity and app root: once per process lifetime, before the engine sees the process.
         foreach (var p in processes)
         {
-            if (p.Program is not null) continue;
+            if (p.Program is not null && (p.IdentityKnown || p.IdentityAttempts >= 4)) continue;
             var (key, display, critical) = ProgramIdentity.Identify(p);
             p.Program = key;
             p.LatencyCritical = critical;
             p.AppRoot = RootOf(p);
-            if (_stats.TryGetValue(key, out var known)) known.Display = display;
-            else if (_stats.Count < MaxPrograms && !p.IsProtected && p.Key.Pid is not (0 or 4)) _stats[key] = new ProgramStats { Display = display };
+            if (_stats.TryGetValue(key, out var known)) { known.Display = display; known.Critical |= critical; }
+            else if (_stats.Count < MaxPrograms && !p.IsProtected && p.Key.Pid is not (0 or 4)) _stats[key] = new ProgramStats { Display = display, Critical = critical };
             _new.Add(p);
         }
         // Each new process counts as a start for its parent's program (after the loop: the parent may be new too).
@@ -268,8 +269,9 @@ internal sealed class BackgroundClassifier
     private static (string Kind, string Label) Decide(string key, ProgramStats s, BackgroundSettings settings, HashSet<string> excluded, long unix)
     {
         string exe = s.Display.Split(" (")[0];
-        if (excluded.Contains(exe) || excluded.Contains(s.Display)) return ("excluded", "Excluded");
-        if (ProgramIdentity.IsCritical(exe, s.Display)) return ("critical", "Left alone: latency critical");
+        if (!ProgramIdentity.CanClassify(key, s.Display)) return ("observing", "Observing: unresolved or non-specific host target");
+        if (excluded.Contains(key) || excluded.Contains(exe) || excluded.Contains(s.Display)) return ("excluded", "Excluded");
+        if (s.Critical || ProgramIdentity.IsCritical(exe, s.Display)) return ("critical", "Left alone: latency critical");
         if (s.Service && !settings.IncludeServices) return ("service", "Service (services are off)");
         if (s.ObservedSeconds < settings.MinObservedMinutes * 60) return ("observing", "Observing");
         if (s.RecentForegroundRemaining > 0) return ("interactive", "Interactive: in front recently");

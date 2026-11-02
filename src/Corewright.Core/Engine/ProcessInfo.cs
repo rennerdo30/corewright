@@ -24,6 +24,8 @@ public sealed class ProcessInfo(ProcessKey key, string name)
     /// or for generic hosts what they run ("python.exe (train.py)", "svchost.exe (wuauserv)"). Rule field "program".
     /// </summary>
     public string? Program;
+    public bool IdentityKnown;
+    public int IdentityAttempts;
     /// <summary>The topmost ancestor below the shell (explorer, services, …): processes with the same root are one app.</summary>
     public ProcessKey AppRoot;
     /// <summary>Audio, input, display-driver and network-core processes: Autopilot never slows them down.</summary>
