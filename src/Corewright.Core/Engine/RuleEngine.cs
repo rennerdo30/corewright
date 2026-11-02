@@ -33,7 +33,7 @@ public interface IEngineEventSink
 
 public interface IAppliedJournal
 {
-    bool BeforeApply(ProcessKey key, Slot slot, long original, long applied, RuleOrigin origin, out string? error);
+    bool BeforeApply(ProcessKey key, Slot slot, long original, long applied, long? previousApplied, RuleOrigin origin, out string? error);
     long OriginalOf(ProcessKey key, Slot slot, long current);
     void Reverted(ProcessKey key, Slot slot);
     void Forget(ProcessKey key);
@@ -564,6 +564,7 @@ public sealed class RuleEngine(IActuator actuator, IEngineEventSink sink, Func<l
         if (st.Failed[s] && st.FailedValue[s] == value) return;
         if ((st.Pending & (1 << s)) != 0 && _nowMs() < st.ApplyRetry[s]) return;
 
+        long? previousApplied = st.IsApplied[s] ? st.Applied[s] : null;
         if (!st.Owned[s])
         {
             long original = lowerOriginal ?? 0;
@@ -572,12 +573,14 @@ public sealed class RuleEngine(IActuator actuator, IEngineEventSink sink, Func<l
                 Fail(p, st, s, value, rule!, readErr);
                 return;
             }
+            long observed = original;
             if (s < 2 && (st.InheritedMask & (1 << s)) != 0 && original == st.InheritedValue[s])
                 original = st.InheritedOriginal[s];
             st.Original[s] = Journal?.OriginalOf(p.Key, slot, original) ?? original;
+            if (st.Original[s] != observed) previousApplied = observed;
         }
 
-        if (Journal is not null && !Journal.BeforeApply(p.Key, slot, st.Original[s], value, rule!.Source.Origin, out var journalError))
+        if (Journal is not null && !Journal.BeforeApply(p.Key, slot, st.Original[s], value, previousApplied, rule!.Source.Origin, out var journalError))
         { Fail(p, st, s, value, rule!, journalError); return; }
         var result = actuator.Write(p.Key, slot, value, out var err2);
         if (result.Status == WriteStatus.Deferred)

@@ -6,7 +6,7 @@ using Corewright.Service.Windows;
 
 namespace Corewright.Service;
 
-internal sealed record JournalEntry(int Pid, long CreationTime, Slot Slot, long Original, long Applied, RuleOrigin Origin, bool Restored = false);
+internal sealed record JournalEntry(int Pid, long CreationTime, Slot Slot, long Original, long Applied, RuleOrigin Origin, bool Restored = false, long? PreviousApplied = null);
 [JsonSerializable(typeof(JournalEntry))]
 internal sealed partial class JournalJson : JsonSerializerContext;
 
@@ -34,7 +34,14 @@ internal sealed class AppliedJournal : IAppliedJournal
                 {
                     _records++;
                     if (string.IsNullOrWhiteSpace(line)) continue;
-                    var entry = JsonSerializer.Deserialize(line, JournalJson.Default.JournalEntry);
+                    JournalEntry? entry;
+                    try { entry = JsonSerializer.Deserialize(line, JournalJson.Default.JournalEntry); }
+                    catch (JsonException)
+                    {
+                        _blocked = true;
+                        log.LogWarning("Incomplete applied journal preserved; recovering valid prefix and declining new changes");
+                        break;
+                    }
                     if (entry is null) continue;
                     var id = (new ProcessKey(entry.Pid, entry.CreationTime), entry.Slot);
                     if (entry.Restored) _active.Remove(id); else _active[id] = entry;
@@ -55,7 +62,7 @@ internal sealed class AppliedJournal : IAppliedJournal
                     }
                     continue;
                 }
-                if (current != entry.Applied) { _gone.Add(id); continue; }
+                if (current != entry.Applied && current != entry.PreviousApplied) { _gone.Add(id); continue; }
                 bool ok = actuator.TryWrite(id.Key, id.Slot, entry.Original, out var error);
                 sink.Emit(new(ok ? EngineEventKind.Reverted : EngineEventKind.Failed, entry.Pid, "", "Startup recovery", Slots.Name(entry.Slot),
                     Slots.FormatValue(entry.Slot, entry.Original), ok ? "restored original from applied-changes journal" : error));
@@ -63,16 +70,16 @@ internal sealed class AppliedJournal : IAppliedJournal
             }
             foreach (var id in _gone) _active.Remove(id);
             _gone.Clear();
-            Compact();
+            if (!_blocked) Compact();
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException or JsonException)
         { _blocked = true; log.LogWarning("Applied journal preserved; new changes blocked: {Message}", e.Message); }
     }
 
     public long OriginalOf(ProcessKey key, Slot slot, long current) =>
-        _active.TryGetValue((key, slot), out var entry) && current == entry.Applied ? entry.Original : current;
+        _active.TryGetValue((key, slot), out var entry) && (current == entry.Applied || current == entry.PreviousApplied) ? entry.Original : current;
 
-    public bool BeforeApply(ProcessKey key, Slot slot, long original, long applied, RuleOrigin origin, out string? error)
+    public bool BeforeApply(ProcessKey key, Slot slot, long original, long applied, long? previousApplied, RuleOrigin origin, out string? error)
     {
         error = null;
         // Networking already has a machine-wide recovery journal and its own ownership protocol.
@@ -80,7 +87,7 @@ internal sealed class AppliedJournal : IAppliedJournal
         var id = (key, slot);
         if (_blocked) { error = "recovery journal unavailable; change declined"; return false; }
         if (!_active.ContainsKey(id) && _active.Count >= MaxActive) { error = "recovery journal full; change declined"; return false; }
-        var entry = new JournalEntry(key.Pid, key.CreateTime, slot, original, applied, origin);
+        var entry = new JournalEntry(key.Pid, key.CreateTime, slot, original, applied, origin, PreviousApplied: previousApplied);
         if (_active.TryGetValue(id, out var old) && old == entry) return true;
         try { Append(entry); _active[id] = entry; return true; }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException) { error = e.Message; return false; }
