@@ -13,7 +13,7 @@ public sealed class ProgramStats
     public string Display { get; set; } = "";
     public double ObservedSeconds { get; set; }
     public double ForegroundSeconds { get; set; }
-    /// <summary>Sum of (cores in use Ã— seconds); divided by ObservedSeconds gives the average load in cores.</summary>
+    /// <summary>Sum of (cores in use Ãƒâ€” seconds); divided by ObservedSeconds gives the average load in cores.</summary>
     public double CoreSeconds { get; set; }
     /// <summary>Seconds spent in each load band (<see cref="BackgroundClassifier.Bands"/>), for the 95th percentile.</summary>
     public double[] Profile { get; set; } = new double[BackgroundClassifier.Bands.Length];
@@ -33,7 +33,14 @@ public sealed record BackgroundRowDto(string Name, string Program, double Observ
 
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase, WriteIndented = false)]
 [JsonSerializable(typeof(Dictionary<string, ProgramStats>))]
+[JsonSerializable(typeof(StatsFile))]
 internal sealed partial class StatsJson : JsonSerializerContext;
+public sealed class StatsFile
+{
+    public int Version { get; set; } = 4;
+    public long LastDecayUnix { get; set; }
+    public Dictionary<string, ProgramStats> Programs { get; set; } = [];
+}
 
 /// <summary>
 /// Background placement, version 2 (owner, 2026-11-02: "is our background rule really that easy?? we need to make this
@@ -54,8 +61,7 @@ internal sealed partial class StatsJson : JsonSerializerContext;
 internal sealed class BackgroundClassifier
 {
     /// <summary>Upper edges of the load bands, in cores.</summary>
-    internal static readonly double[] Bands = [0.05, 0.25, 0.5, 1, 2, 4, 8, double.MaxValue];
-    private static readonly double[] BandMid = [0.02, 0.15, 0.4, 0.8, 1.5, 3, 6, 12];
+    internal static readonly double[] Bands = [0.05, 0.25, 0.5, 1, 1.25, 2, 4, 8, 64];
 
     private const int MaxPrograms = 3000;
     private const double HalfLifeSeconds = 3 * 86400;
@@ -70,6 +76,7 @@ internal sealed class BackgroundClassifier
     private readonly Dictionary<string, bool> _serviceThisTick = new(StringComparer.Ordinal);
     private readonly HashSet<string> _frontThisTick = new(StringComparer.Ordinal);
     private readonly List<ProcessInfo> _new = [];
+    private long _lastDecayUnix;
     private long _lastTickMs, _lastSaveMs, _lastClassifyMs, _lastDecayMs;
     private string _signature = "";
     private List<string>? _launcherSource;
@@ -82,7 +89,7 @@ internal sealed class BackgroundClassifier
     {
         // Version 2 keys by program identity; the version 1 file (keyed by exe name) stays untouched next to it.
         // v3: statistics learned without foreground data (tray missing) were wrong; v2 is kept next to it, unused.
-        _path = Path.Combine(dataDirectory, "background-stats-v3.json");
+        _path = Path.Combine(dataDirectory, "background-stats-v4.json");
         _stats = Load(_path);
     }
 
@@ -227,12 +234,13 @@ internal sealed class BackgroundClassifier
         if (_lastDecayMs == 0) { _lastDecayMs = nowMs; return; }
         double f = Math.Pow(0.5, (nowMs - _lastDecayMs) / 1000.0 / HalfLifeSeconds);
         _lastDecayMs = nowMs;
+        _lastDecayUnix = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
         foreach (var s in _stats.Values)
         {
             s.ObservedSeconds *= f;
             s.ForegroundSeconds *= f;
             s.CoreSeconds *= f;
-            s.PeakCores *= f;
+            s.PeakCores = Peak(s);
             s.ChildStarts *= f;
             for (int i = 0; i < s.Profile.Length; i++) s.Profile[i] *= f;
         }
@@ -246,9 +254,18 @@ internal sealed class BackgroundClassifier
         for (int i = 0; i < s.Profile.Length; i++)
         {
             acc += s.Profile[i];
-            if (acc >= 0.95 * total) return Math.Min(BandMid[i], Math.Max(s.PeakCores, BandMid[0]));
+            if (acc >= 0.95 * total) return Bands[i];
         }
         return s.PeakCores;
+    }
+
+    private static double Peak(ProgramStats s)
+    {
+        double total = 0;
+        foreach (double time in s.Profile) total += time;
+        for (int i = s.Profile.Length - 1; i >= 0; i--)
+            if (s.Profile[i] > 0 && s.Profile[i] >= total * 0.005) return Bands[i];
+        return 0;
     }
 
     private bool Classify(BackgroundSettings settings, GameModeSettings game, long unix)
@@ -286,7 +303,7 @@ internal sealed class BackgroundClassifier
         if (IsLauncher(s)) return ("launcher", "Left alone: starts other programs");
         double avg = s.CoreSeconds / s.ObservedSeconds;
         double p95 = P95(s);
-        if (avg < 0.02 && p95 <= 0.25) return ("idle", "Idle: nothing to gain");
+        if (avg < 0.1 && p95 < 0.5) return ("idle", "Idle: nothing to gain");
         return p95 <= settings.SingleCoreLoad ? ("single", "Background: placed") : ("multi", "Background: placed, lower priority");
     }
 
@@ -317,7 +334,7 @@ internal sealed class BackgroundClassifier
                 return new BackgroundRowDto(s.Display, kv.Key, Math.Round(s.ObservedSeconds / 60, 1),
                     Math.Round(100 * s.ForegroundSeconds / Math.Max(1, s.ObservedSeconds), 2),
                     Math.Round(s.CoreSeconds / Math.Max(1, s.ObservedSeconds), 2), Math.Round(s.PeakCores, 2), Math.Round(P95(s), 2), s.Service,
-                    label, kind is "single" or "multi" ? "auto (sticky, least-loaded cores)" : null, Describe(s));
+                    label, kind is "single" or "multi" ? "auto (loose background mask)" : null, Describe(s));
             })];
     }
 
@@ -329,26 +346,48 @@ internal sealed class BackgroundClassifier
             long cutoff = DateTimeOffset.UtcNow.ToUnixTimeSeconds() - 30 * 86400;
             foreach (var k in _stats.Where(kv => kv.Value.LastSeen < cutoff).Select(kv => kv.Key).ToList()) _stats.Remove(k);
             var tmp = _path + ".tmp";
-            File.WriteAllText(tmp, JsonSerializer.Serialize(_stats, StatsJson.Default.DictionaryStringProgramStats));
+            File.WriteAllText(tmp, JsonSerializer.Serialize(new StatsFile { LastDecayUnix = _lastDecayUnix, Programs = _stats }, StatsJson.Default.StatsFile));
             File.Move(tmp, _path, overwrite: true);
         }
         catch (IOException) { }
         catch (UnauthorizedAccessException) { }
     }
 
-    private static Dictionary<string, ProgramStats> Load(string path)
+    private Dictionary<string, ProgramStats> Load(string path)
     {
         try
         {
-            if (File.Exists(path) &&
-                JsonSerializer.Deserialize(File.ReadAllText(path), StatsJson.Default.DictionaryStringProgramStats) is { } d)
+            StatsFile? file = null;
+            if (File.Exists(path)) file = JsonSerializer.Deserialize(File.ReadAllText(path), StatsJson.Default.StatsFile);
+            else
             {
-                foreach (var s in d.Values)
-                    if (s.Profile.Length != Bands.Length) s.Profile = new double[Bands.Length];
-                return new Dictionary<string, ProgramStats>(d, StringComparer.Ordinal);
+                string old = Path.Combine(Path.GetDirectoryName(path)!, "background-stats-v3.json");
+                if (File.Exists(old)) file = new StatsFile { Programs = JsonSerializer.Deserialize(File.ReadAllText(old), StatsJson.Default.DictionaryStringProgramStats) ?? [] };
+            }
+            if (file is not null)
+            {
+                long now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+                double f = file.LastDecayUnix > 0 ? Math.Pow(0.5, Math.Max(0, now - file.LastDecayUnix) / HalfLifeSeconds) : 1;
+                foreach (var stats in file.Programs.Values)
+                {
+                    if (stats.Profile.Length == 8)
+                    {
+                        var migrated = new double[Bands.Length];
+                        Array.Copy(stats.Profile, 0, migrated, 0, 4);
+                        Array.Copy(stats.Profile, 4, migrated, 5, 4);
+                        stats.Profile = migrated;
+                    }
+                    if (stats.Profile.Length != Bands.Length) continue; // retain unfamiliar data, never overwrite the old file
+                    stats.ObservedSeconds *= f; stats.ForegroundSeconds *= f; stats.CoreSeconds *= f; stats.ChildStarts *= f;
+                    for (int i = 0; i < stats.Profile.Length; i++) stats.Profile[i] *= f;
+                    stats.PeakCores = Peak(stats);
+                }
+                _lastDecayUnix = now;
+                return new Dictionary<string, ProgramStats>(file.Programs, StringComparer.Ordinal);
             }
         }
-        catch (Exception e) when (e is JsonException or IOException) { }
+        catch (Exception e) when (e is JsonException or IOException or UnauthorizedAccessException) { }
+        _lastDecayUnix = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
         return new Dictionary<string, ProgramStats>(StringComparer.Ordinal);
     }
 }
