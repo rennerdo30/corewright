@@ -229,17 +229,18 @@ public static class AutopilotRules
                     // The whole app in front is left alone, and services are included except latency-critical ones (owner, 2026-11-02).
                     Condition.Leaf("isForegroundApp", "isFalse", null),
                     Condition.Leaf("latencyCritical", "isFalse", null),
-                    Condition.Leaf("cpu", "gt", "0.3"));
+                    Condition.Leaf("ageSeconds", "gt", "15"),
+                    Condition.Leaf("cpuCores", "gte", "0.5"));
                 if (keep.Count > 0) when.Children!.Add(Not(Condition.Leaf("name", "in", string.Join(", ", keep))));
                 rules.Add(new Rule
                 {
                     Id = IdPrefix + "game-background",
                     Name = "Autopilot: background while gaming",
                     Priority = 6,
-                    SustainSeconds = 1,
-                    ReleaseSeconds = 10,
+                    SustainSeconds = 5,
+                    ReleaseSeconds = 15,
                     When = when,
-                    Actions = new RuleActions { CpuPriority = g.BackgroundPriority, IoPriority = "low", Affinity = backgroundAffinity is null ? null : "auto-background" },
+                    Actions = new RuleActions { CpuPriority = g.BackgroundPriority, IoPriority = "low", Affinity = backgroundAffinity is null ? null : "non-game-ccd" },
                 });
             }
         }
@@ -315,13 +316,16 @@ public static class AutopilotRules
         if (topo.CcdMasks.Length < 2) return -1;
         return placement switch
         {
-            "auto" => topo.VCacheCcds.Length == 1 ? topo.VCacheCcds[0] : topo.FrequencyCcd,
-            "vcache-ccd" => topo.VCacheCcds.Length == 1 ? topo.VCacheCcds[0] : -1,
+            "auto" => topo.VCacheCcds.Length == 1 ? topo.VCacheCcds[0] : Fastest(topo),
+            "vcache-ccd" => topo.VCacheCcds.Contains(topo.FrequencyCcd) ? topo.FrequencyCcd : topo.VCacheCcds.Length > 0 ? topo.VCacheCcds[0] : 0,
             "frequency-ccd" or "best-ccd" => topo.FrequencyCcd,
             _ when placement.StartsWith("ccd", StringComparison.OrdinalIgnoreCase) && int.TryParse(placement[3..], out int n) && n < topo.CcdMasks.Length => n,
             _ => -1,
         };
     }
+
+    private static int Fastest(SystemTopology topo) => topo.FrequencyCcd >= 0 && topo.FrequencyCcd < topo.CcdMasks.Length
+        ? topo.FrequencyCcd : topo.VCacheCcds.Length > 0 ? topo.VCacheCcds[0] : 0;
 
     /// <summary>Stable short hash (string.GetHashCode is randomized per process), so two programs with one display name get two ids.</summary>
     private static string Fnv(string s)

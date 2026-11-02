@@ -29,6 +29,9 @@ internal sealed unsafe partial class GameDetector
     /// </summary>
     private const long FullscreenSustainMs = 10_000;
 
+    private readonly Dictionary<ProcessKey, (string Name, string Reason)> _games = [];
+    private readonly List<ProcessKey> _gone = [];
+    private GameModeSettings? _settings;
     private int _lastForeground;
     private bool _lastFullscreen;
     private ProcessKey? _candidate;
@@ -43,40 +46,45 @@ internal sealed unsafe partial class GameDetector
     public bool Update(ProcessSampler sampler, int foregroundPid, bool fullscreen, GameModeSettings settings, bool enabled, IEngineEventSink sink)
     {
         bool changed = false;
-        if (!enabled)
+        if (!ReferenceEquals(_settings, settings))
+        { _settings = settings; _lastForeground = 0; _candidate = null; }
+        foreach (var (key, game) in _games)
+            if (!sampler.IsAlive(key) || settings.NotGames.Contains(game.Name, StringComparer.OrdinalIgnoreCase) ||
+                (!enabled && !settings.Games.Contains(game.Name, StringComparer.OrdinalIgnoreCase))) _gone.Add(key);
+        foreach (var key in _gone)
         {
-            if (Game is not null) { Clear(sink, "game mode off"); changed = true; }
-            _lastForeground = 0;
-            return changed;
+            var old = _games[key]; _games.Remove(key); changed = true;
+            sink.Emit(new(EngineEventKind.Info, key.Pid, old.Name, "Autopilot", null, null, "game mode ended (root exited or excluded)"));
         }
-
-        if (Game is { } g && !sampler.IsAlive(g))
+        _gone.Clear();
+        foreach (var listed in sampler.Processes)
+            if (!listed.IsProtected && settings.Games.Contains(listed.Name, StringComparer.OrdinalIgnoreCase) &&
+                !settings.NotGames.Contains(listed.Name, StringComparer.OrdinalIgnoreCase) && !_games.ContainsKey(listed.Key))
+                changed |= Detect(listed, "on your games list", sink);
+        if (Game is not { } current || !_games.ContainsKey(current))
         {
-            Clear(sink, "game exited");
-            changed = true;
+            Game = null; GameName = null; Reason = null;
+            foreach (var (key, game) in _games) { Game = key; GameName = game.Name; Reason = game.Reason; }
         }
-        else if (Game is not null && settings.NotGames.Contains(GameName ?? "", StringComparer.OrdinalIgnoreCase))
-        {
-            Clear(sink, "marked as not a game");
-            changed = true;
-        }
+        UpdateMembers(sampler);
+        if (!enabled) { _candidate = null; _lastForeground = 0; return changed; }
 
         if (foregroundPid == _lastForeground && fullscreen == _lastFullscreen)
         {
             // Unchanged foreground: only a pending full-screen candidate needs the clock (no module scan, no handle).
-            if (_candidate is { } c && Environment.TickCount64 - _candidateSinceMs >= FullscreenSustainMs && sampler.TryGet(foregroundPid, out var cp) && cp.Key == c)
+            if (_candidate is { } c && Environment.TickCount64 - _candidateSinceMs >= FullscreenSustainMs && sampler.TryGet(foregroundPid, out var cp) && cp.Key == c && !settings.NotGames.Contains(cp.Name, StringComparer.OrdinalIgnoreCase))
             {
                 _candidate = null;
-                return Detect(cp, _candidateReason!, sink) || changed;
+                changed |= Detect(cp, _candidateReason!, sink); UpdateMembers(sampler); return changed;
             }
             return changed;
         }
+        if (!sampler.TryGet(foregroundPid, out var p)) return changed;
         _lastForeground = foregroundPid;
         _lastFullscreen = fullscreen;
         _candidate = null;
-
-        if (!sampler.TryGet(foregroundPid, out var p) || p.IsProtected || p.SessionId == 0) return changed;
-        if (Game is { } current && current == p.Key) return changed;
+        if (p.IsProtected || p.SessionId == 0) return changed;
+        if (Game is { } detected && detected == p.Key) return changed;
 
         string? reason = Classify(p, fullscreen, settings, out bool weak);
         if (reason is null) return changed;
@@ -87,12 +95,14 @@ internal sealed unsafe partial class GameDetector
             _candidateReason = reason;
             return changed;
         }
-        return Detect(p, reason, sink) || changed;
+        changed |= Detect(p, reason, sink); UpdateMembers(sampler); return changed;
     }
 
     private bool Detect(ProcessInfo p, string reason, IEngineEventSink sink)
     {
 
+        if (_games.ContainsKey(p.Key)) return false;
+        _games[p.Key] = (p.Name, reason);
         Game = p.Key;
         GameName = p.Name;
         Reason = reason;
@@ -100,12 +110,22 @@ internal sealed unsafe partial class GameDetector
         return true;
     }
 
-    private void Clear(IEngineEventSink sink, string why)
+    private void UpdateMembers(ProcessSampler sampler)
     {
-        if (Game is { } g) sink.Emit(new EngineEvent(EngineEventKind.Info, g.Pid, GameName ?? "", "Autopilot", null, null, $"game mode ended ({why})"));
-        Game = null;
-        GameName = null;
-        Reason = null;
+        foreach (var p in sampler.Processes)
+        {
+            if (p.GameRoot is { } prior && !_games.ContainsKey(prior)) p.GameRoot = null;
+            if (_games.ContainsKey(p.Key)) p.GameRoot = p.Key;
+            p.IsGame = p.GameRoot is not null;
+            var ancestor = p.Parent;
+            for (int depth = 0; !p.IsGame && ancestor is { } key && depth < 32; depth++)
+            {
+                if (_games.ContainsKey(key)) { p.IsGame = true; p.GameRoot = key; break; }
+                if (!sampler.TryGet(key.Pid, out var parent) || parent.Key != key) break;
+                if (parent.GameRoot is { } root && _games.ContainsKey(root)) { p.IsGame = true; p.GameRoot = root; break; }
+                ancestor = parent.Parent;
+            }
+        }
     }
 
     private static string? Classify(ProcessInfo p, bool fullscreen, GameModeSettings s, out bool weak)

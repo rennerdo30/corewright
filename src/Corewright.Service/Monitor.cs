@@ -370,12 +370,13 @@ internal sealed class Monitor : BackgroundService
 
             // Autopilot game mode: only re-classifies when the foreground or its full-screen state changes.
             var ap = Settings.Autopilot;
-            if (!_groups.AnyFreeze && _game.Update(_sampler, _ctx.ForegroundPid, fullscreen, ap.GameMode, ap.Enabled && ap.GameMode.Enabled, Events))
+            if (_game.Update(_sampler, _ctx.ForegroundPid, fullscreen, ap.GameMode, ap.Enabled && ap.GameMode.Enabled, Events))
             {
                 _ctx.GamePid = _game.Game?.Pid ?? 0;
                 _ctx.GameName = _game.GameName;
                 _facts["game.active"] = _game.Game is null ? "false" : "true";
                 if (_game.GameName is { } gn) _facts["game.name"] = gn; else _facts.Remove("game.name");
+                _facts["game.pid"] = _ctx.GamePid.ToString(System.Globalization.CultureInfo.InvariantCulture);
             }
 
             // PM-12: long-term observation; a changed classification rebuilds the rule set (at most once a minute).

@@ -15,6 +15,11 @@ internal sealed class AffinityPlacer(Func<SystemTopology> topology, Func<int> ga
         int game = gameCcd();
         ulong gameMask = game >= 0 && game < topo.CcdMasks.Length ? topo.CcdMasks[game] & topo.AllMask : 0;
         if (mode == AffinityModes.Game) return (long)(gameMask & ~groupCores());
+        if (mode == AffinityModes.NonGame)
+        {
+            ulong other = topo.AllMask & ~gameMask;
+            return ctx.GamePid == 0 || gameMask == 0 || other == 0 || (other & groupCores()) != 0 ? 0 : (long)other;
+        }
         ulong strongest = 0;
         if (ctx.ForegroundBusy || ctx.GamePid != 0)
         {

@@ -345,9 +345,7 @@ public static class RuleCompiler
     private static bool NamesGroup(Condition? c) =>
         c is not null && (c.Field is "group" or "groupId" || (c.Children?.Any(NamesGroup) ?? false));
 
-    private static bool IsGame(ProcessInfo p, EvalContext x) =>
-        (x.GamePid != 0 && (p.Key.Pid == x.GamePid || (x.GameName is { } n && p.Name.Equals(n, StringComparison.OrdinalIgnoreCase))))
-        || (x.AlwaysGames is { Count: > 0 } always && always.Contains(p.Name));
+    private static bool IsGame(ProcessInfo p, EvalContext x) => p.IsGame;
 
     public static bool IsTruthy(string v) =>
         v.Equals("true", StringComparison.OrdinalIgnoreCase) || v == "1" ||

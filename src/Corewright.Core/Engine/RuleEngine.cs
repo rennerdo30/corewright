@@ -413,7 +413,7 @@ public sealed class RuleEngine(IActuator actuator, IEngineEventSink sink, Func<l
     }
 
     private static bool ForegroundSafe(ProcessInfo p, EvalContext ctx) => ctx.ForegroundKnown &&
-        (p.SessionId == 0 || p.SessionId == ctx.ForegroundSessionId) && !ctx.IsForegroundApp(p) && !p.IsLauncher && !p.LatencyCritical;
+        (p.SessionId == 0 || p.SessionId == ctx.ForegroundSessionId) && !ctx.IsForegroundApp(p) && !p.IsLauncher && !p.LatencyCritical && !p.IsGame;
 
     private void Reconcile(ProcessInfo p, ProcState st, int s, bool has, long value, CompiledRule? rule)
     {
