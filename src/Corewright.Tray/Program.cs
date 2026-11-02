@@ -24,6 +24,7 @@ internal static unsafe class Program
     private static nint _icon;
     private static uint _taskbarCreated;
     private static int _lastForeground;
+    private static nint _lastForegroundWindow;
     private static bool _lastFullscreen;
     private const nuint RecheckTimer = 1;
     private const nuint PresenceTimer = 2;
@@ -124,7 +125,13 @@ internal static unsafe class Program
         if (msg == 0x02B1 && ((int)w == 7 || (int)w == 8)) // WM_WTSSESSION_CHANGE: lock/unlock
         {
             _locked = (int)w == 7;
-            ReportForeground(GetForegroundWindow(), force: true);
+            if (_locked)
+            {
+                _present = false;
+                KillTimer(hwnd, PresenceTimer);
+                SendForeground(_lastForeground, _lastFullscreen);
+            }
+            else ReportForeground(GetForegroundWindow(), force: true);
             return 0;
         }
         if (msg == WM_TIMER && (nuint)w == PresenceTimer)
@@ -171,7 +178,9 @@ internal static unsafe class Program
         GetWindowThreadProcessId(hwnd, out uint pid);
         bool fullscreen = IsFullscreen(hwnd);
         bool changedProcess = pid != (uint)_lastForeground;
-        if (pid == 0 || (!force && !changedProcess && fullscreen == _lastFullscreen)) return;
+        bool changedWindow = hwnd != _lastForegroundWindow;
+        if (pid == 0 || (!force && !changedWindow && !changedProcess && fullscreen == _lastFullscreen)) return;
+        _lastForegroundWindow = hwnd;
         _present = !_locked && !IsLockScreen(pid);
         KillTimer(_hwnd, PresenceTimer);
         if (_present) SetTimer(_hwnd, PresenceTimer, IdleMs, 0);
