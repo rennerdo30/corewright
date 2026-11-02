@@ -93,6 +93,8 @@ public sealed class EvalContext
     public bool ForegroundBusy { get; set; }
     public bool ForegroundKnown { get; set; }
     public int ForegroundSessionId { get; set; } = -1;
+    public int LogicalCount { get; set; } = 1;
+    public bool SystemUnderPressure { get; set; }
 
     /// <summary>App root of the foreground process: every process of that app counts as "in front" (rule field isForegroundApp).</summary>
     public ProcessKey ForegroundRoot { get; set; }

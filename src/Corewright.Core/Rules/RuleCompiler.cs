@@ -248,6 +248,16 @@ public static class RuleCompiler
                     _ => Error($"operator '{op}' does not apply to isLauncher (use isTrue or isFalse)"),
                 };
             case "cpu": return Num(p => p.CpuPercent);
+            case "cpuCores":
+                var cores = NumberPredicate(op, c.Value, errors);
+                return cores is null ? null : (p, x) => cores(p.CpuPercent * x.LogicalCount / 100.0);
+            case "systemPressure":
+                return op switch
+                {
+                    "isTrue" => static (_, x) => x.SystemUnderPressure,
+                    "isFalse" => static (_, x) => !x.SystemUnderPressure,
+                    _ => Error("systemPressure uses isTrue or isFalse"),
+                };
             case "ageSeconds": return Num(p => (DateTime.UtcNow.ToFileTimeUtc() - p.Key.CreateTime) / 10_000_000.0);
             case "workingSetMb": return Num(p => p.WorkingSet / 1048576.0);
             case "privateMb": return Num(p => p.PrivateBytes / 1048576.0);

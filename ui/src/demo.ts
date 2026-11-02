@@ -280,7 +280,7 @@ const settings: AppSettings = {
       notGames: ['chrome.exe', 'msedge.exe', 'firefox.exe', 'vlc.exe', 'Code.exe', 'obs64.exe', 'ShareX.exe', 'SnippingTool.exe'],
       keepResponsive: ['Discord.exe', 'TeamSpeak.exe', 'obs64.exe', 'audiodg.exe', 'steam.exe'],
     },
-    balance: { enabled: true, cpuPercent: 8, sustainSeconds: 2, releaseSeconds: 6, priority: 'belowNormal', exclusions: [] },
+    balance: { enabled: true, cpuCores: 0.7, sustainSeconds: 2, releaseSeconds: 30, priority: 'belowNormal', exclusions: [] },
     buildTools: { enabled: true, priority: 'belowNormal', ioPriority: 'low', programs: ['cl.exe', 'link.exe', 'MSBuild.exe', 'clang.exe', 'rustc.exe', 'cargo.exe', 'ninja.exe', 'dxc.exe'] },
     background: { enabled: true, minObservedMinutes: 60, includeServices: true, maxForegroundPercent: 1, singleCoreLoad: 1.2, keepBestCoresFree: 4, priority: 'belowNormal', exclusions: [] },
   },

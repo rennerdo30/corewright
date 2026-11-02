@@ -213,10 +213,10 @@ export function Autopilot() {
             title="Balancing"
             enabled={b.enabled}
             onToggle={(v) => update((x) => (x.autopilot.balance.enabled = v))}
-            summary={`Background programs above ${b.cpuPercent} % CPU for ${b.sustainSeconds} s are held back until they calm down. The window you use is never touched.`}
+            summary={`Under CPU pressure, background programs using at least ${b.cpuCores} of a core for ${b.sustainSeconds} s get lower priority.`}
           >
-            <Row title="CPU threshold" desc="Per-process CPU, as a share of the whole machine, that counts as hogging.">
-              <NumberBox value={b.cpuPercent} min={1} max={100} unit="%" onChange={(v) => update((x) => (x.autopilot.balance.cpuPercent = v))} />
+            <Row title="CPU threshold" desc="Per-process load in cores, while the system or foreground app is busy.">
+              <NumberBox value={b.cpuCores} min={0.1} max={64} step={0.1} unit="cores" onChange={(v) => update((x) => (x.autopilot.balance.cpuCores = v))} />
             </Row>
             <Row title="Act after" desc="How long a process must stay above the threshold.">
               <NumberBox value={b.sustainSeconds} min={0} step={0.5} unit="s" onChange={(v) => update((x) => (x.autopilot.balance.sustainSeconds = v))} />

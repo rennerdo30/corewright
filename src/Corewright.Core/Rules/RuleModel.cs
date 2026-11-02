@@ -60,6 +60,7 @@ public sealed class Condition
 public sealed class RuleActions
 {
     public string? CpuPriority { get; set; }
+    public bool CpuPriorityLowerOnly { get; set; }
     public string? Affinity { get; set; }
     public string? IoPriority { get; set; }
     public string? GpuPriority { get; set; }

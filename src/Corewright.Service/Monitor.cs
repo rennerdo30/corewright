@@ -81,6 +81,7 @@ internal sealed class Monitor : BackgroundService
         try { CpuLayout = CpuTopologyProbe.Read(); }
         catch (Exception e) { log.LogWarning("CPU topology probe failed: {Message}", e.Message); }
         Topology = CpuLayout is { } layout ? WithLayout(basic, layout) : basic;
+        _ctx.LogicalCount = Topology.LogicalCount;
         _settingsStore = settingsStore;
         Settings = settingsStore.Load();
         _ctx.AlwaysGames = AlwaysGamesOf(Settings);
@@ -399,6 +400,7 @@ internal sealed class Monitor : BackgroundService
             if (_groups.AnyFreeze) _facts["autopilot.frozen"] = "true";
             else _facts.Remove("autopilot.frozen");
             _ctx.ForegroundBusy = _sampler.TryGet(_ctx.ForegroundPid, out var front) && front.CpuPercent * Topology.LogicalCount / 100 >= 0.5;
+            _ctx.SystemUnderPressure = _sampler.SystemCpuPercent >= 60 || (_ctx.ForegroundKnown && _ctx.ForegroundBusy);
             if (IsClientActive) _cores.Sample(); // Loose masks do not need per-thread load.
             Engine.Evaluate(_sampler.Processes, _ctx);
 

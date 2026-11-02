@@ -431,12 +431,33 @@ public sealed class RuleEngine(IActuator actuator, IEngineEventSink sink, Func<l
             return;
         }
 
+        bool lowerOnly = slot == Slot.CpuPriority && rule!.Source.Actions.CpuPriorityLowerOnly;
+        long? lowerOriginal = null;
+        if (lowerOnly && !st.Owned[s])
+        {
+            if (!actuator.TryRead(p.Key, slot, out long current, out var readError))
+            { Fail(p, st, s, value, rule!, readError); return; }
+            if (current <= value) return;
+            lowerOriginal = current;
+        }
+        if (lowerOnly && st.Owned[s] && st.Applied[s] != value &&
+            actuator.TryRead(p.Key, slot, out long held, out _) && held <= value)
+        {
+            st.AppliedRule[s] = rule;
+            return;
+        }
+
         if (st.IsApplied[s] && st.Applied[s] == value && (st.Pending & (1 << s)) == 0)
         {
             st.AppliedRule[s] = rule;
             if (slot == Slot.CpuPriority && p.BasePriority != 0 &&
                 p.BasePriority != Slots.BasePriorityOf((CpuPriorityLevel)value) && st.DriftCount < MaxDriftReapply)
             {
+                if (lowerOnly && p.BasePriority < Slots.BasePriorityOf((CpuPriorityLevel)value))
+                {
+                    if (actuator.TryRead(p.Key, slot, out long current, out _)) st.Original[s] = Math.Min(st.Original[s], current);
+                    return;
+                }
                 st.DriftCount++;
                 bool ok = actuator.TryWrite(p.Key, slot, value, out var err);
                 sink.Emit(new EngineEvent(EngineEventKind.Drift, p.Key.Pid, p.Name, rule!.Name, Slots.Name(slot),
@@ -451,7 +472,8 @@ public sealed class RuleEngine(IActuator actuator, IEngineEventSink sink, Func<l
 
         if (!st.Owned[s])
         {
-            if (!actuator.TryRead(p.Key, slot, out var original, out var readErr))
+            long original = lowerOriginal ?? 0;
+            if (lowerOriginal is null && !actuator.TryRead(p.Key, slot, out original, out var readErr))
             {
                 Fail(p, st, s, value, rule!, readErr);
                 return;

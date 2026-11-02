@@ -157,11 +157,11 @@ public sealed class BalanceSettings
     /// <summary>ProBalance-style restraint of background processes that hog the CPU.</summary>
     public bool Enabled { get; set; } = true;
 
-    /// <summary>Per-process CPU, as percent of the whole machine, that counts as hogging.</summary>
-    public double CpuPercent { get; set; } = 8;
+    /// <summary>Core-relative contribution, independent of the machine's logical processor count.</summary>
+    public double CpuCores { get; set; } = 0.7;
 
     public double SustainSeconds { get; set; } = 2;
-    public double ReleaseSeconds { get; set; } = 6;
+    public double ReleaseSeconds { get; set; } = 30;
     public string Priority { get; set; } = "belowNormal";
     public List<string> Exclusions { get; set; } = [];
 }
@@ -290,7 +290,8 @@ public static class AutopilotRules
                 Condition.Leaf("isForegroundApp", "isFalse", null),
                 Condition.Leaf("isGame", "isFalse", null),
                 Condition.Leaf("latencyCritical", "isFalse", null),
-                Condition.Leaf("cpu", "gt", b.CpuPercent.ToString(System.Globalization.CultureInfo.InvariantCulture)));
+                Condition.Leaf("systemPressure", "isTrue", null),
+                Condition.Leaf("cpuCores", "gte", b.CpuCores.ToString(System.Globalization.CultureInfo.InvariantCulture)));
             var excluded = b.Exclusions.Concat(keep).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
             if (excluded.Count > 0) when.Children!.Add(Not(Condition.Leaf("name", "in", string.Join(", ", excluded))));
             rules.Add(new Rule
@@ -301,7 +302,7 @@ public static class AutopilotRules
                 SustainSeconds = b.SustainSeconds,
                 ReleaseSeconds = b.ReleaseSeconds,
                 When = when,
-                Actions = new RuleActions { CpuPriority = b.Priority },
+                Actions = new RuleActions { CpuPriority = b.Priority, CpuPriorityLowerOnly = true },
             });
         }
 

@@ -40,7 +40,7 @@ export interface AppSettings {
     }
     balance: {
       enabled: boolean
-      cpuPercent: number
+      cpuCores: number
       sustainSeconds: number
       releaseSeconds: number
       priority: string
