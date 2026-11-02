@@ -58,7 +58,7 @@ internal sealed class Monitor : BackgroundService
     private readonly float[] _hIo = new float[HistoryCapacity];
     private int _hCount, _hNext;
 
-    public Monitor(ServiceOptions options, RuleStore store, SettingsStore settingsStore, EventBuffer events, ILogger<Monitor> log)
+    public Monitor(ServiceOptions options, RuleStore store, SettingsStore settingsStore, EventBuffer events, ILogger<Monitor> log, string dataDirectory)
     {
         _options = options;
         _store = store;
@@ -66,6 +66,7 @@ internal sealed class Monitor : BackgroundService
         Devices.Start(Sync, log);
         Events = events;
         Engine = new RuleEngine(_actuator, events);
+        Engine.Journal = new AppliedJournal(dataDirectory, _actuator, events, log);
         _actuator.Network.Start(events);
         // Events carry the rule name; the per-rule history is kept by id (names can repeat across a rename).
         events.RuleIdOf = name =>

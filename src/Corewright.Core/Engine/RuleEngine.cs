@@ -31,6 +31,14 @@ public interface IEngineEventSink
     void Emit(in EngineEvent e);
 }
 
+public interface IAppliedJournal
+{
+    bool BeforeApply(ProcessKey key, Slot slot, long original, long applied, RuleOrigin origin, out string? error);
+    long OriginalOf(ProcessKey key, Slot slot, long current);
+    void Reverted(ProcessKey key, Slot slot);
+    void Forget(ProcessKey key);
+}
+
 public sealed record AppliedSlot(Slot Slot, long Value, string RuleId, string RuleName);
 
 public sealed record ExplainEntry(
@@ -73,6 +81,7 @@ public sealed class RuleEngine(IActuator actuator, IEngineEventSink sink, Func<l
 
     /// <summary>Resolves "auto-…" affinity modes; without one they fall back to leaving affinity unchanged.</summary>
     public IAffinityPlacer? Placer { get; set; }
+    public IAppliedJournal? Journal { get; set; }
     public int Version => _version;
     public CompiledRuleSet Rules => _set;
 
@@ -140,6 +149,7 @@ public sealed class RuleEngine(IActuator actuator, IEngineEventSink sink, Func<l
         foreach (var key in _gone)
         {
             Remember(_states[key]);
+            Journal?.Forget(key);
             actuator.Forget(key);
             _states.Remove(key);
         }
@@ -184,7 +194,7 @@ public sealed class RuleEngine(IActuator actuator, IEngineEventSink sink, Func<l
         foreach (var st in _states.Values)
         {
             for (int s = 0; s < Slots.Count; s++)
-                if (st.Owned[s]) Revert(st, s);
+                if (st.Owned[s]) Revert(st, s, stopping && s < 2);
             if (!HasOwned(st))
             {
                 actuator.Forget(st.Key);
@@ -543,9 +553,11 @@ public sealed class RuleEngine(IActuator actuator, IEngineEventSink sink, Func<l
             }
             if (s < 2 && (st.InheritedMask & (1 << s)) != 0 && original == st.InheritedValue[s])
                 original = st.InheritedOriginal[s];
-            st.Original[s] = original;
+            st.Original[s] = Journal?.OriginalOf(p.Key, slot, original) ?? original;
         }
 
+        if (Journal is not null && !Journal.BeforeApply(p.Key, slot, st.Original[s], value, rule!.Source.Origin, out var journalError))
+        { Fail(p, st, s, value, rule!, journalError); return; }
         var result = actuator.Write(p.Key, slot, value, out var err2);
         if (result.Status == WriteStatus.Deferred)
         {
@@ -594,10 +606,10 @@ public sealed class RuleEngine(IActuator actuator, IEngineEventSink sink, Func<l
             Slots.FormatValue(slot, value), error));
     }
 
-    private void Revert(ProcState st, int s)
+    private void Revert(ProcState st, int s, bool force = false)
     {
         long now = _nowMs();
-        if (now < st.RestoreRetry[s]) return;
+        if (!force && now < st.RestoreRetry[s]) return;
         var slot = (Slot)s;
         bool reported = (st.RevertFailed & (1 << s)) != 0;
         var result = actuator.Write(st.Key, slot, st.Original[s], out var err);
@@ -630,6 +642,7 @@ public sealed class RuleEngine(IActuator actuator, IEngineEventSink sink, Func<l
         st.Pending &= ~(1 << s);
         st.RestoreRetry[s] = 0;
         st.AppliedRule[s] = null;
+        Journal?.Reverted(st.Key, slot);
     }
 
     private sealed class ProcState(ProcessKey key, string name)
