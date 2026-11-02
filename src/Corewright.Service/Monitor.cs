@@ -22,7 +22,7 @@ internal sealed class Monitor : BackgroundService
     public const int HistoryCapacity = 300;
 
     private readonly ProcessSampler _sampler = new();
-    private readonly WindowsActuator _actuator = new();
+    private readonly WindowsActuator _actuator;
     private readonly SemaphoreSlim _wake = new(0);
     private readonly ServiceOptions _options;
     private readonly RuleStore _store;
@@ -63,6 +63,7 @@ internal sealed class Monitor : BackgroundService
         _options = options;
         _store = store;
         _log = log;
+        _actuator = new WindowsActuator(dataDirectory);
         Devices.Start(Sync, log);
         Events = events;
         SystemProbe.EnablePrivileges();
