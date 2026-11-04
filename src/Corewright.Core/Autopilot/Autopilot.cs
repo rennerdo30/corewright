@@ -5,8 +5,8 @@ namespace Corewright.Core.Autopilot;
 /// <summary>App settings (settings.json in the data folder). Rules live separately in rules.json.</summary>
 public sealed class AppSettings
 {
-    /// <summary>2: background placement on by default. 3: screen tools added to "never games" (owner, 2026-11-02).</summary>
-    public const int CurrentVersion = 5;
+    /// <summary>2: background placement on by default. 3: screen tools added to "never games" (owner, 2026-11-02). 6: remote desktop viewers added to "never games" (owner, 2026-11-04).</summary>
+    public const int CurrentVersion = 6;
 
     public int Version { get; set; } = CurrentVersion;
     public AutopilotSettings Autopilot { get; set; } = new();
@@ -137,6 +137,7 @@ public sealed class GameModeSettings
         "devenv.exe", "rider64.exe", "Unity.exe", "UnrealEditor.exe", "blender.exe", "obs64.exe",
         "Corewright.Dashboard.exe", "msedgewebview2.exe", "ApplicationFrameHost.exe",
         .. ScreenTools,
+        .. RemoteViewers,
         .. GameLaunchers,
     ];
 
@@ -157,6 +158,17 @@ public sealed class GameModeSettings
         "PowerToys.ColorPickerUI.exe", "PowerToys.MeasureToolUI.exe", "PowerToys.PowerOCR.exe", "PowerToys.PowerLauncher.exe",
         "PowerToys.CropAndLock.exe", "LockApp.exe", "SearchHost.exe", "StartMenuExperienceHost.exe", "ShellExperienceHost.exe",
         "TextInputHost.exe", "GameBar.exe", "XboxGameBarWidgets.exe", "NVIDIA Overlay.exe", "RadeonSoftware.exe",
+    ];
+
+    /// <summary>
+    /// Remote desktop and virtual machine viewers draw a full-screen remote session with Direct3D (owner report,
+    /// 2026-11-04: mstsc.exe was detected as a game). Added to existing settings by the version 6 migration.
+    /// </summary>
+    public static readonly string[] RemoteViewers =
+    [
+        "mstsc.exe", "msrdc.exe", "msrdcw.exe", "Windows365.exe", "vmconnect.exe", "VirtualBoxVM.exe", "vmware.exe",
+        "vmware-vmx.exe", "vmplayer.exe", "AnyDesk.exe", "TeamViewer.exe", "rustdesk.exe", "vncviewer.exe", "tvnviewer.exe",
+        "RemoteDesktopManager.exe", "mRemoteNG.exe", "RDCMan.exe",
     ];
 
     /// <summary>Kept responsive while gaming (voice, streaming); never moved or lowered by Autopilot.</summary>

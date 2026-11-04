@@ -175,7 +175,11 @@ internal sealed unsafe partial class GameDetector
                 var module = new ReadOnlySpan<char>(name, (int)len);
                 foreach (var g in GraphicsModules)
                     if (module.Equals(g, StringComparison.OrdinalIgnoreCase))
-                        return g switch { "vulkan-1.dll" => "Vulkan", "d3d12.dll" => "Direct3D 12", "d3d11.dll" => "Direct3D 11", _ => "Direct3D 9" };
+                        return g switch
+                        {
+                            "vulkan-1.dll" => "Vulkan", "d3d12.dll" => "Direct3D 12", "d3d11.dll" => "Direct3D 11", "d3d10.dll" => "Direct3D 10",
+                            "dxgi.dll" => "DXGI", "opengl32.dll" => "OpenGL", _ => "Direct3D 9",
+                        };
             }
             return null;
         }
