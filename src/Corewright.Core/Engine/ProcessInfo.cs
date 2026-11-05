@@ -89,6 +89,7 @@ public sealed class ProcessInfo(ProcessKey key, string name)
     public long CpuDelta, IoDelta;
     /// <summary>Usage history bookkeeping: the accumulator this process adds to and the generation it belongs to.</summary>
     public object? UsageSlot;
+    public string? UsageKey;
     public int UsageGeneration;
 
     // Sampler bookkeeping.

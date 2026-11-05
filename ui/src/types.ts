@@ -51,7 +51,7 @@ export interface UsageInfo {
   program: string | null
   programs: UsageProgram[]
   hours: { time: number; seconds: number; cpuPercent: number; programPercent: number | null }[]
-  storage: { bytes: number; capBytes: number; oldestTime: number | null; files: number }
+  storage: { bytes: number; capBytes: number; oldestTime: number | null; files: number; problem: string | null }
 }
 
 export interface AppSettings {

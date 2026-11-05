@@ -84,7 +84,10 @@ export function History() {
     window.clearTimeout(timer.current)
     timer.current = window.setTimeout(async () => {
       try {
-        const saved = await api.saveSettings(next)
+        // Only the usage section is this page's: it goes onto the settings as they are now, so an Autopilot change made
+        // meanwhile (another window, an API client) is not overwritten with the copy loaded when this page opened.
+        const fresh = await api.settings()
+        const saved = await api.saveSettings({ ...fresh, usage: next.usage })
         if (saved.settings) setSettings(saved.settings)
         setError(undefined)
         reload()
@@ -96,7 +99,12 @@ export function History() {
 
   const clear = async () => {
     setConfirmClear(false)
-    await api.clearUsage()
+    try {
+      await api.clearUsage()
+      setError(undefined)
+    } catch (e) {
+      setError(e instanceof ApiError ? ((e.body as { detail?: string })?.detail ?? e.message) : String(e))
+    }
     setSelected(undefined)
     reload()
   }
@@ -166,10 +174,11 @@ export function History() {
               <>
                 {u ? `${bytes(u.storage.bytes)} used${u.storage.oldestTime ? `, since ${new Date(u.storage.oldestTime).toLocaleDateString()}` : ''}. ` : ''}
                 When the limit is reached, the oldest hours are deleted first.{error && <span className="danger-text"> {error}</span>}
+                {u?.storage.problem && <span className="danger-text"> Writing the history failed: {u.storage.problem} Finished hours are kept in memory and written when it works again.</span>}
               </>
             }
           >
-            <NumberBox value={rec.maxStorageMb} min={1} max={4096} step={16} unit="MB" onChange={(v) => update((s) => (s.usage!.maxStorageMb = Math.round(v)))} />
+            <NumberBox value={rec.maxStorageMb} min={1} max={1024} step={16} unit="MB" onChange={(v) => update((s) => (s.usage!.maxStorageMb = Math.round(v)))} />
           </Card>
           <Card glyph={''} title="Clear history" desc="Deletes every recorded hour. Recording continues from now on.">
             {confirmClear ? (

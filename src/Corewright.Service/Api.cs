@@ -289,24 +289,26 @@ internal static class Api
         });
 
         // PM-45: usage history. from/to are Unix ms (default: the last 24 hours); program adds its hourly share to the points.
-        api.MapGet("/usage", (long? from, long? to, string? program, int? limit) =>
+        api.MapGet("/usage", IResult (long? from, long? to, string? program, int? limit) =>
         {
             long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            if (from < 0 || to < 0 || (from is { } f0 && to is { } t0 && f0 > t0))
+                return TypedResults.Json(new GroupErrorDto("invalid", "from and to are Unix milliseconds, from <= to"), ApiJson.Default.GroupErrorDto, statusCode: 400);
             long t = Math.Min(to ?? now, now + 3_600_000);
-            long f = Math.Clamp(from ?? t - 86_400_000, 0, t);
+            long f = Math.Min(from ?? Math.Max(0, t - 86_400_000), t);
             var (current, enabled) = m.UsageSnapshot();
+            program = string.IsNullOrEmpty(program) ? null : program;
             if (m.Usage is not { } usage)
-                return TypedResults.Ok(UsageHistory.Aggregate(enabled, f, t, [], program, limit ?? 100, new UsageStorageDto(0, 0, null, 0)));
-            long fromHour = f / 1000 - f / 1000 % 3600, toUnix = (t + 999) / 1000;
-            var hours = usage.Read(fromHour, toUnix);
-            if (current is not null && current.T >= fromHour && current.T < toUnix && !hours.Exists(h => h.T == current.T)) hours.Add(current);
-            return TypedResults.Ok(UsageHistory.Aggregate(enabled, f, t, hours, string.IsNullOrEmpty(program) ? null : program, limit ?? 100, usage.Storage()));
+                return TypedResults.Ok(new UsageDto(enabled, f, t, 0, 0, 0, 0, 0, program, [], [], new UsageStorageDto(0, 0, null, 0, null)));
+            return TypedResults.Ok(usage.Query(enabled, f, t, program, limit ?? 100, current));
         });
-        api.MapDelete("/usage", async () =>
+        api.MapDelete("/usage", async Task<IResult> () =>
         {
-            try { await m.ClearUsage().WaitAsync(TimeSpan.FromSeconds(5)); }
-            catch (TimeoutException) { }
-            return TypedResults.NoContent();
+            var clear = m.ClearUsage();
+            if (await Task.WhenAny(clear, Task.Delay(TimeSpan.FromSeconds(10))) != clear)
+                return TypedResults.Json(new GroupErrorDto("pending", "Deleting the history is still in progress."), ApiJson.Default.GroupErrorDto, statusCode: 503);
+            return clear.Result ? TypedResults.NoContent()
+                : TypedResults.Json(new GroupErrorDto("failed", m.Usage?.Problem ?? "The history files could not be deleted."), ApiJson.Default.GroupErrorDto, statusCode: 500);
         });
 
         api.MapGet("/autopilot/background", () =>

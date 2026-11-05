@@ -66,7 +66,12 @@ internal sealed unsafe class ProcessSampler : IDisposable
             _capacity = Math.Max(needed + (64u << 10), _capacity * 2);
             _buffer = (byte*)NativeMemory.Alloc(_capacity);
         }
-        if (status < 0) return;
+        if (status < 0)
+        {
+            // No sample: nothing to add up. The next good sample's deltas span this gap consistently.
+            IntervalSeconds = 0;
+            return;
+        }
 
         long now = Stopwatch.GetTimestamp();
         double dt = _lastTimestamp == 0 ? 0 : (double)(now - _lastTimestamp) / Stopwatch.Frequency;
@@ -189,6 +194,7 @@ internal sealed unsafe class ProcessSampler : IDisposable
 
     private void SampleSystem()
     {
+        CpuAvailableDelta = CpuBusyDelta = 0;
         if (Native.GetSystemTimes(out long idle, out long kernel, out long user))
         {
             long dIdle = idle - _lastIdle, dTotal = kernel - _lastKernel + (user - _lastUser);

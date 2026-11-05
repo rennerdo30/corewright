@@ -133,9 +133,9 @@ internal sealed class Monitor : BackgroundService
         lock (Sync) return (_usage?.Snapshot(), Settings.Usage.Enabled);
     }
 
-    public Task ClearUsage()
+    public Task<bool> ClearUsage()
     {
-        lock (Sync) return _usage?.Clear() ?? Task.CompletedTask;
+        lock (Sync) return _usage?.Clear() ?? Task.FromResult(true);
     }
     private bool _reportedFullscreen;
 
@@ -238,6 +238,7 @@ internal sealed class Monitor : BackgroundService
 
     public List<RuleError> ReplaceSettings(AppSettings settings)
     {
+        if (!settings.UsageProvided) settings.Usage = Settings.Usage;
         var errors = AutopilotRules.ValidateSettings(settings, Topology);
         if (errors.Count > 0) return errors;
         settings.Version = AppSettings.CurrentVersion;

@@ -47,6 +47,6 @@ export function demoUsage(now: number, program: string | null) {
     program,
     programs,
     hours: hours.map((h) => ({ time: start + h.i * hourMs, seconds: 3600, cpuPercent: (100 * h.busy) / lp, programPercent: j >= 0 ? (100 * h.cores[j]) / lp : null })),
-    storage: { bytes: 3.4e6, capBytes: 64 * 1048576, oldestTime: now - 12 * 86_400_000, files: 13 },
+    storage: { bytes: 3.4e6, capBytes: 64 * 1048576, oldestTime: now - 12 * 86_400_000, files: 13, problem: null },
   }
 }

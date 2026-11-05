@@ -10,7 +10,11 @@ public sealed class AppSettings
 
     public int Version { get; set; } = CurrentVersion;
     public AutopilotSettings Autopilot { get; set; } = new();
-    public UsageSettings Usage { get; set; } = new();
+    private UsageSettings _usage = new();
+    /// <summary>Clients written before beta.12 leave it out of PUT /settings; the stored value is kept then (see <see cref="UsageProvided"/>).</summary>
+    public UsageSettings Usage { get => _usage; set { _usage = value; UsageProvided = true; } }
+    [System.Text.Json.Serialization.JsonIgnore]
+    public bool UsageProvided { get; private set; }
     public string[] Warnings { get; set; } = [];
 }
 
@@ -388,7 +392,7 @@ public static class AutopilotRules
         void Range(string field, double value, double min, double max)
         { if (!double.IsFinite(value) || value < min || value > max) errors.Add(new("settings", field, $"{field} must be between {min} and {max}")); }
         if (settings.Usage is null) { errors.Add(new("settings", "usage", "usage must not be null")); return errors; }
-        Range("usage.maxStorageMb", settings.Usage.MaxStorageMb, 1, 4096);
+        Range("usage.maxStorageMb", settings.Usage.MaxStorageMb, 1, 1024);
         var a = settings.Autopilot;
         if (a?.Background is null || a.Balance is null || a.GameMode is null || a.BuildTools is null)
         { errors.Add(new("settings", "autopilot", "Autopilot sections must not be null")); return errors; }
