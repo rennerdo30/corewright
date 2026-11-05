@@ -167,6 +167,14 @@ const specs: Spec[] = [
   ),
 ]
 
+// PM-46: what the four demo service hosts run (one shared host, like real systems).
+const DEMO_SERVICES: [string, string][][] = [
+  [['wuauserv', 'Windows Update']],
+  [['Dnscache', 'DNS Client']],
+  [['DcomLaunch', 'DCOM Server Process Launcher'], ['PlugPlay', 'Plug and Play'], ['Power', 'Power']],
+  [['Audiosrv', 'Windows Audio']],
+]
+let demoService = 0
 const pids = new Map<string, number>()
 const processes: ProcessRow[] = specs.map((s) => {
   const id = s.name === 'System Idle Process' ? 0 : s.name === 'System' ? 4 : (pid += 4 * (1 + ((pid * 7) % 97)))
@@ -187,6 +195,7 @@ const processes: ProcessRow[] = specs.map((s) => {
     session: s.session ?? 1,
     protected: !!s.protected,
     foreground: !!s.foreground,
+    services: s.name === 'svchost.exe' ? DEMO_SERVICES[demoService++]?.map(([name, display]) => ({ name, display })) : undefined,
     applied: applied.length ? applied : undefined,
     ext: {
       affinity: 'all',

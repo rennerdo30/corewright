@@ -66,9 +66,14 @@ internal static partial class ProgramIdentity
             if (target is not null && !Path.IsPathFullyQualified(target)) cwd = IdentityProbe.WorkingDirectory(p.Key);
         }
         bool critical = false;
+        // Services (also per-user service instances in the user's session) are started by services.exe; one cached snapshot
+        // answers for every process identified in the same second, so ordinary processes never cause an enumeration.
+        if (p.Key.Pid > 4 && (p.ParentName.Equals("services.exe", StringComparison.OrdinalIgnoreCase) ||
+            p.Name.Equals("svchost.exe", StringComparison.OrdinalIgnoreCase)))
+            p.Services = IdentityProbe.Services(p.Key.Pid);
         if (p.Name.Equals("svchost.exe", StringComparison.OrdinalIgnoreCase))
         {
-            var services = IdentityProbe.Services(p.Key.Pid);
+            var services = p.Services?.Select(s => s.Name.ToLowerInvariant()).ToArray();
             if (services is not null)
             {
                 target = string.Join(';', services);

@@ -33,28 +33,75 @@ internal static unsafe partial class IdentityProbe
         finally { Native.CloseHandle(h); }
     }
 
-    public static string[]? Services(int pid)
+    /// <summary>SERVICE_WIN32 (own and shared processes) plus per-user services and their instances (CDPUserSvc_1a2b...).</summary>
+    private const uint ServiceTypes = 0x30 | 0x40 | 0x80;
+    private static readonly Lock ServiceLock = new();
+    private static Dictionary<int, ServiceInfo[]>? _services;
+    private static long _servicesAt = long.MinValue / 2;
+
+    /// <summary>
+    /// The Windows services running in a process (PM-46), sorted by name, or null. One snapshot of all running services
+    /// serves every process identified within a second, so the start (80+ svchost processes) costs one enumeration
+    /// instead of one each; later it is taken again only when a new service process is identified.
+    /// </summary>
+    public static ServiceInfo[]? Services(int pid)
+    {
+        lock (ServiceLock)
+        {
+            long now = Environment.TickCount64;
+            if (_services is null || now - _servicesAt >= 1000)
+            {
+                _services = SnapshotServices() ?? _services;
+                _servicesAt = now;
+            }
+            return _services is not null && _services.TryGetValue(pid, out var list) ? list : null;
+        }
+    }
+
+    private static Dictionary<int, ServiceInfo[]>? SnapshotServices()
     {
         nint scm = OpenSCManagerW(null, null, 4);
         if (scm == 0) return null;
         try
         {
             uint resume = 0;
-            EnumServicesStatusExW(scm, 0, 0x30, 1, null, 0, out uint needed, out _, ref resume, null);
+            EnumServicesStatusExW(scm, 0, ServiceTypes, 1, null, 0, out uint needed, out _, ref resume, null);
             if (needed == 0 || needed > 1 << 20) return null;
             byte[] buffer = new byte[needed];
             fixed (byte* bytes = buffer)
             {
                 resume = 0;
-                if (!EnumServicesStatusExW(scm, 0, 0x30, 1, bytes, (uint)buffer.Length, out _, out uint count, ref resume, null)) return null;
-                var names = new List<string>();
+                if (!EnumServicesStatusExW(scm, 0, ServiceTypes, 1, bytes, (uint)buffer.Length, out _, out uint count, ref resume, null)) return null;
+                var byPid = new Dictionary<int, List<ServiceInfo>>();
                 var rows = (ServiceRow*)bytes;
-                for (int i = 0; i < count; i++) if (rows[i].Pid == pid) names.Add(new string(rows[i].Name).ToLowerInvariant());
-                names.Sort(StringComparer.Ordinal);
-                return names.Count == 0 ? null : names.ToArray();
+                for (int i = 0; i < count; i++)
+                {
+                    int pid = (int)rows[i].Pid;
+                    if (pid <= 4 || rows[i].Name == null) continue;
+                    string name = new(rows[i].Name);
+                    string display = rows[i].Display == null ? name : new string(rows[i].Display);
+                    // A per-user service instance is "<template>_<session LUID>" (CDPUserSvc_e903b), new at every sign-in;
+                    // the template name keeps rules and identities stable.
+                    if ((rows[i].Type & 0x80) != 0) { name = WithoutInstance(name); display = WithoutInstance(display); }
+                    if (!byPid.TryGetValue(pid, out var list)) byPid[pid] = list = [];
+                    list.Add(new ServiceInfo(name, display));
+                }
+                var result = new Dictionary<int, ServiceInfo[]>(byPid.Count);
+                foreach (var (pid, list) in byPid)
+                {
+                    list.Sort((a, b) => string.CompareOrdinal(a.Name.ToLowerInvariant(), b.Name.ToLowerInvariant()));
+                    result[pid] = [.. list];
+                }
+                return result;
             }
         }
         finally { CloseServiceHandle(scm); }
+    }
+
+    private static string WithoutInstance(string s)
+    {
+        int cut = s.LastIndexOf('_');
+        return cut > 0 && cut < s.Length - 1 && s.AsSpan(cut + 1).ContainsAnyExcept("0123456789abcdefABCDEF") == false ? s[..cut] : s;
     }
 
     [StructLayout(LayoutKind.Sequential)]

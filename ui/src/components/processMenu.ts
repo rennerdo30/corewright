@@ -67,6 +67,18 @@ export function buildProcessMenu(p: ProcessRow, quick: Rule | undefined, topo: T
 
   return [
     { type: 'head', label: `${p.name} · ${p.pid}` },
+    // PM-46: "always" settings on a service process belong to its service, not to every svchost.exe.
+    ...(p.services?.length
+      ? [
+          {
+            type: 'head',
+            label:
+              p.services.length === 1
+                ? `Service: ${p.services[0].display}`
+                : `Shared by ${p.services.length} services: settings apply to all of them`,
+          } as MenuEntry,
+        ]
+      : []),
     { type: 'item', label: 'CPU priority', glyph: '\uE9D9', disabled: locked, submenu: levels(a.cpuPriority, CPU, (v) => h.setAlways({ cpuPriority: v })) },
     { type: 'item', label: 'I/O priority', glyph: '\uEDA2', disabled: locked, submenu: levels(a.ioPriority, IO, (v) => h.setAlways({ ioPriority: v })) },
     { type: 'item', label: 'GPU priority', glyph: '\uE7F4', disabled: locked, submenu: levels(a.gpuPriority, CPU, (v) => h.setAlways({ gpuPriority: v })) },

@@ -211,6 +211,13 @@ export interface AppliedSlot {
   ruleName: string
 }
 
+export interface ServiceInfo {
+  /** Key name, e.g. "wuauserv". */
+  name: string
+  /** Display name, e.g. "Windows Update". */
+  display: string
+}
+
 export interface ProcessRow {
   pid: number
   parentPid?: number
@@ -228,6 +235,8 @@ export interface ProcessRow {
   foreground: boolean
   applied?: AppliedSlot[]
   ext?: ProcessExt
+  /** Windows services running in this process (PM-46); absent for ordinary processes. */
+  services?: ServiceInfo[] | null
 }
 
 export interface ExplainRule {

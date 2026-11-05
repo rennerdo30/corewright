@@ -14,6 +14,7 @@ export const FIELDS: { group: string; items: { id: string; label: string; kind: 
       { id: 'pid', label: 'PID', kind: 'number' },
       { id: 'session', label: 'Session', kind: 'number' },
       { id: 'program', label: 'Program (what it runs)', kind: 'text' },
+      { id: 'service', label: 'Windows service (name or display name)', kind: 'text' },
       { id: 'latencyCritical', label: 'Latency critical (audio, input, drivers)', kind: 'bool' },
     ],
   },

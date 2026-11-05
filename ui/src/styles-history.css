@@ -17,3 +17,9 @@
 .hist-other td { font-style: normal; }
 .hist-confirm { display: inline-flex; gap: 8px; }
 .danger-text { color: var(--critical); }
+
+/* Process panel: Windows services in the process (PM-46). */
+.svc-list { display: flex; flex-direction: column; gap: 2px; margin: 4px 0 6px; }
+.svc-row { display: flex; justify-content: space-between; gap: 12px; padding: 5px 10px; border-radius: var(--radius-control); background: var(--subtle-hover); font-size: 13px; }
+.svc-row .mono { font-size: 12px; }
+.svc-note { margin-bottom: 12px; }
