@@ -52,6 +52,7 @@ export const COLUMNS: ColumnDef[] = [
   { id: 'pid', label: 'PID', group: 'General', width: 72, num: true, visible: true, value: (p) => p.pid, format: text },
   { id: 'image', label: 'Image name', group: 'General', width: 160, value: (p) => p.name },
   { id: 'path', label: 'Image path', group: 'General', width: 320, value: (p) => p.path },
+  { id: 'services', label: 'Services', group: 'General', width: 220, value: (p) => p.services?.map((s) => s.name).join(', ') },
   { id: 'cmdline', label: 'Command line', group: 'General', width: 420, needs: 'cmdline', value: (p) => p.ext?.commandLine },
   { id: 'user', label: 'User name', group: 'General', width: 120, needs: 'identity', value: (p) => p.ext?.user },
   { id: 'session', label: 'Session', group: 'General', width: 72, num: true, value: (p) => p.session, format: count },

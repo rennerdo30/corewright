@@ -36,7 +36,7 @@ public sealed record AppliedSlotDto(string Slot, string Value, string RuleId, st
 
 public sealed record ProcessDto(int Pid, int? ParentPid, string Name, string? Path, double Cpu, long WorkingSet,
     long PrivateBytes, double IoBytesPerSec, int Threads, int Handles, string Priority, int Session, bool Protected,
-    bool Foreground, AppliedSlotDto[]? Applied, ProcessExtDto? Ext);
+    bool Foreground, AppliedSlotDto[]? Applied, ProcessExtDto? Ext, ServiceInfo[]? Services);
 
 public sealed record ExplainDto(int Pid, string Name, ExplainEntry[] Rules);
 
@@ -369,7 +369,7 @@ internal static class Api
         int? parent = p.Parent is { } pk && m.Sampler.IsAlive(pk) ? pk.Pid : null;
         return new ProcessDto(p.Key.Pid, parent, p.Name, p.Path, Math.Round(p.CpuPercent, 2), p.WorkingSet, p.PrivateBytes,
             Math.Round(p.IoBytesPerSec), p.Threads, p.Handles, Slots.FormatBasePriority(p.BasePriority), p.SessionId,
-            p.IsProtected, p.Key.Pid == m.Context.ForegroundPid, applied, ext ? Ext(m, p, sampler, gpu, groups, net) : null);
+            p.IsProtected, p.Key.Pid == m.Context.ForegroundPid, applied, ext ? Ext(m, p, sampler, gpu, groups, net) : null, p.Services);
     }
 
     private static ProcessExtDto Ext(Monitor m, ProcessInfo p, bool sampler, bool gpu, DetailGroups groups, bool net)

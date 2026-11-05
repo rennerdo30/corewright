@@ -7,7 +7,8 @@ import { buildProcessMenu } from '../components/processMenu'
 import { bytes, newId, percent } from '../format'
 import { iconUrl, isHost, levelLabel, post, useDescriptions } from '../host'
 import { usePoll } from '../hooks'
-import { quickRule, setQuick } from '../quick'
+import { quickId, quickRule, quickSubject, setQuick } from '../quick'
+import { isServiceHost, serviceHostLabel, serviceLines, serviceSearchText } from '../services'
 import { isAutopilot, ownerOf } from '../roles'
 import type { AppSettings, ExplainRule, ProcessRow, Rule, RuleSet, Topology } from '../types'
 import { COLUMN_GROUPS, COLUMNS, type ColumnDef } from './processColumns'
@@ -76,7 +77,9 @@ export function Processes({ onCreateRule }: { onCreateRule: (r: Rule) => void })
 
   const list = procs.data ?? []
   const descriptions = useDescriptions(list.map((p) => p.path))
-  const label = (p: ProcessRow) => (p.path && descriptions.get(p.path)) || p.name
+  const label = (p: ProcessRow) => serviceHostLabel(p) ?? ((p.path && descriptions.get(p.path)) || p.name)
+  /** App groups: all svchost.exe together are "Service Host"; each child row names its service. */
+  const groupLabel = (p: ProcessRow) => (isServiceHost(p) ? 'Service Host' : (p.path && descriptions.get(p.path)) || p.name)
   const width = (c: ColumnDef) => widths[c.id] ?? c.width
 
   const lines = useMemo<Line[]>(() => {
@@ -84,7 +87,7 @@ export function Processes({ onCreateRule }: { onCreateRule: (r: Rule) => void })
     const shown = list.filter(
       (p) =>
         (!managedOnly || p.applied?.length) &&
-        (!q || p.name.toLowerCase().includes(q) || String(p.pid) === q || p.path?.toLowerCase().includes(q) || label(p).toLowerCase().includes(q)),
+        (!q || p.name.toLowerCase().includes(q) || String(p.pid) === q || p.path?.toLowerCase().includes(q) || label(p).toLowerCase().includes(q) || serviceSearchText(p).includes(q)),
     )
     const sortCol = COLUMNS.find((c) => c.id === sort.id) ?? COLUMNS[0]
     const cmp = (a: Line, b: Line) => {
@@ -341,8 +344,8 @@ export function Processes({ onCreateRule }: { onCreateRule: (r: Rule) => void })
                             ) : (
                               <span className="picon glyph">{'\uECAA'}</span>
                             )}
-                            <span className="pname" title={`${p.name}${p.path ? `\n${p.path}` : ''}`}>
-                              {label(p)}
+                            <span className="pname" title={[p.name, p.path, ...(group ? [] : serviceLines(p))].filter(Boolean).join('\n')}>
+                              {group ? groupLabel(p) : label(p)}
                               {group && <span className="pcount"> ({l.items.length})</span>}
                             </span>
                             {(() => {
@@ -387,16 +390,17 @@ export function Processes({ onCreateRule }: { onCreateRule: (r: Rule) => void })
           x={menu.x}
           y={menu.y}
           onClose={() => setMenu(undefined)}
-          items={buildProcessMenu(menu.p, quickRule(menu.rules, menu.p.name), topo.data, s?.cores.hybrid ?? false, {
+          items={buildProcessMenu(menu.p, quickRule(menu.rules, menu.p), topo.data, s?.cores.hybrid ?? false, {
             setAlways: (patch) =>
               setQuick(menu.p, patch)
-                .then(() => notify(`Saved. Applies to every ${menu.p.name} from now on.`))
+                .then(() => notify(`Saved. Applies to ${quickSubject(menu.p).label} from now on.`))
                 .catch((e) => notify(e instanceof Error ? e.message : String(e))),
             createRule: () => onCreateRule(ruleFor(menu.p)),
             showDetails: () => setSelected(menu.p.pid),
             reveal: isHost && menu.p.path ? () => post({ type: 'reveal', path: menu.p.path }) : undefined,
             copy: (text) => navigator.clipboard.writeText(text).then(() => notify('Copied')),
             gameKind: menu.settings ? gameKindOf(menu.settings, menu.p.name) : undefined,
+            exeQuick: menu.p.services?.length ? menu.rules?.rules.find((r) => r.id === quickId(menu.p.name)) : undefined,
             setGame: menu.settings
               ? (kind) =>
                   setGameKind(menu.settings!, menu.p.name, kind)
@@ -441,6 +445,7 @@ function ProcessPanel({ p, title, onClose, onCreateRule }: { p: ProcessRow; titl
       </div>
       {p.path && <div className="path">{p.path}</div>}
       {p.protected && <div className="banner warn">Protected system process. Corewright never changes it.</div>}
+      {p.services?.length ? <ServicesBlock p={p} /> : null}
 
       <div className="kv">
         <span>Priority</span>
@@ -472,10 +477,34 @@ function ProcessPanel({ p, title, onClose, onCreateRule }: { p: ProcessRow; titl
 
       {!p.protected && (
         <button className="btn primary wide" onClick={() => onCreateRule(ruleFor(p))}>
-          Create a rule for {p.name}
+          Create a rule for {p.services?.length ? p.services[0].display : p.name}
         </button>
       )}
     </aside>
+  )
+}
+
+/** The Windows services in this process (PM-46), and what a setting here reaches. */
+function ServicesBlock({ p }: { p: ProcessRow }) {
+  const list = p.services ?? []
+  return (
+    <>
+      <h3>{list.length === 1 ? 'Windows service' : `${list.length} Windows services`}</h3>
+      <div className="svc-list">
+        {list.map((s) => (
+          <div key={s.name} className="svc-row">
+            <span>{s.display}</span>
+            <span className="secondary mono">{s.name}</span>
+          </div>
+        ))}
+      </div>
+      <div className="secondary tiny svc-note">
+        {list.length === 1
+          ? 'This service has a process of its own, so CPU, I/O, GPU and memory settings here change only this service.'
+          : 'These services share one process. Windows sets priorities per process, so a setting here applies to all of them.'}{' '}
+        Network settings work per program file and would reach every {p.name}, so they are not offered per service.
+      </div>
+    </>
   )
 }
 
@@ -553,15 +582,16 @@ function AppliedRow({ slot, value, rule }: { slot: string; value: string; rule: 
 }
 
 function ruleFor(p: ProcessRow): Rule {
+  const subject = quickSubject(p)
   return {
     id: newId(),
-    name: `Rule for ${p.name}`,
+    name: p.services?.length ? `Rule for ${p.services[0].display}` : `Rule for ${p.name}`,
     enabled: true,
     priority: 50,
     sustainSeconds: 0,
     releaseSeconds: 0,
     allowRealtime: false,
-    when: { type: 'group', combinator: 'and', children: [{ type: 'cond', field: 'name', op: 'eq', value: p.name }] },
+    when: { type: 'group', combinator: 'and', children: [subject.cond] },
     actions: { cpuPriority: 'aboveNormal' },
   }
 }

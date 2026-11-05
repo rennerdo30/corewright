@@ -62,7 +62,7 @@ public static class RuleCompiler
     private const int MaxDepth = 16;
     private static readonly TimeSpan RegexTimeout = TimeSpan.FromMilliseconds(20);
 
-    public static readonly string[] StringFields = ["name", "path", "parentName", "commandLine"];
+    public static readonly string[] StringFields = ["name", "path", "parentName", "commandLine", "service"];
     public static readonly string[] StaticNumberFields = ["pid", "session"];
     public static readonly string[] DynamicNumberFields = ["cpu", "workingSetMb", "privateMb", "ioMBps", "netMBps", "threads", "handles"];
 
@@ -228,6 +228,7 @@ public static class RuleCompiler
             case "pid": return Num(p => p.Key.Pid);
             case "session": return Num(p => p.SessionId);
             case "program": return Str(p => p.Program ?? p.Name);
+            case "service": return ServiceField(op, c.Value, errors);
             case "latencyCritical":
                 return op switch
                 {
@@ -319,6 +320,25 @@ public static class RuleCompiler
             var pred = NumberPredicate(op, c.Value, errors);
             return pred is null ? null : (p, _) => pred(get(p));
         }
+    }
+
+    /// <summary>
+    /// Rule field "service" (PM-46): true when any service the process runs matches by key name or display name.
+    /// "ne" means no service matches, so "service ne wuauserv" also matches ordinary processes.
+    /// </summary>
+    private static Func<ProcessInfo, EvalContext, bool>? ServiceField(string op, string? value, List<string> errors)
+    {
+        bool negate = op == "ne";
+        var pred = StringPredicate(negate ? "eq" : op, value, errors);
+        if (pred is null) return null;
+        return (p, _) =>
+        {
+            bool any = false;
+            if (p.Services is { } services)
+                foreach (var s in services)
+                    if (pred(s.Name) || pred(s.Display)) { any = true; break; }
+            return any != negate;
+        };
     }
 
     private static Func<ProcessInfo, EvalContext, bool>? CompileFact(Condition c, List<string> errors)

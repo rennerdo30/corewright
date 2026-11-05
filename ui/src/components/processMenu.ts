@@ -11,6 +11,8 @@ interface Handlers {
   /** Marks the program as a game, never a game, or lets Autopilot decide; undefined while settings load. */
   setGame?: (kind: 'always' | 'never' | 'auto') => void
   gameKind?: 'always' | 'never' | 'auto'
+  /** A service process whose exe also has an exe-wide quick rule ("Quick: svchost.exe"); the service's own setting wins. */
+  exeQuick?: Rule
 }
 
 const levels = (current: unknown, values: [string, string][], apply: (v: string | null) => void): MenuEntry[] => [
@@ -67,6 +69,19 @@ export function buildProcessMenu(p: ProcessRow, quick: Rule | undefined, topo: T
 
   return [
     { type: 'head', label: `${p.name} · ${p.pid}` },
+    // PM-46: "always" settings on a service process belong to its service, not to every svchost.exe.
+    ...(p.services?.length
+      ? [
+          {
+            type: 'head',
+            label:
+              p.services.length === 1
+                ? `Service: ${p.services[0].display}`
+                : `Shared by ${p.services.length} services: settings apply to all of them`,
+          } as MenuEntry,
+          ...(h.exeQuick ? [{ type: 'head', label: `Also set for every ${p.name} by "${h.exeQuick.name}"; this service's settings win` } as MenuEntry] : []),
+        ]
+      : []),
     { type: 'item', label: 'CPU priority', glyph: '\uE9D9', disabled: locked, submenu: levels(a.cpuPriority, CPU, (v) => h.setAlways({ cpuPriority: v })) },
     { type: 'item', label: 'I/O priority', glyph: '\uEDA2', disabled: locked, submenu: levels(a.ioPriority, IO, (v) => h.setAlways({ ioPriority: v })) },
     { type: 'item', label: 'GPU priority', glyph: '\uE7F4', disabled: locked, submenu: levels(a.gpuPriority, CPU, (v) => h.setAlways({ gpuPriority: v })) },
@@ -86,9 +101,10 @@ export function buildProcessMenu(p: ProcessRow, quick: Rule | undefined, topo: T
     },
     {
       type: 'item',
-      label: 'Network',
+      // Windows applies network filters and QoS policies per program file: for svchost.exe that is every service (PM-46).
+      label: p.services?.length ? `Network (applies to every ${p.name})` : 'Network',
       glyph: '\uE968',
-      disabled: locked,
+      disabled: locked || !!p.services?.length,
       submenu: [
         { type: 'item', label: 'Block network', checked: a.networkBlocked === true, onClick: () => h.setAlways({ networkBlocked: true }) },
         {

@@ -1,30 +1,65 @@
 import { api } from './api'
-import type { ProcessRow, Rule, RuleActions, RuleSet } from './types'
+import type { Condition, ProcessRow, Rule, RuleActions, RuleSet } from './types'
 
 /** "Always" settings from the process context menu live in one rule per process name, above imported and example rules. */
 export const QUICK_PRIORITY = 60
 
-export const quickId = (name: string) => `quick-${name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')}`
+const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
+export const quickId = (name: string) => `quick-${slug(name)}`
+/**
+ * Lossless and disjoint from exe ids (which never contain "~"): service names are case-insensitive, so lower case is
+ * exact; every other UTF-16 code unit becomes "_" plus four hex digits, so no two names share an id.
+ */
+function serviceId(name: string): string {
+  let out = 'quick~svc~'
+  for (const c of name.toLowerCase()) {
+    if (/^[a-z0-9]$/.test(c)) out += c
+    else for (let i = 0; i < c.length; i++) out += `_${c.charCodeAt(i).toString(16).padStart(4, '0')}`
+  }
+  return out
+}
+/** Service quick rules rank just above exe quick rules, so a service setting beats an older "every svchost.exe" one. */
+export const QUICK_SERVICE_PRIORITY = QUICK_PRIORITY + 1
 
-export function quickRule(set: RuleSet | undefined, name: string): Rule | undefined {
-  return set?.rules.find((r) => r.id === quickId(name))
+/**
+ * What a quick rule targets. An ordinary process: its exe name. A service process (PM-46): its service, so "always"
+ * for one svchost.exe does not change every svchost.exe. A host shared by several services is targeted by its first
+ * service; the setting then reaches the other services in that process too (priorities are per process).
+ */
+export function quickSubject(p: ProcessRow): { id: string; name: string; cond: Condition; label: string; priority: number } {
+  const svc = p.services?.[0]
+  if (svc)
+    return {
+      id: serviceId(svc.name),
+      name: `Quick: ${svc.display} (service)`,
+      cond: { type: 'cond', field: 'service', op: 'eq', value: svc.name },
+      label: `the ${svc.display} service`,
+      priority: QUICK_SERVICE_PRIORITY,
+    }
+  return { id: quickId(p.name), name: `Quick: ${p.name}`, cond: { type: 'cond', field: 'name', op: 'eq', value: p.name }, label: `every ${p.name}`, priority: QUICK_PRIORITY }
 }
 
-/** Sets (value) or clears (null) slots of the quick rule for this process name and saves the rule set. */
+export function quickRule(set: RuleSet | undefined, p: ProcessRow): Rule | undefined {
+  const id = quickSubject(p).id
+  return set?.rules.find((r) => r.id === id)
+}
+
+/** Sets (value) or clears (null) slots of the quick rule for this process and saves the rule set. */
 export async function setQuick(p: ProcessRow, patch: Partial<Record<keyof RuleActions, unknown>>): Promise<RuleSet> {
   const set = await api.rules()
-  const id = quickId(p.name)
+  const subject = quickSubject(p)
+  const id = subject.id
   let rule = set.rules.find((r) => r.id === id)
   if (!rule) {
     rule = {
       id,
-      name: `Quick: ${p.name}`,
+      name: subject.name,
       enabled: true,
-      priority: QUICK_PRIORITY,
+      priority: subject.priority,
       sustainSeconds: 0,
       releaseSeconds: 0,
       allowRealtime: false,
-      when: { type: 'group', combinator: 'and', children: [{ type: 'cond', field: 'name', op: 'eq', value: p.name }] },
+      when: { type: 'group', combinator: 'and', children: [subject.cond] },
       actions: {},
     }
     set.rules.push(rule)

@@ -1,5 +1,8 @@
 namespace Corewright.Core.Engine;
 
+/// <summary>A Windows service running in a process: its key name ("wuauserv") and display name ("Windows Update").</summary>
+public sealed record ServiceInfo(string Name, string Display);
+
 /// <summary>A process instance. Windows reuses PIDs, so identity includes the creation time.</summary>
 public readonly record struct ProcessKey(int Pid, long CreateTime);
 
@@ -25,6 +28,20 @@ public sealed class ProcessInfo(ProcessKey key, string name)
     /// </summary>
     public string? Program;
     public bool IdentityKnown;
+    /// <summary>
+    /// Windows services this process runs (PM-46), read with the identity; null for ordinary processes. Most services
+    /// have an svchost.exe of their own (Windows 10 1703 and later with enough memory), so a setting on that process
+    /// is a setting for that service. Rule field "service".
+    /// </summary>
+    public ServiceInfo[]? Services;
+    /// <summary>Started by services.exe or an svchost.exe: its service list is looked up and kept current.</summary>
+    public bool ServiceCandidate;
+    /// <summary>Lookups that found no service yet (a service reports its PID shortly after its process starts).</summary>
+    public int ServiceChecks;
+    /// <summary>The service snapshot generation last consulted for this process (a miss counts once per snapshot).</summary>
+    public int ServiceSnapshot = -1;
+    /// <summary>Changes whenever <see cref="Services"/> changes, so the engine re-evaluates static rules (field "service").</summary>
+    public int ServicesVersion;
     public int IdentityAttempts;
     /// <summary>The topmost ancestor below the shell (explorer, services, …): processes with the same root are one app.</summary>
     public ProcessKey AppRoot;

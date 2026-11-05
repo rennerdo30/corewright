@@ -3,6 +3,24 @@
 Release notes for every Corewright version, newest first. The release workflow publishes the section of a version
 as its GitHub release notes.
 
+## 0.1.0-beta.13
+
+### New
+
+- **Windows services in the process list.** Every `svchost.exe` now shows the service it runs, like
+  "Service Host: Windows Update", and other service programs list their services too (Print Spooler, ...). The
+  search box finds processes by service name or display name, the details panel lists the services, and a new
+  Services column is available in the column chooser. Per-user services (Clipboard, Connected Devices, ...) are named
+  without the code Windows adds at every sign-in.
+- **Settings for one service.** Right-click a service host and pick a priority: the setting is saved for that
+  service, not for every `svchost.exe`. "Create a rule" does the same, and rules have a new condition field,
+  "Windows service" (name or display name). Most services have a process of their own, so the setting reaches only
+  that service; where Windows still runs several services in one process, the menu and the details panel say so,
+  because Windows sets priorities per process. Network settings work per program file in Windows, so they are not
+  offered per service (they would reach every `svchost.exe`). A service setting beats an older setting for every
+  `svchost.exe`.
+- Faster start: one list of running services now serves every service process, instead of one query per svchost.
+
 ## 0.1.0-beta.12
 
 ### New
