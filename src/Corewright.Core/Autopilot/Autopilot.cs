@@ -392,7 +392,7 @@ public static class AutopilotRules
         void Range(string field, double value, double min, double max)
         { if (!double.IsFinite(value) || value < min || value > max) errors.Add(new("settings", field, $"{field} must be between {min} and {max}")); }
         if (settings.Usage is null) { errors.Add(new("settings", "usage", "usage must not be null")); return errors; }
-        Range("usage.maxStorageMb", settings.Usage.MaxStorageMb, 1, 1024);
+        Range("usage.maxStorageMb", settings.Usage.MaxStorageMb, 8, 1024);
         var a = settings.Autopilot;
         if (a?.Background is null || a.Balance is null || a.GameMode is null || a.BuildTools is null)
         { errors.Add(new("settings", "autopilot", "Autopilot sections must not be null")); return errors; }

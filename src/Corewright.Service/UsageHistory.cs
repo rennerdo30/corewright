@@ -131,7 +131,7 @@ internal sealed class UsageHistory
         {
             lock (_io)
             {
-                try { write(); Problem = null; done.SetResult(true); }
+                try { write(); done.SetResult(true); }
                 catch (Exception e) when (e is IOException or UnauthorizedAccessException or JsonException)
                 {
                     Problem = e.Message;
@@ -252,7 +252,7 @@ internal sealed class UsageHistory
             List<UsageHour> pending;
             lock (_pending) pending = [.. _pending];
             WriteCheckpoint(new UsageCheckpoint { Current = current, Pending = pending });
-            if (pending.Count == 0) { EnforceCap(); return; }
+            if (pending.Count == 0) { EnforceCap(); Problem = null; return; }
             foreach (var h in pending)
             {
                 Append(h); // throws on a full or unavailable disk: the hour stays pending and in the checkpoint
@@ -261,6 +261,7 @@ internal sealed class UsageHistory
             lock (_pending) pending = [.. _pending];
             WriteCheckpoint(new UsageCheckpoint { Current = current, Pending = pending });
             EnforceCap();
+            Problem = null; // only a complete save clears a write problem; cap maintenance alone does not
         });
     }
 
@@ -356,7 +357,7 @@ internal sealed class UsageHistory
     }
 
     /// <summary>Deletes the oldest days until the folder (day files and current.json) fits the cap; the last day loses
-    /// its oldest hours instead. A checkpoint alone larger than the cap (a 1 MB cap and thousands of programs) is kept.</summary>
+    /// its oldest hours instead. The smallest cap (8 MB) holds the largest checkpoint (2000 programs plus 72 pending hours).</summary>
     private void EnforceCap()
     {
         long cap = Interlocked.Read(ref _capBytes);
@@ -423,6 +424,7 @@ internal sealed class UsageHistory
         {
             foreach (var f in DayFiles()) f.Delete();
             if (File.Exists(CurrentPath)) File.Delete(CurrentPath);
+            Problem = null;
         });
     }
 
@@ -435,6 +437,10 @@ internal sealed class UsageHistory
     public UsageDto Query(bool enabled, long fromMs, long toMs, string? program, int limit, UsageHour? current)
     {
         long fromUnix = fromMs / 1000 - fromMs / 1000 % 3600, toUnix = (toMs + 999) / 1000;
+        // Pending hours are copied before the files are read: an hour the writer moves from pending to a file meanwhile is
+        // then found in one of the two (and counted once), never in neither.
+        List<UsageHour> pending;
+        lock (_pending) pending = [.. _pending];
         var agg = new Aggregator(program);
         var seen = new HashSet<long>();
         string first = DayName(fromUnix), last = DayName(Math.Max(fromUnix, toUnix - 1));
@@ -448,8 +454,6 @@ internal sealed class UsageHistory
             }
             catch (Exception e) when (e is IOException or UnauthorizedAccessException) { } // deleted by the cap meanwhile
         }
-        List<UsageHour> pending;
-        lock (_pending) pending = [.. _pending];
         foreach (var h in pending)
             if (h.T >= fromUnix && h.T < toUnix && seen.Add(h.T)) agg.Add(h);
         if (current is not null && current.T >= fromUnix && current.T < toUnix && seen.Add(current.T)) agg.Add(current);
@@ -458,6 +462,9 @@ internal sealed class UsageHistory
 
     private sealed class Aggregator(string? program)
     {
+        /// <summary>Distinct programs a query adds up; beyond this (pathological identity churn) they count as unlisted, so a
+        /// query's memory stays bounded whatever the store holds.</summary>
+        private const int MaxPrograms = 20_000;
         private double _wall, _available, _busy, _listed;
         private int _logical;
         private readonly Dictionary<string, (string Name, double Cpu, long Io, double Mem, long Peak, double Run)> _byKey = new(StringComparer.Ordinal);
@@ -471,8 +478,8 @@ internal sealed class UsageHistory
             foreach (var e in h.P)
             {
                 if (e.K.Length == 0) continue;
+                if (!_byKey.TryGetValue(e.K, out var t) && _byKey.Count >= MaxPrograms) continue;
                 _listed += e.C;
-                _byKey.TryGetValue(e.K, out var t);
                 _byKey[e.K] = (e.N.Length > 0 ? e.N : t.Name ?? e.K, t.Cpu + e.C, t.Io + e.Io, t.Mem + e.M, Math.Max(t.Peak, e.Pk), t.Run + e.R);
                 if (program is not null && e.K == program && h.A > 0) mine = 100 * e.C / h.A;
             }

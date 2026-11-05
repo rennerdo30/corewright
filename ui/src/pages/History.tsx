@@ -178,7 +178,7 @@ export function History() {
               </>
             }
           >
-            <NumberBox value={rec.maxStorageMb} min={1} max={1024} step={16} unit="MB" onChange={(v) => update((s) => (s.usage!.maxStorageMb = Math.round(v)))} />
+            <NumberBox value={rec.maxStorageMb} min={8} max={1024} step={16} unit="MB" onChange={(v) => update((s) => (s.usage!.maxStorageMb = Math.round(v)))} />
           </Card>
           <Card glyph={''} title="Clear history" desc="Deletes every recorded hour. Recording continues from now on.">
             {confirmClear ? (

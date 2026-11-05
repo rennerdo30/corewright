@@ -11,7 +11,7 @@ as its GitHub release notes.
   the CPU time your processors had, its share of what your PC actually did, average cores, how long it ran, disk
   activity and average and peak memory. Pick Today, 24 hours, 7 days, 30 days or everything; click a program to see
   its hours next to the whole PC's in the chart. A virus scanner that keeps a core busy all day now stands out.
-- **The history has a size limit** (64 MB by default, about half a year of hours on a typical PC). When it is full,
+- **The history has a size limit** (64 MB by default, about half a year of hours on a typical PC; 8 MB to 1 GB). When it is full,
   the oldest hours are deleted first. Recording can be turned off, and the history cleared, on the same page.
 - Recording reuses the measurements Corewright already takes every two seconds; it adds no system calls and no work
   per tick beyond adding up numbers. The current hour is saved every five minutes and at shutdown.

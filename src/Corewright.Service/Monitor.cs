@@ -238,7 +238,6 @@ internal sealed class Monitor : BackgroundService
 
     public List<RuleError> ReplaceSettings(AppSettings settings)
     {
-        if (!settings.UsageProvided) settings.Usage = Settings.Usage;
         var errors = AutopilotRules.ValidateSettings(settings, Topology);
         if (errors.Count > 0) return errors;
         settings.Version = AppSettings.CurrentVersion;
@@ -246,6 +245,8 @@ internal sealed class Monitor : BackgroundService
         if (errors.Count > 0) return errors;
         lock (Sync)
         {
+            // A client that leaves usage out (written before beta.12) keeps the current value, read under the same lock.
+            if (!settings.UsageProvided) settings.Usage = Settings.Usage;
             _settingsStore.Save(settings);
             Settings = settings;
             Engine.ObserveAutopilot = settings.Autopilot.Mode == "observe";

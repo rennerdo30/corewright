@@ -205,6 +205,7 @@ internal sealed unsafe class ProcessSampler : IDisposable
             _lastKernel = kernel;
             _lastUser = user;
         }
+        else _lastKernel = 0; // the next good reading only sets a new baseline, so system and process deltas stay aligned
 
         Native.MEMORYSTATUSEX m = default;
         m.Length = (uint)sizeof(Native.MEMORYSTATUSEX);
