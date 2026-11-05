@@ -70,7 +70,11 @@ internal static partial class ProgramIdentity
         // answers for every process identified in the same second, so ordinary processes never cause an enumeration.
         if (p.Key.Pid > 4 && (p.ParentName.Equals("services.exe", StringComparison.OrdinalIgnoreCase) ||
             p.Name.Equals("svchost.exe", StringComparison.OrdinalIgnoreCase)))
-            p.Services = IdentityProbe.Services(p.Key.Pid);
+        {
+            p.ServiceCandidate = true;
+            var found = IdentityProbe.Services(p.Key, out _);
+            if (!ServiceTracker.Same(found, p.Services)) { p.Services = found; p.ServicesVersion++; }
+        }
         if (p.Name.Equals("svchost.exe", StringComparison.OrdinalIgnoreCase))
         {
             var services = p.Services?.Select(s => s.Name.ToLowerInvariant()).ToArray();

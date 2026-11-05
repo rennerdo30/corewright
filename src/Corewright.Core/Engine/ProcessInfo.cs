@@ -34,6 +34,12 @@ public sealed class ProcessInfo(ProcessKey key, string name)
     /// is a setting for that service. Rule field "service".
     /// </summary>
     public ServiceInfo[]? Services;
+    /// <summary>Started by services.exe or an svchost.exe: its service list is looked up and kept current.</summary>
+    public bool ServiceCandidate;
+    /// <summary>Lookups that found no service yet (a service reports its PID shortly after its process starts).</summary>
+    public int ServiceChecks;
+    /// <summary>Changes whenever <see cref="Services"/> changes, so the engine re-evaluates static rules (field "service").</summary>
+    public int ServicesVersion;
     public int IdentityAttempts;
     /// <summary>The topmost ancestor below the shell (explorer, services, …): processes with the same root are one app.</summary>
     public ProcessKey AppRoot;

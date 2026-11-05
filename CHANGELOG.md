@@ -16,7 +16,9 @@ as its GitHub release notes.
   service, not for every `svchost.exe`. "Create a rule" does the same, and rules have a new condition field,
   "Windows service" (name or display name). Most services have a process of their own, so the setting reaches only
   that service; where Windows still runs several services in one process, the menu and the details panel say so,
-  because Windows sets priorities per process.
+  because Windows sets priorities per process. Network settings work per program file in Windows, so they are not
+  offered per service (they would reach every `svchost.exe`). A service setting beats an older setting for every
+  `svchost.exe`.
 - Faster start: one list of running services now serves every service process, instead of one query per svchost.
 
 ## 0.1.0-beta.12

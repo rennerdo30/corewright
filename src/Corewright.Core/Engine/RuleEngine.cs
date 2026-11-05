@@ -338,7 +338,8 @@ public sealed class RuleEngine(IActuator actuator, IEngineEventSink sink, Func<l
     {
         var rules = _set.Rules;
         if (st.Version != _version) st.Reset(_stateCapacity, _version);
-        if (st.Program != p.Program) { st.Program = p.Program; Array.Clear(st.StaticCache); }
+        if (st.Program != p.Program || st.ServicesVersion != p.ServicesVersion)
+        { st.Program = p.Program; st.ServicesVersion = p.ServicesVersion; Array.Clear(st.StaticCache); }
 
         Span<long> want = stackalloc long[Slots.Count];
         Span<int> wantRule = stackalloc int[Slots.Count];
@@ -705,6 +706,7 @@ public sealed class RuleEngine(IActuator actuator, IEngineEventSink sink, Func<l
         /// <summary>Inheritance from a changed parent was checked (once per process).</summary>
         public ProcessKey? Parent;
         public string? Program;
+        public int ServicesVersion;
         public readonly Inheritance[] History = new Inheritance[2];
         public readonly byte[] InheritAttempts = new byte[2];
         public readonly long[] InheritedValue = new long[2], InheritedOriginal = new long[2];

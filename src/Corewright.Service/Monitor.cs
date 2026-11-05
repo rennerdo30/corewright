@@ -118,6 +118,7 @@ internal sealed class Monitor : BackgroundService
     private readonly GameDetector _game = new();
     private BackgroundClassifier? _background;
     private UsageHistory? _usage;
+    private readonly ServiceTracker _serviceTracker = new();
     private readonly AffinityPlacer _placer;
     public AffinityPlacer Placer => _placer;
 
@@ -444,6 +445,7 @@ internal sealed class Monitor : BackgroundService
             bool foregroundKnown = _ctx.ForegroundKnown;
             _background.Observe(_sampler.Processes, _ctx.ForegroundPid, foregroundKnown, Topology.LogicalCount, _ctx.NowMs,
                 ap.Background, ap.GameMode, Topology, ap.Launchers);
+            _serviceTracker.Reconcile(_sampler.Processes); // PM-46: service lists stay current; no work without new services
 
             // PM-45: usage history from the same sample (exact CPU time deltas; no extra system calls).
             _usage ??= new UsageHistory(DataDirectory, _background.DisplayOf);

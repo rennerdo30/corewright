@@ -7,7 +7,7 @@ import { buildProcessMenu } from '../components/processMenu'
 import { bytes, newId, percent } from '../format'
 import { iconUrl, isHost, levelLabel, post, useDescriptions } from '../host'
 import { usePoll } from '../hooks'
-import { quickRule, quickSubject, setQuick } from '../quick'
+import { quickId, quickRule, quickSubject, setQuick } from '../quick'
 import { isServiceHost, serviceHostLabel, serviceLines, serviceSearchText } from '../services'
 import { isAutopilot, ownerOf } from '../roles'
 import type { AppSettings, ExplainRule, ProcessRow, Rule, RuleSet, Topology } from '../types'
@@ -400,6 +400,7 @@ export function Processes({ onCreateRule }: { onCreateRule: (r: Rule) => void })
             reveal: isHost && menu.p.path ? () => post({ type: 'reveal', path: menu.p.path }) : undefined,
             copy: (text) => navigator.clipboard.writeText(text).then(() => notify('Copied')),
             gameKind: menu.settings ? gameKindOf(menu.settings, menu.p.name) : undefined,
+            exeQuick: menu.p.services?.length ? menu.rules?.rules.find((r) => r.id === quickId(menu.p.name)) : undefined,
             setGame: menu.settings
               ? (kind) =>
                   setGameKind(menu.settings!, menu.p.name, kind)
@@ -499,8 +500,9 @@ function ServicesBlock({ p }: { p: ProcessRow }) {
       </div>
       <div className="secondary tiny svc-note">
         {list.length === 1
-          ? 'This service has a process of its own, so settings here change only this service.'
-          : 'These services share one process. Windows sets priorities per process, so a setting here applies to all of them.'}
+          ? 'This service has a process of its own, so CPU, I/O, GPU and memory settings here change only this service.'
+          : 'These services share one process. Windows sets priorities per process, so a setting here applies to all of them.'}{' '}
+        Network settings work per program file and would reach every {p.name}, so they are not offered per service.
       </div>
     </>
   )

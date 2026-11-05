@@ -37,24 +37,32 @@ internal static unsafe partial class IdentityProbe
     private const uint ServiceTypes = 0x30 | 0x40 | 0x80;
     private static readonly Lock ServiceLock = new();
     private static Dictionary<int, ServiceInfo[]>? _services;
-    private static long _servicesAt = long.MinValue / 2;
+    /// <summary>When the snapshot was taken: FILETIME (UTC, for creation-time checks) and tick count (throttle).</summary>
+    private static long _servicesFileTime, _servicesAttemptMs = long.MinValue / 2;
+
+    /// <summary>Increases with every successful snapshot, so callers can reconcile known service processes once per snapshot.</summary>
+    public static int ServicesVersion { get; private set; }
 
     /// <summary>
-    /// The Windows services running in a process (PM-46), sorted by name, or null. One snapshot of all running services
-    /// serves every process identified within a second, so the start (80+ svchost processes) costs one enumeration
-    /// instead of one each; later it is taken again only when a new service process is identified.
+    /// The Windows services running in a process (PM-46), sorted by name; null when it runs none or it cannot be told yet.
+    /// One snapshot of all running services serves every lookup within a second (the start, with 80+ svchost processes,
+    /// costs one enumeration); attempts are throttled to one a second whether they succeed or not. A snapshot only
+    /// answers for processes that already existed when it was taken, so a PID reused by a newer process never inherits
+    /// the services of the process that had it before; such a process waits for the next snapshot.
     /// </summary>
-    public static ServiceInfo[]? Services(int pid)
+    public static ServiceInfo[]? Services(ProcessKey key, out bool known)
     {
         lock (ServiceLock)
         {
             long now = Environment.TickCount64;
-            if (_services is null || now - _servicesAt >= 1000)
+            if ((_services is null || key.CreateTime >= _servicesFileTime) && now - _servicesAttemptMs >= 1000)
             {
-                _services = SnapshotServices() ?? _services;
-                _servicesAt = now;
+                _servicesAttemptMs = now;
+                long taken = DateTime.UtcNow.ToFileTimeUtc();
+                if (SnapshotServices() is { } fresh) { _services = fresh; _servicesFileTime = taken; ServicesVersion++; }
             }
-            return _services is not null && _services.TryGetValue(pid, out var list) ? list : null;
+            known = _services is not null && key.CreateTime < _servicesFileTime;
+            return known && _services!.TryGetValue(key.Pid, out var list) ? list : null;
         }
     }
 
