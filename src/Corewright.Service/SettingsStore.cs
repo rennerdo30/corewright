@@ -24,6 +24,7 @@ internal sealed class SettingsStore(string dataDirectory, ILogger<SettingsStore>
             s.Autopilot.Balance ??= new BalanceSettings();
             s.Autopilot.Background ??= new BackgroundSettings();
             s.Autopilot.BuildTools ??= new BuildToolsSettings();
+            s.Usage ??= new UsageSettings();
             return Migrate(s);
         }
         catch (Exception e) when (e is JsonException or IOException)

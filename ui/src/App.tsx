@@ -7,12 +7,13 @@ import { Autopilot } from './pages/Autopilot'
 import { Integrations } from './pages/Integrations'
 import { Overview } from './pages/Overview'
 import { Devices } from './pages/Devices'
+import { History } from './pages/History'
 import { Processes } from './pages/Processes'
 import { Rules } from './pages/Rules'
 import { Settings } from './pages/Settings'
 import type { Rule } from './types'
 
-export type Page = 'overview' | 'devices' | 'autopilot' | 'processes' | 'rules' | 'activity' | 'integrations' | 'settings'
+export type Page = 'overview' | 'devices' | 'autopilot' | 'processes' | 'rules' | 'activity' | 'history' | 'integrations' | 'settings'
 
 // Segoe Fluent Icons code points: Home, LightningBolt, BulletedList, Filter, History, Link.
 const NAV: { id: Page; label: string; glyph: string }[] = [
@@ -22,6 +23,7 @@ const NAV: { id: Page; label: string; glyph: string }[] = [
   { id: 'devices', label: 'Devices', glyph: '\uE950' },
   { id: 'rules', label: 'Rules', glyph: '\uE71C' },
   { id: 'activity', label: 'Activity', glyph: '\uE81C' },
+  { id: 'history', label: 'History', glyph: '\uE9D2' },
   { id: 'integrations', label: 'Integrations', glyph: '\uE71B' },
 ]
 
@@ -127,6 +129,7 @@ export function App() {
         {page === 'processes' && <Processes onCreateRule={createRuleFor} />}
         {page === 'rules' && <Rules draft={draftRule} onDraftConsumed={() => setDraftRule(undefined)} />}
         {page === 'activity' && <Activity />}
+        {page === 'history' && <History />}
         {page === 'integrations' && <Integrations />}
         {page === 'settings' && <Settings />}
       </main>

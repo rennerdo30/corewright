@@ -1,4 +1,4 @@
-import type { ApiCall, MemoryModule, RuleHit, AppSettings, BackgroundRow, DevicesInfo, EngineEvent, Placement, Explain, ImportResponse, ProcessRow, RuleSet, RulesResult, Status, SystemInfo, Topology } from './types'
+import type { UsageInfo, ApiCall, MemoryModule, RuleHit, AppSettings, BackgroundRow, DevicesInfo, EngineEvent, Placement, Explain, ImportResponse, ProcessRow, RuleSet, RulesResult, Status, SystemInfo, Topology } from './types'
 
 declare global {
   interface Window {
@@ -51,6 +51,9 @@ export const api = {
   memory: () => request<MemoryModule[]>('GET', '/memory'),
   settings: () => request<AppSettings>('GET', '/settings'),
   saveSettings: (s: AppSettings) => request<{ ok: boolean; settings: AppSettings }>('PUT', '/settings', s),
+  usage: (from: number, to: number, program?: string) =>
+    request<UsageInfo>('GET', `/usage?from=${from}&to=${to}&limit=200${program ? `&program=${encodeURIComponent(program)}` : ''}`),
+  clearUsage: () => request<void>('DELETE', '/usage'),
   background: () => request<BackgroundRow[]>('GET', '/autopilot/background'),
   placements: () => request<Placement[]>('GET', '/autopilot/placements'),
   autopilotPreview: () => request<{ pid: number; process: string; rule: string; slot: string; value: string; reason: string }[]>('GET', '/autopilot/preview'),

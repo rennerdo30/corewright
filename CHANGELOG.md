@@ -3,6 +3,24 @@
 Release notes for every Corewright version, newest first. The release workflow publishes the section of a version
 as its GitHub release notes.
 
+## 0.1.0-beta.12
+
+### New
+
+- **History page: which programs use your PC over hours and days.** For every program: its CPU time, its share of all
+  the CPU time your processors had, its share of what your PC actually did, average cores, how long it ran, disk
+  activity and average and peak memory. Pick Today, 24 hours, 7 days, 30 days or everything; click a program to see
+  its hours next to the whole PC's in the chart. A virus scanner that keeps a core busy all day now stands out.
+- **The history has a size limit** (64 MB by default, about half a year of hours on a typical PC; 8 MB to 1 GB). When it is full,
+  the oldest hours are deleted first. Recording can be turned off, and the history cleared, on the same page.
+- Recording reuses the measurements Corewright already takes every two seconds; it adds no system calls and no work
+  per tick beyond adding up numbers. The current hour is saved every five minutes and at shutdown.
+- API: `GET /api/v1/usage` and `DELETE /api/v1/usage`; settings gain `usage.enabled` and `usage.maxStorageMb`.
+
+## 0.1.0-beta.11
+
+- Game mode: remote desktop and virtual machine viewers are never games; graphics API labels corrected.
+
 ## 0.1.0-beta.10
 
 Autopilot, version 3. Three independent reviews found that automatic core placement could slow builds and leave

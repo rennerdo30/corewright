@@ -85,6 +85,13 @@ public sealed class ProcessInfo(ProcessKey key, string name)
     public long ReadOperations, WriteOperations, OtherOperations;
     public long ReadBytes, WriteBytes, OtherBytes;
 
+    /// <summary>CPU time (100 ns) and I/O bytes since the previous sample; the usage history adds these up.</summary>
+    public long CpuDelta, IoDelta;
+    /// <summary>Usage history bookkeeping: the accumulator this process adds to and the generation it belongs to.</summary>
+    public object? UsageSlot;
+    public string? UsageKey;
+    public int UsageGeneration;
+
     // Sampler bookkeeping.
     public long LastCpuTime;
     public long LastIoBytes;

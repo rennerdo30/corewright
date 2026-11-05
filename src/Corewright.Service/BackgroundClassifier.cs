@@ -103,6 +103,9 @@ internal sealed class BackgroundClassifier
     public IReadOnlyList<BackgroundVerdict> Verdicts { get; private set; } = [];
     public void Invalidate() => _lastClassifyMs = 0;
 
+    /// <summary>Display name of a program identity ("svchost.exe (wuauserv)"), or null when not tracked.</summary>
+    public string? DisplayOf(string program) => _stats.TryGetValue(program, out var s) && s.Display.Length > 0 ? s.Display : null;
+
     /// <summary>App root of the current foreground process (for the isForegroundApp rule field).</summary>
     public ProcessKey ForegroundRoot { get; private set; }
 

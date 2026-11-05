@@ -24,9 +24,40 @@ export interface Device {
 }
 export interface DevicesInfo { inventoryAt: number; sampling: boolean; devices: Device[] }
 
+export interface UsageProgram {
+  program: string
+  name: string
+  cpuSeconds: number
+  /** Share of all CPU time the processors had in the range. */
+  cpuPercent: number
+  /** Share of the CPU time the processors were busy. */
+  busyPercent: number
+  averageCores: number
+  ioBytes: number
+  averageMemory: number
+  peakMemory: number
+  runningSeconds: number
+}
+
+export interface UsageInfo {
+  enabled: boolean
+  from: number
+  to: number
+  measuredSeconds: number
+  logicalProcessors: number
+  availableCpuSeconds: number
+  busyCpuSeconds: number
+  unlistedCpuSeconds: number
+  program: string | null
+  programs: UsageProgram[]
+  hours: { time: number; seconds: number; cpuPercent: number; programPercent: number | null }[]
+  storage: { bytes: number; capBytes: number; oldestTime: number | null; files: number; problem: string | null }
+}
+
 export interface AppSettings {
   version: number
   warnings?: string[]
+  usage?: { enabled: boolean; maxStorageMb: number }
   autopilot: {
     enabled: boolean
     mode?: 'off' | 'observe' | 'on'
