@@ -3,6 +3,16 @@
 Release notes for every Corewright version, newest first. The release workflow publishes the section of a version
 as its GitHub release notes.
 
+## 0.1.0-beta.14
+
+### Fixed
+
+- **Every process has an icon.** Programs without an icon of their own (`svchost.exe` and most services) showed a
+  broken image in the details panel and nothing in the list; they now get Windows' default program icon, as in
+  Explorer and Task Manager. Processes without a file (System, Registry) show a neutral app symbol.
+- Long names in the details panel end with "…" instead of running under the close button; the full name is shown on
+  hover.
+
 ## 0.1.0-beta.13
 
 ### New

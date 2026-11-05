@@ -478,6 +478,12 @@ internal sealed partial class MainForm : Form
 
     private const string HostName = "corewright.host";
     private readonly Dictionary<string, byte[]?> _icons = new(StringComparer.OrdinalIgnoreCase);
+    /// <summary>
+    /// Icon extraction (ExtractIconEx, SHGetFileInfo) can touch the disk and the shell, so it runs on one background STA
+    /// thread, never on the window's thread; requests wait on a WebView2 deferral. Bounded: a full queue answers 404.
+    /// </summary>
+    private readonly System.Collections.Concurrent.BlockingCollection<(string Path, int Size, CoreWebView2Deferral Deferral, CoreWebView2WebResourceRequestedEventArgs Args)> _iconWork = new(256);
+    private Thread? _iconThread;
     private readonly Dictionary<string, string> _descriptions = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
@@ -500,14 +506,24 @@ internal sealed partial class MainForm : Form
 
         if (uri.AbsolutePath == "/icon")
         {
-            if (!_icons.TryGetValue(path, out var png))
+            if (_icons.TryGetValue(path, out var cached))
             {
-                png = ExtractIconPng(path, query["size"] is { } s && int.TryParse(s, out int px) ? Math.Clamp(px, 16, 64) : 32);
-                _icons[path] = png;
+                e.Response = IconResponse(cached);
+                return;
             }
-            e.Response = png is null
-                ? env.CreateWebResourceResponse(null, 404, "Not Found", cors)
-                : env.CreateWebResourceResponse(new MemoryStream(png), 200, "OK", cors + "Content-Type: image/png");
+            int size = query["size"] is { } s && int.TryParse(s, out int px) ? Math.Clamp(px, 16, 64) : 32;
+            var deferral = e.GetDeferral();
+            if (_iconThread is null)
+            {
+                _iconThread = new Thread(IconWorker) { IsBackground = true, Name = "Corewright icons" };
+                _iconThread.SetApartmentState(ApartmentState.STA); // SHGetFileInfo needs COM
+                _iconThread.Start();
+            }
+            if (!_iconWork.TryAdd((path, size, deferral, e)))
+            {
+                e.Response = IconResponse(null);
+                deferral.Complete();
+            }
             return;
         }
 
@@ -527,13 +543,54 @@ internal sealed partial class MainForm : Form
         e.Response = env.CreateWebResourceResponse(null, 404, "Not Found", cors);
     }
 
+    private CoreWebView2WebResourceResponse IconResponse(byte[]? png)
+    {
+        const string headers = "Access-Control-Allow-Origin: *\r\nCache-Control: max-age=86400\r\n";
+        var env = _web.CoreWebView2.Environment;
+        return png is null
+            ? env.CreateWebResourceResponse(null, 404, "Not Found", headers)
+            : env.CreateWebResourceResponse(new MemoryStream(png), 200, "OK", headers + "Content-Type: image/png");
+    }
+
+    private void IconWorker()
+    {
+        foreach (var work in _iconWork.GetConsumingEnumerable())
+        {
+            byte[]? png = ExtractIconPng(work.Path, work.Size);
+            try
+            {
+                // Responses and the cache belong to the window's thread.
+                BeginInvoke(() =>
+                {
+                    try
+                    {
+                        _icons[work.Path] = png;
+                        work.Args.Response = IconResponse(png);
+                    }
+                    catch (Exception ex) when (ex is InvalidOperationException or COMException) { }
+                    finally { work.Deferral.Complete(); }
+                });
+            }
+            catch (InvalidOperationException) { return; } // window closed
+        }
+    }
+
     private static byte[]? ExtractIconPng(string path, int size)
     {
         nint large = 0, small = 0;
         try
         {
             // The large (32 px) icon scaled down looks better than the 16 px one at 150 % and 200 % scaling.
-            if (ExtractIconExW(path, 0, ref large, ref small, 1) == 0 || (large == 0 && small == 0)) return null;
+            if (ExtractIconExW(path, 0, ref large, ref small, 1) == 0 || (large == 0 && small == 0))
+            {
+                // No icon resource (svchost.exe and many services): the shell's icon, as Explorer and Task Manager show it,
+                // which is Windows' default application icon. Unreadable files get the default icon for their type.
+                if (large != 0) DestroyIcon(large);
+                if (small != 0) DestroyIcon(small);
+                small = 0;
+                large = ShellIcon(path, 0) is var shell and not 0 ? shell : ShellIcon(path, SHGFI_USEFILEATTRIBUTES);
+                if (large == 0) return null;
+            }
             using var icon = Icon.FromHandle(large != 0 ? large : small);
             using var bmp = new Bitmap(size, size, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
             using (var g = Graphics.FromImage(bmp))
@@ -556,6 +613,29 @@ internal sealed partial class MainForm : Form
 
     [LibraryImport("shell32.dll", StringMarshalling = StringMarshalling.Utf16)]
     private static partial uint ExtractIconExW(string file, int index, ref nint large, ref nint small, uint count);
+
+    private const uint SHGFI_ICON = 0x100, SHGFI_LARGEICON = 0x0, SHGFI_USEFILEATTRIBUTES = 0x10, FILE_ATTRIBUTE_NORMAL = 0x80;
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    private unsafe struct SHFILEINFOW
+    {
+        public nint hIcon;
+        public int iIcon;
+        public uint dwAttributes;
+        public fixed char szDisplayName[260];
+        public fixed char szTypeName[80];
+    }
+
+    [LibraryImport("shell32.dll", StringMarshalling = StringMarshalling.Utf16)]
+    private static partial nint SHGetFileInfoW(string path, uint attributes, ref SHFILEINFOW info, uint size, uint flags);
+
+    /// <summary>The 32 px shell icon of a file (caller destroys it), or 0.</summary>
+    private static unsafe nint ShellIcon(string path, uint extraFlags)
+    {
+        var info = default(SHFILEINFOW);
+        uint attributes = (extraFlags & SHGFI_USEFILEATTRIBUTES) != 0 ? FILE_ATTRIBUTE_NORMAL : 0;
+        return SHGetFileInfoW(path, attributes, ref info, (uint)sizeof(SHFILEINFOW), SHGFI_ICON | SHGFI_LARGEICON | extraFlags) != 0 ? info.hIcon : 0;
+    }
 
     [LibraryImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
