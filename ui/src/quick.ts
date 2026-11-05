@@ -6,9 +6,18 @@ export const QUICK_PRIORITY = 60
 
 const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
 export const quickId = (name: string) => `quick-${slug(name)}`
-/** Lossless and disjoint from exe ids (which never contain "~"): service names are case-insensitive, so lower case is exact. */
-const serviceId = (name: string) =>
-  `quick~svc~${[...name.toLowerCase()].map((c) => (/[a-z0-9]/.test(c) ? c : `_${c.charCodeAt(0).toString(16)}`)).join('')}`
+/**
+ * Lossless and disjoint from exe ids (which never contain "~"): service names are case-insensitive, so lower case is
+ * exact; every other UTF-16 code unit becomes "_" plus four hex digits, so no two names share an id.
+ */
+function serviceId(name: string): string {
+  let out = 'quick~svc~'
+  for (const c of name.toLowerCase()) {
+    if (/^[a-z0-9]$/.test(c)) out += c
+    else for (let i = 0; i < c.length; i++) out += `_${c.charCodeAt(i).toString(16).padStart(4, '0')}`
+  }
+  return out
+}
 /** Service quick rules rank just above exe quick rules, so a service setting beats an older "every svchost.exe" one. */
 export const QUICK_SERVICE_PRIORITY = QUICK_PRIORITY + 1
 

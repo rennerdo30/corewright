@@ -10,7 +10,7 @@ export function ownerOf(ruleId: string | undefined): Owner {
   if (id === 'autopilot-build-tools') return 'build'
   if (id.startsWith('autopilot-background') || id === 'autopilot-game-background') return 'background'
   if (id.startsWith('autopilot-')) return 'balance'
-  if (id.startsWith('quick-')) return 'quick'
+  if (id.startsWith('quick-') || id.startsWith('quick~')) return 'quick'
   if (id.startsWith('lasso-')) return 'lasso'
   if (id.startsWith('example-')) return 'example'
   return 'rule'

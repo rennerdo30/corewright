@@ -443,9 +443,11 @@ internal sealed class Monitor : BackgroundService
             _background ??= new BackgroundClassifier(DataDirectory);
             // As a service the foreground comes from the tray: known once it reported, unknown after it said goodbye (pid 0).
             bool foregroundKnown = _ctx.ForegroundKnown;
+            // PM-46: service lists stay current (no work without new services); before the classifier, so a changed list
+            // is re-identified in this tick, before the engine evaluates.
+            _serviceTracker.Reconcile(_sampler.Processes);
             _background.Observe(_sampler.Processes, _ctx.ForegroundPid, foregroundKnown, Topology.LogicalCount, _ctx.NowMs,
                 ap.Background, ap.GameMode, Topology, ap.Launchers);
-            _serviceTracker.Reconcile(_sampler.Processes); // PM-46: service lists stay current; no work without new services
 
             // PM-45: usage history from the same sample (exact CPU time deltas; no extra system calls).
             _usage ??= new UsageHistory(DataDirectory, _background.DisplayOf);

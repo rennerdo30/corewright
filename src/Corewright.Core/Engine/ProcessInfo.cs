@@ -38,6 +38,8 @@ public sealed class ProcessInfo(ProcessKey key, string name)
     public bool ServiceCandidate;
     /// <summary>Lookups that found no service yet (a service reports its PID shortly after its process starts).</summary>
     public int ServiceChecks;
+    /// <summary>The service snapshot generation last consulted for this process (a miss counts once per snapshot).</summary>
+    public int ServiceSnapshot = -1;
     /// <summary>Changes whenever <see cref="Services"/> changes, so the engine re-evaluates static rules (field "service").</summary>
     public int ServicesVersion;
     public int IdentityAttempts;

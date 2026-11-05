@@ -40,7 +40,8 @@ internal static unsafe partial class IdentityProbe
     /// <summary>When the snapshot was taken: FILETIME (UTC, for creation-time checks) and tick count (throttle).</summary>
     private static long _servicesFileTime, _servicesAttemptMs = long.MinValue / 2;
 
-    /// <summary>Increases with every successful snapshot, so callers can reconcile known service processes once per snapshot.</summary>
+    /// <summary>Increases with every successful snapshot, so callers can reconcile known service processes once per snapshot.
+    /// Written under the lock; read by the sampler thread, the only caller.</summary>
     public static int ServicesVersion { get; private set; }
 
     /// <summary>
@@ -50,12 +51,12 @@ internal static unsafe partial class IdentityProbe
     /// answers for processes that already existed when it was taken, so a PID reused by a newer process never inherits
     /// the services of the process that had it before; such a process waits for the next snapshot.
     /// </summary>
-    public static ServiceInfo[]? Services(ProcessKey key, out bool known)
+    public static ServiceInfo[]? Services(ProcessKey key, out bool known, bool refresh = false)
     {
         lock (ServiceLock)
         {
             long now = Environment.TickCount64;
-            if ((_services is null || key.CreateTime >= _servicesFileTime) && now - _servicesAttemptMs >= 1000)
+            if ((refresh || _services is null || key.CreateTime >= _servicesFileTime) && now - _servicesAttemptMs >= 1000)
             {
                 _servicesAttemptMs = now;
                 long taken = DateTime.UtcNow.ToFileTimeUtc();
