@@ -33,6 +33,7 @@ And it stays out of the way: the service idles at **0.01 % CPU and about 17 MB o
 | **Rules that explain themselves** | A rule builder in plain language, sustain and release timing against flapping, and an "Explain" view per process: which rule set what, and which rules were overruled. |
 | **Autopilot** | Game mode: detects games (game libraries, full screen with Direct3D or Vulkan, your own list), gives them priority and the right CCD, moves busy background work off it and keeps voice chat responsive. Balancing: ProBalance-style restraint of background CPU hogs. All of it is just low-priority rules, so your rules always win. |
 | **Knows your CPU** | CCDs, 3D V-Cache, physical cores and SMT threads, and the fastest cores by the CPPC ranking (the same ★ and • Ryzen Master shows). Rules can target `ccd0`, `vcache-ccd`, `best-cores:4`. |
+| **Usage history** | Which programs used your PC over hours and days: CPU time, its share of all and of busy CPU time, disk activity and memory, hour by hour, so a scanner that eats the PC all day stands out. Stored in a folder with a size limit you set (64 MB by default). |
 | **Task Manager depth** | Apps, tree and list views, heat-map columns, every Task Manager column (command line, user, working sets, commit, I/O counters, GDI objects, …), GPU per process, resizable columns. |
 | **Process Lasso import** | One click imports your `prolasso.ini`, including command-line patterns, and lists what Corewright cannot express yet. |
 | **Built for integration** | A local HTTP API with a bearer token: read processes and system data, edit rules, push facts such as `obs.recording = true` that rules can react to. |
@@ -104,6 +105,7 @@ All endpoints are under `http://127.0.0.1:47830/api/v1` and need `Authorization:
 | `POST engine/pause`, `POST engine/resume` | Pause (reverts everything) or resume |
 | `POST import/process-lasso` | Preview or apply a Process Lasso import |
 | `GET events?after={seq}` | What Corewright changed, for polling |
+| `GET usage?from=&to=&program=`, `DELETE usage` | Usage history per program (Unix ms range, hourly points), or delete it |
 
 ```bash
 curl -X PUT http://127.0.0.1:47830/api/v1/facts/obs.recording \

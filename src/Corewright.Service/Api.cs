@@ -83,6 +83,7 @@ public sealed record ImportResponseDto(bool Applied, string? Source, Rule[] Rule
 [JsonSerializable(typeof(AppSettings))]
 [JsonSerializable(typeof(SettingsResultDto))]
 [JsonSerializable(typeof(BackgroundRowDto[]))]
+[JsonSerializable(typeof(UsageDto))]
 [JsonSerializable(typeof(PlacementDto[]))]
 [JsonSerializable(typeof(AutopilotPreviewDto[]))]
 [JsonSerializable(typeof(ImportRequestDto))]
@@ -285,6 +286,27 @@ internal static class Api
             var errors = m.ReplaceSettings(settings);
             var dto = new SettingsResultDto(errors.Count == 0, [.. errors.Select(ToDto)], m.Settings);
             return errors.Count == 0 ? TypedResults.Ok(dto) : TypedResults.BadRequest(dto);
+        });
+
+        // PM-45: usage history. from/to are Unix ms (default: the last 24 hours); program adds its hourly share to the points.
+        api.MapGet("/usage", (long? from, long? to, string? program, int? limit) =>
+        {
+            long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            long t = Math.Min(to ?? now, now + 3_600_000);
+            long f = Math.Clamp(from ?? t - 86_400_000, 0, t);
+            var (current, enabled) = m.UsageSnapshot();
+            if (m.Usage is not { } usage)
+                return TypedResults.Ok(UsageHistory.Aggregate(enabled, f, t, [], program, limit ?? 100, new UsageStorageDto(0, 0, null, 0)));
+            long fromHour = f / 1000 - f / 1000 % 3600, toUnix = (t + 999) / 1000;
+            var hours = usage.Read(fromHour, toUnix);
+            if (current is not null && current.T >= fromHour && current.T < toUnix && !hours.Exists(h => h.T == current.T)) hours.Add(current);
+            return TypedResults.Ok(UsageHistory.Aggregate(enabled, f, t, hours, string.IsNullOrEmpty(program) ? null : program, limit ?? 100, usage.Storage()));
+        });
+        api.MapDelete("/usage", async () =>
+        {
+            try { await m.ClearUsage().WaitAsync(TimeSpan.FromSeconds(5)); }
+            catch (TimeoutException) { }
+            return TypedResults.NoContent();
         });
 
         api.MapGet("/autopilot/background", () =>

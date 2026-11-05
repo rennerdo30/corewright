@@ -406,6 +406,8 @@ export async function demoRequest(method: string, path: string, body?: unknown):
         { time: now - 600_000, method: 'DELETE', path: '/api/v1/groups/render-job', status: 204, ms: 12, pid: 15544, client: 'python.exe' },
         { time: now - 1_900_000, method: 'PUT', path: '/api/v1/settings', status: 200, ms: 58, pid: 11872, client: 'msedgewebview2.exe' },
       ]
+    case '/usage':
+      return (await import('./demoUsage')).demoUsage(now, new URLSearchParams(path.split('?')[1]).get('program'))
     case '/events': {
       const after = Number(new URLSearchParams(path.split('?')[1]).get('after') ?? 0)
       return { last: seq, events: events.filter((e) => e.seq > after) }

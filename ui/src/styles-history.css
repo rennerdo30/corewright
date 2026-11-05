@@ -1,0 +1,19 @@
+/* History page (PM-45): hourly usage chart and the program table. */
+.history .hist-chart { padding: 12px 14px 6px; margin-bottom: 12px; }
+.hist-chart-head { display: flex; align-items: center; gap: 16px; margin-bottom: 6px; font-size: 13px; }
+.hist-key { display: inline-flex; align-items: center; gap: 6px; }
+.hist-key i { width: 10px; height: 10px; border-radius: 2px; background: var(--chart-1); }
+.hist-key.mine i { background: var(--chart-3); }
+.history .hist-scroll { max-height: 460px; overflow: auto; }
+.hist-table tbody tr { cursor: default; }
+.hist-table tbody tr:not(.hist-other):hover td { background: var(--subtle-hover); }
+.hist-table tbody tr.selected td { background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.hist-table tbody tr.selected td.hist-name { box-shadow: inset 3px 0 0 var(--accent); }
+.hist-name { max-width: 320px; overflow: hidden; text-overflow: ellipsis; }
+.hist-share { display: flex; align-items: center; gap: 8px; min-width: 150px; }
+.hist-bar { flex: 1; height: 6px; border-radius: 3px; background: var(--subtle-hover); overflow: hidden; min-width: 70px; }
+.hist-bar i { display: block; height: 100%; border-radius: 3px; background: var(--chart-3); }
+.hist-share .num { width: 48px; text-align: right; }
+.hist-other td { font-style: normal; }
+.hist-confirm { display: inline-flex; gap: 8px; }
+.danger-text { color: var(--critical); }

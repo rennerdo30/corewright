@@ -44,6 +44,11 @@ internal sealed unsafe class ProcessSampler : IDisposable
     public IReadOnlyList<ProcessInfo> Processes => _list;
     public double SystemCpuPercent { get; private set; }
     public double TotalIoBytesPerSec { get; private set; }
+    /// <summary>Seconds since the previous sample (0 at the first).</summary>
+    public double IntervalSeconds { get; private set; }
+    /// <summary>CPU time all logical processors had since the previous sample, and the part they were busy (100 ns units).</summary>
+    public long CpuAvailableDelta { get; private set; }
+    public long CpuBusyDelta { get; private set; }
     public ulong MemoryTotal { get; private set; }
     public ulong MemoryUsed { get; private set; }
 
@@ -66,6 +71,7 @@ internal sealed unsafe class ProcessSampler : IDisposable
         long now = Stopwatch.GetTimestamp();
         double dt = _lastTimestamp == 0 ? 0 : (double)(now - _lastTimestamp) / Stopwatch.Frequency;
         _lastTimestamp = now;
+        IntervalSeconds = dt;
         _tick++;
         _list.Clear();
         double totalIo = 0;
@@ -99,6 +105,11 @@ internal sealed unsafe class ProcessSampler : IDisposable
             long cpu = *(long*)(p + OffUser) + *(long*)(p + OffKernel);
             if (!isNew && info.Path is null && info.IdentityAttempts < 4 && pid is not (0 or 4)) info.Path = QueryPath(key);
             long io = *(long*)(p + OffReadXfer) + *(long*)(p + OffWriteXfer) + *(long*)(p + OffOtherXfer);
+            // Usage history: exact CPU time and I/O since the previous sample. A process born between two samples did
+            // all of its work in that interval; at the service's first sample nothing is attributed.
+            info.CpuDelta = dt > 0 ? Math.Max(0, cpu - info.LastCpuTime) : 0;
+            info.IoDelta = dt > 0 ? Math.Max(0, io - info.LastIoBytes) : 0;
+            if (isNew && dt > 0) { info.CpuDelta = cpu; info.IoDelta = io; }
             if (!isNew && dt > 0)
             {
                 info.CpuPercent = Math.Max(0, (cpu - info.LastCpuTime) / (dt * 1e7 * _cpuCount) * 100.0);
@@ -182,6 +193,8 @@ internal sealed unsafe class ProcessSampler : IDisposable
         {
             long dIdle = idle - _lastIdle, dTotal = kernel - _lastKernel + (user - _lastUser);
             if (_lastKernel != 0 && dTotal > 0) SystemCpuPercent = Math.Clamp(100.0 * (dTotal - dIdle) / dTotal, 0, 100);
+            CpuAvailableDelta = _lastKernel != 0 && dTotal > 0 ? dTotal : 0;
+            CpuBusyDelta = _lastKernel != 0 && dTotal > 0 ? Math.Clamp(dTotal - dIdle, 0, dTotal) : 0;
             _lastIdle = idle;
             _lastKernel = kernel;
             _lastUser = user;

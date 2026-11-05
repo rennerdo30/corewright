@@ -10,6 +10,11 @@ interface Props {
   height?: number
   max?: number
   format: (v: number) => string
+  /** An optional second series drawn over the first (usage history: one program's share). */
+  values2?: (number | null)[]
+  colorVar2?: string
+  /** Bars instead of an area: for hourly buckets. */
+  bars?: boolean
 }
 
 const css = (name: string) => getComputedStyle(document.documentElement).getPropertyValue(name).trim()
@@ -34,7 +39,7 @@ function useScheme(): boolean {
 }
 
 /** A small live area chart. uPlot is created once per theme and only gets new data afterwards. */
-export function Chart({ time, values, colorVar, height = 120, max, format }: Props) {
+export function Chart({ time, values, colorVar, height = 120, max, format, values2, colorVar2, bars }: Props) {
   const host = useRef<HTMLDivElement>(null)
   const plot = useRef<uPlot | null>(null)
   const formatRef = useRef(format)
@@ -66,10 +71,27 @@ export function Chart({ time, values, colorVar, height = 120, max, format }: Pro
       ],
       series: [
         {},
-        { stroke: color, width: 2, fill: withAlpha(color, 0.16), points: { show: false }, value: (_u, v) => (v == null ? '' : formatRef.current(v)) },
+        {
+          stroke: color,
+          width: bars ? 0 : 2,
+          fill: withAlpha(color, bars ? 0.45 : 0.16),
+          points: { show: false },
+          paths: bars ? uPlot.paths.bars!({ size: [0.8, 40] }) : undefined,
+          value: (_u, v) => (v == null ? '' : formatRef.current(v)),
+        },
+        ...(colorVar2
+          ? [{
+              stroke: css(colorVar2) || '#f7630c',
+              width: bars ? 0 : 2,
+              fill: withAlpha(css(colorVar2) || '#f7630c', bars ? 0.9 : 0.2),
+              points: { show: false },
+              paths: bars ? uPlot.paths.bars!({ size: [0.5, 24] }) : undefined,
+              value: (_u: uPlot, v: number | null) => (v == null ? '' : formatRef.current(v)),
+            }]
+          : []),
       ],
     }
-    plot.current = new uPlot(opts, [[], []], el)
+    plot.current = new uPlot(opts, colorVar2 ? [[], [], []] : [[], []], el)
     const ro = new ResizeObserver(() => plot.current?.setSize({ width: el.clientWidth, height }))
     ro.observe(el)
     return () => {
@@ -77,11 +99,12 @@ export function Chart({ time, values, colorVar, height = 120, max, format }: Pro
       plot.current?.destroy()
       plot.current = null
     }
-  }, [colorVar, height, max, dark])
+  }, [colorVar, colorVar2, bars, height, max, dark])
 
   useEffect(() => {
-    plot.current?.setData([time.map((t) => t / 1000), values])
-  }, [time, values, dark])
+    const t = time.map((x) => x / 1000)
+    plot.current?.setData(colorVar2 ? [t, values, values2 ?? values.map(() => null)] : [t, values])
+  }, [time, values, values2, colorVar2, dark])
 
   return <div ref={host} className="chart" />
 }

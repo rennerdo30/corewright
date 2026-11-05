@@ -117,11 +117,26 @@ internal sealed class Monitor : BackgroundService
     public GroupStore Groups => _groups;
     private readonly GameDetector _game = new();
     private BackgroundClassifier? _background;
+    private UsageHistory? _usage;
     private readonly AffinityPlacer _placer;
     public AffinityPlacer Placer => _placer;
 
     /// <summary>Long-term program statistics; created on the first tick (needs the data folder).</summary>
     public BackgroundClassifier? Background => _background;
+
+    /// <summary>Usage history (PM-45); created on the first tick, after the program identities.</summary>
+    public UsageHistory? Usage => _usage;
+
+    /// <summary>The unfinished current hour and whether recording is on; for GET /usage.</summary>
+    public (UsageHour? Current, bool Enabled) UsageSnapshot()
+    {
+        lock (Sync) return (_usage?.Snapshot(), Settings.Usage.Enabled);
+    }
+
+    public Task ClearUsage()
+    {
+        lock (Sync) return _usage?.Clear() ?? Task.CompletedTask;
+    }
     private bool _reportedFullscreen;
 
     public AppSettings Settings { get; private set; }
@@ -325,11 +340,17 @@ internal sealed class Monitor : BackgroundService
                     _log.LogWarning("Unrestored process {Pid} ({Process}), {Slot}, original {Value}: {Message}",
                         e.Pid, e.Process, e.Slot, e.Value, e.Message));
                 _background?.Save();
+                _usage?.SaveCurrent();
             }
             if (_background is { } background)
             {
                 try { await background.SaveCompletion.WaitAsync(TimeSpan.FromSeconds(2)); }
                 catch (TimeoutException) { _log.LogWarning("Background statistics write still finishing at shutdown"); }
+            }
+            if (_usage is { } usage)
+            {
+                try { await usage.SaveCompletion.WaitAsync(TimeSpan.FromSeconds(2)); }
+                catch (TimeoutException) { _log.LogWarning("Usage history write still finishing at shutdown"); }
             }
             _actuator.Dispose();
             _journal.Dispose();
@@ -421,6 +442,12 @@ internal sealed class Monitor : BackgroundService
             bool foregroundKnown = _ctx.ForegroundKnown;
             _background.Observe(_sampler.Processes, _ctx.ForegroundPid, foregroundKnown, Topology.LogicalCount, _ctx.NowMs,
                 ap.Background, ap.GameMode, Topology, ap.Launchers);
+
+            // PM-45: usage history from the same sample (exact CPU time deltas; no extra system calls).
+            _usage ??= new UsageHistory(DataDirectory, _background.DisplayOf);
+            _usage.SetCap(Settings.Usage.MaxStorageMb);
+            if (Settings.Usage.Enabled)
+                _usage.Observe(_sampler.Processes, _sampler.IntervalSeconds, _sampler.CpuAvailableDelta, _sampler.CpuBusyDelta, Topology.LogicalCount, _ctx.NowMs);
 
             _ctx.ForegroundRoot = _background.ForegroundRoot;
             _ctx.ForegroundProgram = _sampler.TryGet(_ctx.ForegroundPid, out var foregroundApp) ? foregroundApp.Program : null;
