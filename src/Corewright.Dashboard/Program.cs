@@ -533,7 +533,16 @@ internal sealed partial class MainForm : Form
         try
         {
             // The large (32 px) icon scaled down looks better than the 16 px one at 150 % and 200 % scaling.
-            if (ExtractIconExW(path, 0, ref large, ref small, 1) == 0 || (large == 0 && small == 0)) return null;
+            if (ExtractIconExW(path, 0, ref large, ref small, 1) == 0 || (large == 0 && small == 0))
+            {
+                // No icon resource (svchost.exe and many services): the shell's icon, as Explorer and Task Manager show it,
+                // which is Windows' default application icon. Unreadable files get the default icon for their type.
+                if (large != 0) DestroyIcon(large);
+                if (small != 0) DestroyIcon(small);
+                small = 0;
+                large = ShellIcon(path, 0) is var shell and not 0 ? shell : ShellIcon(path, SHGFI_USEFILEATTRIBUTES);
+                if (large == 0) return null;
+            }
             using var icon = Icon.FromHandle(large != 0 ? large : small);
             using var bmp = new Bitmap(size, size, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
             using (var g = Graphics.FromImage(bmp))
@@ -556,6 +565,29 @@ internal sealed partial class MainForm : Form
 
     [LibraryImport("shell32.dll", StringMarshalling = StringMarshalling.Utf16)]
     private static partial uint ExtractIconExW(string file, int index, ref nint large, ref nint small, uint count);
+
+    private const uint SHGFI_ICON = 0x100, SHGFI_LARGEICON = 0x0, SHGFI_USEFILEATTRIBUTES = 0x10, FILE_ATTRIBUTE_NORMAL = 0x80;
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    private unsafe struct SHFILEINFOW
+    {
+        public nint hIcon;
+        public int iIcon;
+        public uint dwAttributes;
+        public fixed char szDisplayName[260];
+        public fixed char szTypeName[80];
+    }
+
+    [LibraryImport("shell32.dll", StringMarshalling = StringMarshalling.Utf16)]
+    private static partial nint SHGetFileInfoW(string path, uint attributes, ref SHFILEINFOW info, uint size, uint flags);
+
+    /// <summary>The 32 px shell icon of a file (caller destroys it), or 0.</summary>
+    private static unsafe nint ShellIcon(string path, uint extraFlags)
+    {
+        var info = default(SHFILEINFOW);
+        uint attributes = (extraFlags & SHGFI_USEFILEATTRIBUTES) != 0 ? FILE_ATTRIBUTE_NORMAL : 0;
+        return SHGetFileInfoW(path, attributes, ref info, (uint)sizeof(SHFILEINFOW), SHGFI_ICON | SHGFI_LARGEICON | extraFlags) != 0 ? info.hIcon : 0;
+    }
 
     [LibraryImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]

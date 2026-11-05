@@ -153,3 +153,8 @@ textarea.json { width: 100%; min-height: 420px; font-family: var(--mono); font-s
 .chip-token { display: inline-flex; align-items: center; gap: 4px; padding: 1px 4px 1px 10px; border-radius: 999px; background: color-mix(in srgb, var(--accent) 22%, transparent); font-size: 13px; }
 .chip-token button { border: 0; background: none; color: var(--secondary-text); font-family: var(--icons); font-size: 9px; width: 18px; height: 18px; border-radius: 50%; cursor: default; }
 .chip-token button:hover { background: var(--subtle-hover); color: var(--text); }
+/* Default process icon (no exe icon available) and a panel title that never runs under the close button. */
+.picon-default { display: inline-flex; align-items: center; justify-content: center; }
+.panel-title { flex: 1; }
+.panel-title > div { min-width: 0; }
+.panel-title > .picon { flex: none; }

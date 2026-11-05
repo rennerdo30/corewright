@@ -3,9 +3,10 @@ import { useMemo, useRef, useState } from 'react'
 import { api } from '../api'
 import { ContextMenu, type MenuEntry } from '../components/ContextMenu'
 import { Dot, PageHeader, joinAnd } from '../components/PageHeader'
+import { ProcessIcon } from '../components/ProcessIcon'
 import { buildProcessMenu } from '../components/processMenu'
 import { bytes, newId, percent } from '../format'
-import { iconUrl, isHost, levelLabel, post, useDescriptions } from '../host'
+import { isHost, levelLabel, post, useDescriptions } from '../host'
 import { usePoll } from '../hooks'
 import { quickId, quickRule, quickSubject, setQuick } from '../quick'
 import { isServiceHost, serviceHostLabel, serviceLines, serviceSearchText } from '../services'
@@ -316,7 +317,6 @@ export function Processes({ onCreateRule }: { onCreateRule: (r: Rule) => void })
                 const l = lines[v.index]
                 const p = l.p
                 const group = l.items.length > 1
-                const icon = iconUrl(p.path)
                 return (
                   <div
                     key={l.key}
@@ -339,11 +339,7 @@ export function Processes({ onCreateRule }: { onCreateRule: (r: Rule) => void })
                             >
                               {l.expandable ? (l.expanded ? '\uE70D' : '\uE76C') : ''}
                             </span>
-                            {icon ? (
-                              <img className="picon" src={icon} alt="" onError={(e) => ((e.target as HTMLImageElement).style.visibility = 'hidden')} />
-                            ) : (
-                              <span className="picon glyph">{'\uECAA'}</span>
-                            )}
+                            <ProcessIcon path={p.path} />
                             <span className="pname" title={[p.name, p.path, ...(group ? [] : serviceLines(p))].filter(Boolean).join('\n')}>
                               {group ? groupLabel(p) : label(p)}
                               {group && <span className="pcount"> ({l.items.length})</span>}
@@ -425,14 +421,13 @@ function heat(level: number): React.CSSProperties | undefined {
 
 function ProcessPanel({ p, title, onClose, onCreateRule }: { p: ProcessRow; title: string; onClose: () => void; onCreateRule: (r: Rule) => void }) {
   const explain = usePoll(() => api.explain(p.pid), 2000)
-  const icon = iconUrl(p.path)
   return (
     <aside className="panel">
       <div className="panel-head">
         <div className="panel-title">
-          {icon && <img src={icon} alt="" width={32} height={32} />}
+          <ProcessIcon path={p.path} size={32} />
           <div>
-            <h2>{title}</h2>
+            <h2 title={title}>{title}</h2>
             <div className="secondary tiny">
               {p.name} · PID {p.pid}
               {p.parentPid != null ? ` · parent ${p.parentPid}` : ''}
