@@ -478,6 +478,12 @@ internal sealed partial class MainForm : Form
 
     private const string HostName = "corewright.host";
     private readonly Dictionary<string, byte[]?> _icons = new(StringComparer.OrdinalIgnoreCase);
+    /// <summary>
+    /// Icon extraction (ExtractIconEx, SHGetFileInfo) can touch the disk and the shell, so it runs on one background STA
+    /// thread, never on the window's thread; requests wait on a WebView2 deferral. Bounded: a full queue answers 404.
+    /// </summary>
+    private readonly System.Collections.Concurrent.BlockingCollection<(string Path, int Size, CoreWebView2Deferral Deferral, CoreWebView2WebResourceRequestedEventArgs Args)> _iconWork = new(256);
+    private Thread? _iconThread;
     private readonly Dictionary<string, string> _descriptions = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
@@ -500,14 +506,24 @@ internal sealed partial class MainForm : Form
 
         if (uri.AbsolutePath == "/icon")
         {
-            if (!_icons.TryGetValue(path, out var png))
+            if (_icons.TryGetValue(path, out var cached))
             {
-                png = ExtractIconPng(path, query["size"] is { } s && int.TryParse(s, out int px) ? Math.Clamp(px, 16, 64) : 32);
-                _icons[path] = png;
+                e.Response = IconResponse(cached);
+                return;
             }
-            e.Response = png is null
-                ? env.CreateWebResourceResponse(null, 404, "Not Found", cors)
-                : env.CreateWebResourceResponse(new MemoryStream(png), 200, "OK", cors + "Content-Type: image/png");
+            int size = query["size"] is { } s && int.TryParse(s, out int px) ? Math.Clamp(px, 16, 64) : 32;
+            var deferral = e.GetDeferral();
+            if (_iconThread is null)
+            {
+                _iconThread = new Thread(IconWorker) { IsBackground = true, Name = "Corewright icons" };
+                _iconThread.SetApartmentState(ApartmentState.STA); // SHGetFileInfo needs COM
+                _iconThread.Start();
+            }
+            if (!_iconWork.TryAdd((path, size, deferral, e)))
+            {
+                e.Response = IconResponse(null);
+                deferral.Complete();
+            }
             return;
         }
 
@@ -525,6 +541,38 @@ internal sealed partial class MainForm : Form
         }
 
         e.Response = env.CreateWebResourceResponse(null, 404, "Not Found", cors);
+    }
+
+    private CoreWebView2WebResourceResponse IconResponse(byte[]? png)
+    {
+        const string headers = "Access-Control-Allow-Origin: *\r\nCache-Control: max-age=86400\r\n";
+        var env = _web.CoreWebView2.Environment;
+        return png is null
+            ? env.CreateWebResourceResponse(null, 404, "Not Found", headers)
+            : env.CreateWebResourceResponse(new MemoryStream(png), 200, "OK", headers + "Content-Type: image/png");
+    }
+
+    private void IconWorker()
+    {
+        foreach (var work in _iconWork.GetConsumingEnumerable())
+        {
+            byte[]? png = ExtractIconPng(work.Path, work.Size);
+            try
+            {
+                // Responses and the cache belong to the window's thread.
+                BeginInvoke(() =>
+                {
+                    try
+                    {
+                        _icons[work.Path] = png;
+                        work.Args.Response = IconResponse(png);
+                    }
+                    catch (Exception ex) when (ex is InvalidOperationException or COMException) { }
+                    finally { work.Deferral.Complete(); }
+                });
+            }
+            catch (InvalidOperationException) { return; } // window closed
+        }
     }
 
     private static byte[]? ExtractIconPng(string path, int size)
