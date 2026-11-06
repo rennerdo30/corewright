@@ -83,8 +83,11 @@ export function Autopilot() {
     for (const p of procs.data ?? []) {
       const r = roleOf(p)
       if (!r || r === 'game' || placed.has(`p${p.pid}`)) continue
+      // A user or group rule may still own its cores; then it is drawn where that rule put it.
+      const own = (p.applied ?? []).find((a) => a.slot === 'affinity')
+      const lps = own ? parseCores(own.value) : []
       const what = r === 'build' ? 'build tool, lower CPU and disk priority' : r === 'balance' ? 'held back for hogging the CPU' : 'background, lower priority'
-      list.push({ key: `p${p.pid}`, label: p.name.replace(/\.exe$/i, ''), role: r, lps: [], title: `${p.name} (PID ${p.pid}): ${what}; may run on any core` })
+      list.push({ key: `p${p.pid}`, label: p.name.replace(/\.exe$/i, ''), role: r, lps, title: `${p.name} (PID ${p.pid}): ${what}; ${own ? `cores ${own.value} from ${own.ruleName}` : 'no core limit'}` })
     }
     if (game && t && gameCcd !== undefined) {
       const lps = t.ccds.find((c) => c.id === gameCcd)?.cores.flatMap((k) => k.threads) ?? []

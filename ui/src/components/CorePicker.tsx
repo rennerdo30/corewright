@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react'
 import { api } from '../api'
 import type { Topology } from '../types'
-import { parseCores } from './DieMap'
 
 // The topology is read once when the service starts, so one request per dashboard session is enough.
 let topoRequest: Promise<Topology> | undefined
@@ -34,6 +33,32 @@ const DYNAMIC: Record<string, string> = {
   'auto-background': 'Decided by Autopilot while the foreground is busy.',
 }
 
+/** Highest logical processor number the service can address (processor group 0). */
+const MAX_LP = 63
+
+/**
+ * Parses a thread list the way the service does (separators , ; and spaces, ranges a-b). Never expands past
+ * processor 63, so a pasted "0-999999999" cannot hang the window. `ok` is false when the service would reject it.
+ */
+export function parseThreadList(text: string): { lps: number[]; ok: boolean } {
+  const out = new Set<number>()
+  let ok = true
+  for (const part of text.split(/[,;\s]+/).filter(Boolean)) {
+    const m = /^(\d{1,6})(?:-(\d{1,6}))?$/.exec(part)
+    if (!m) { ok = false; continue }
+    const a = Number(m[1])
+    const b = m[2] === undefined ? a : Number(m[2])
+    if (b < a || b > MAX_LP) ok = false
+    for (let i = a; i <= Math.min(b, MAX_LP); i++) out.add(i)
+  }
+  return { lps: [...out].sort((x, y) => x - y), ok: ok && out.size > 0 }
+}
+
+/** The service's rule: only the highest efficiency class is "performance"; every lower class counts as efficiency. */
+function topClass(topo: Topology) {
+  return Math.max(...topo.ccds.flatMap((c) => c.cores.map((k) => k.efficiencyClass)))
+}
+
 function threadsOf(topo: Topology) {
   return topo.ccds.flatMap((c) => c.cores.flatMap((k) => k.threads))
 }
@@ -43,8 +68,9 @@ function presets(topo: Topology | undefined): Preset[] {
   if (!topo) return out
   const cores = topo.ccds.flatMap((c) => c.cores.map((k) => ({ ccd: c.id, k })))
   if (topo.hybrid) {
-    const p = cores.filter((c) => c.k.efficiencyClass > 0).flatMap((c) => c.k.threads)
-    const e = cores.filter((c) => c.k.efficiencyClass === 0).flatMap((c) => c.k.threads)
+    const top = topClass(topo)
+    const p = cores.filter((c) => c.k.efficiencyClass === top).flatMap((c) => c.k.threads)
+    const e = cores.filter((c) => c.k.efficiencyClass < top).flatMap((c) => c.k.threads)
     out.push({ value: 'p-cores', label: 'Performance cores', lps: p }, { value: 'e-cores', label: 'Efficiency cores', lps: e })
   }
   const ranked = topo.rankingAvailable ? [...cores].sort((a, b) => a.k.rank - b.k.rank) : []
@@ -63,7 +89,8 @@ function presets(topo: Topology | undefined): Preset[] {
   }
   if (topo.rankingAvailable)
     for (const n of [1, 2, 4, 8]) if (n < topo.physical) out.push({ value: `best-cores:${n}`, label: `Best ${n} core${n > 1 ? 's' : ''}`, lps: ranked.slice(0, n).flatMap((c) => c.k.threads) })
-  if (topo.ccds.length > 1) {
+  // The service supports game placement only below 64 logical processors.
+  if (topo.ccds.length > 1 && topo.logical < 64) {
     out.push({ value: 'auto-game', label: 'While gaming: the game’s CCD' })
     out.push({ value: 'non-game-ccd', label: 'While gaming: all but the game’s CCD' })
   }
@@ -93,8 +120,13 @@ export function CorePicker({ value, onChange }: { value: string; onChange: (v: s
   const preset: Preset | undefined = isList ? undefined : (list.find((p) => p.value === key) ?? (topo && !DYNAMIC[key] ? undefined : { value: key, label: key }))
   const isCustom = !preset
 
+  // The text field edits a draft, so clearing it to retype never sends "" (which would remove the setting).
+  const [draft, setDraft] = useState(value)
+  useEffect(() => setDraft(value), [value])
+  const parsed = parseThreadList(isCustom ? draft : '')
+
   // What the grid shows as selected: the custom list, or what the preset resolves to on this CPU.
-  const selected = new Set(isCustom ? parseCores(value) : (preset.lps ?? []))
+  const selected = new Set(isCustom ? parsed.lps : (preset.lps ?? []))
   const dynamic = !isCustom && preset.lps === undefined
   const all = topo ? threadsOf(topo) : []
   const unknown = topo ? [...selected].filter((lp) => !all.includes(lp)) : []
@@ -122,7 +154,7 @@ export function CorePicker({ value, onChange }: { value: string; onChange: (v: s
           onChange={(e) => {
             const v = e.target.value
             if (v === 'custom') {
-              const current = isCustom ? parseCores(value) : (preset.lps ?? [])
+              const current = isCustom ? parsed.lps : (preset.lps ?? [])
               onChange(formatCores(current.length ? current : all.slice(0, Math.max(1, all.length / 2))) || '0')
             } else onChange(v)
           }}
@@ -138,11 +170,16 @@ export function CorePicker({ value, onChange }: { value: string; onChange: (v: s
         {isCustom && (
           <input
             className="cores-input"
-            value={value}
+            value={draft}
             placeholder="0-7,16"
             aria-label="Logical processors"
+            aria-invalid={!parsed.ok}
             spellCheck={false}
-            onChange={(e) => onChange(e.target.value)}
+            onChange={(e) => {
+              setDraft(e.target.value)
+              if (e.target.value.trim()) onChange(e.target.value)
+            }}
+            onBlur={() => setDraft(value)}
           />
         )}
         <span className="corepick-sum">
@@ -153,6 +190,7 @@ export function CorePicker({ value, onChange }: { value: string; onChange: (v: s
               : topo
                 ? `${selected.size} thread${selected.size === 1 ? '' : 's'} on ${selCores} core${selCores === 1 ? '' : 's'}${topo.ccds.length > 1 && selCcds.length ? ` · ${selCcds.map((c) => `CCD ${c.id}`).join(', ')}` : ''}`
                 : ''}
+          {isCustom && !parsed.ok && draft.trim() !== '' && <span className="corepick-warn"> · not a valid list (e.g. 0-7,16)</span>}
           {unknown.length > 0 && <span className="corepick-warn"> · {formatCores(unknown)} not on this CPU</span>}
         </span>
       </div>
@@ -178,7 +216,7 @@ export function CorePicker({ value, onChange }: { value: string; onChange: (v: s
                   {c.cores.map((k) => {
                     const coreOn = k.threads.every((lp) => selected.has(lp))
                     const coreSome = k.threads.some((lp) => selected.has(lp))
-                    const eCore = topo.hybrid && k.efficiencyClass === 0
+                    const eCore = topo.hybrid && k.efficiencyClass < topClass(topo)
                     return (
                       <div key={k.id} className={`corepick-core ${coreOn ? 'on' : coreSome ? 'some' : ''} ${k.ccdRank === 1 ? 'best' : ''}`}>
                         <button

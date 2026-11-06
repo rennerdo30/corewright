@@ -276,3 +276,4 @@ strong.tone-critical { color: var(--critical); }
 .die-anywhere-label { flex: none; font-size: 12px; color: var(--secondary-text); }
 .die-anywhere .tokens { gap: 4px; }
 .token-count { color: var(--secondary-text); }
+.cores-input[aria-invalid='true'] { border-bottom-color: var(--danger, #e81123); }
