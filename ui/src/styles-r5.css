@@ -239,3 +239,40 @@ strong.tone-critical { color: var(--critical); }
 @media (max-width: 760px) { .dev-body { grid-template-columns: 1fr; } }
 .api-calls .hit { grid-template-columns: 90px minmax(120px, 220px) minmax(0, 1fr) auto; }
 .api-calls .hit-what { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* CPU cores picker in the rule editor: presets plus a CCD → core → thread map. */
+.setting-card.cores-card { flex-wrap: wrap; row-gap: 12px; }
+.cores-card > .setting-text { flex: 1; }
+.corepick { flex: 1 0 100%; display: flex; flex-direction: column; gap: 10px; padding-left: 36px; }
+.corepick-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.corepick-bar select { min-width: 240px; }
+.corepick-sum { color: var(--secondary-text); font-size: 12px; }
+.corepick-warn { color: var(--caution); }
+.corepick-map { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 8px; }
+.corepick-map.dynamic { opacity: 0.55; }
+.corepick-ccd { background: var(--silicon, var(--layer-alt)); border: 1px solid var(--stroke); border-radius: 8px; padding: 6px; }
+.corepick-ccd-head { all: unset; box-sizing: border-box; width: 100%; display: flex; align-items: baseline; gap: 10px; padding: 4px 6px 6px; border-radius: 4px; cursor: pointer; }
+.corepick-ccd-head:hover { background: var(--subtle-hover); }
+.corepick-ccd-head:focus-visible, .corepick-core-head:focus-visible, .corepick-thread:focus-visible { outline: 2px solid var(--text); outline-offset: 1px; }
+.corepick-range { margin-left: auto; font-size: 12px; color: var(--secondary-text); font-variant-numeric: tabular-nums; }
+.corepick-cores { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; }
+.corepick-core { border: 1px solid var(--stroke); border-radius: 6px; background: var(--layer); padding: 3px 4px 4px; }
+.corepick-core.best { border-color: color-mix(in srgb, #f7c948 55%, transparent); }
+.corepick-core.on, .corepick-core.some { background: color-mix(in srgb, var(--accent) 10%, var(--layer)); }
+.corepick-core-head { all: unset; box-sizing: border-box; width: 100%; display: flex; align-items: center; gap: 4px; padding: 1px 3px 3px; font-size: 12px; border-radius: 3px; cursor: pointer; }
+.corepick-core-head > span:first-child { flex: 1; }
+.corepick-core-head:hover { background: var(--subtle-hover); }
+.corepick-e { font-size: 10px; padding: 0 4px; border-radius: 3px; background: var(--subtle-hover); color: var(--secondary-text); }
+.corepick-threads { display: grid; grid-template-columns: repeat(auto-fit, minmax(0, 1fr)); gap: 3px; }
+.corepick-thread { all: unset; box-sizing: border-box; text-align: center; height: 26px; line-height: 24px; border-radius: 4px; font-size: 12px; font-variant-numeric: tabular-nums; cursor: pointer;
+  background: var(--control); border: 1px solid var(--stroke-control); color: var(--secondary-text); }
+.corepick-thread:hover { background: var(--control-hover); color: var(--text); }
+.corepick-thread.on { background: var(--accent); border-color: transparent; color: var(--on-accent); font-weight: 600; }
+.corepick-thread.on:hover { background: color-mix(in srgb, var(--accent) 88%, var(--text)); }
+.corepick-map.preview .corepick-thread.on { background: color-mix(in srgb, var(--accent) 55%, var(--control)); }
+.corepick-tools { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+.corepick-legend { margin-left: auto; font-size: 12px; color: var(--secondary-text); }
+.die-anywhere { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border: 1px dashed var(--stroke); border-radius: 8px; }
+.die-anywhere-label { flex: none; font-size: 12px; color: var(--secondary-text); }
+.die-anywhere .tokens { gap: 4px; }
+.token-count { color: var(--secondary-text); }
