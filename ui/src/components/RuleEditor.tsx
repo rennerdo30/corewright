@@ -5,6 +5,7 @@ import { ConditionGroup, describeCondition } from './ConditionBuilder'
 import { ContextMenu, type MenuEntry } from './ContextMenu'
 import { NET_PRIORITIES, netPriorityLabel } from '../networkPriority'
 import { RuleHistory } from './RuleHistory'
+import { CorePicker } from './CorePicker'
 
 type ActionKey = keyof RuleActions
 
@@ -32,12 +33,6 @@ export const ACTIONS: ActionDef[] = [
   { key: 'workingSetLimitMb', title: 'RAM cap (soft)', description: 'Windows pages memory out instead of letting the process use more RAM.', glyph: '\uE7B8', kind: 'mb', initial: 2048 },
 ]
 
-const CORE_PRESETS: [string, string][] = [
-  ['all', 'All cores'],
-  ['p-cores', 'Performance cores'],
-  ['e-cores', 'Efficiency cores'],
-]
-
 /** A plain-language sentence for the rule list and the editor header. */
 export function summarizeActions(a: RuleActions): string {
   const parts = ACTIONS.filter((d) => a[d.key] != null).map((d) => {
@@ -47,7 +42,7 @@ export function summarizeActions(a: RuleActions): string {
     if (d.kind === 'mbps') return v === 0 ? 'no upload limit' : `upload at most ${v} Mbps`
     if (d.kind === 'dscp') return `network priority ${netPriorityLabel(v as number).toLowerCase()}`
     if (d.kind === 'mb') return `${d.title.toLowerCase().replace(/ \(.*\)/, '')} ${formatMb(v as number)}`
-    if (d.kind === 'cores') return `cores ${v}`
+    if (d.kind === 'cores') return v === 'all' ? 'all cores' : /^[\d\s,;-]+$/.test(String(v)) ? `threads ${v}` : `cores ${v}`
     return `${d.title.replace(' priority', '').toLowerCase()} ${levelLabel(v as string).toLowerCase()}`
   })
   return parts.join(', ')
@@ -173,18 +168,21 @@ export function RuleEditor(props: {
             </div>
             {setActions.length === 0 && <div className="empty-card">No settings yet. Add what this rule should change.</div>}
             {setActions.map((d) => (
-              <div className="setting-card" key={d.key}>
+              <div className={`setting-card ${d.kind === 'cores' ? 'cores-card' : ''}`} key={d.key}>
                 <span className="setting-icon glyph">{d.glyph}</span>
                 <div className="setting-text">
                   <div className="setting-title">{d.title}</div>
                   <div className="setting-desc">{d.description}</div>
                 </div>
-                <div className="setting-control">
-                  <ActionControl def={d} value={rule.actions[d.key]} allowRealtime={rule.allowRealtime} onChange={(v) => setAction(d.key, v)} />
-                </div>
+                {d.kind !== 'cores' && (
+                  <div className="setting-control">
+                    <ActionControl def={d} value={rule.actions[d.key]} allowRealtime={rule.allowRealtime} onChange={(v) => setAction(d.key, v)} />
+                  </div>
+                )}
                 <button className="icon" aria-label={`Remove ${d.title}`} onClick={() => setAction(d.key, null)}>
                   {'\uE711'}
                 </button>
+                {d.kind === 'cores' && <CorePicker value={(rule.actions[d.key] as string) ?? ''} onChange={(v) => setAction(d.key, v)} />}
               </div>
             ))}
           </section>
@@ -308,20 +306,5 @@ function ActionControl({ def, value, allowRealtime, onChange }: { def: ActionDef
       </Unit>
     )
   }
-  // cores
-  const v = (value as string) ?? ''
-  const preset = CORE_PRESETS.find(([k]) => k === v)
-  return (
-    <span className="cores-control">
-      <select value={preset ? v : 'custom'} onChange={(e) => onChange(e.target.value === 'custom' ? '0-7' : e.target.value)}>
-        {CORE_PRESETS.map(([k, l]) => (
-          <option key={k} value={k}>
-            {l}
-          </option>
-        ))}
-        <option value="custom">Specific cores…</option>
-      </select>
-      {!preset && <input className="cores-input" value={v} placeholder="0-7,16" onChange={(e) => onChange(e.target.value)} />}
-    </span>
-  )
+  return null
 }

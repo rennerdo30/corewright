@@ -34,6 +34,15 @@ export function DieMap({
   legend?: boolean
 }) {
   const usage = (lp: number) => load[lp] ?? 0
+  // Tokens without cores (only priorities changed) run anywhere; drawn once in a strip, not on every core.
+  // Same program and role (four cl.exe) become one chip with a count.
+  const anywhere = [...tokens.filter((t) => t.lps.length === 0).reduce((m, t) => {
+    const k = `${t.role}:${t.label.toLowerCase()}`
+    const g = m.get(k)
+    if (g) { g.count++; g.title += `
+${t.title}` } else m.set(k, { ...t, count: 1 })
+    return m
+  }, new Map<string, Token & { count: number }>()).values()]
   return (
     <div className="die">
       <div className="die-chiplets">
@@ -97,6 +106,24 @@ export function DieMap({
           )
         })}
       </div>
+      {anywhere.length > 0 && (
+        <div className="die-anywhere">
+          <span className="die-anywhere-label">Any core</span>
+          <div className="tokens">
+            {anywhere.slice(0, 24).map((t) => (
+              <span key={t.key} className={`token role-${t.role}`} title={t.title}>
+                {t.label}
+                {t.count > 1 && <span className="token-count"> ×{t.count}</span>}
+              </span>
+            ))}
+            {anywhere.length > 24 && (
+              <span className="token more" title={anywhere.slice(24).map((t) => t.label).join(', ')}>
+                +{anywhere.length - 24}
+              </span>
+            )}
+          </div>
+        </div>
+      )}
       {legend && (
         <div className="die-legend">
           {(Object.keys(ROLE_NAMES) as Role[]).map((r) => (

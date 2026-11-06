@@ -77,6 +77,18 @@ export function Autopilot() {
       lps: parseCores(pl.cores),
       title: `${pl.name} (PID ${pl.pid}) on threads ${pl.cores}: ${pl.why}`,
     }))
+    // Build tools and balanced programs only get lower priorities, no cores: they run anywhere, so the map lists them
+    // in its "any core" strip instead of on a core.
+    const placed = new Set(list.map((x) => x.key))
+    for (const p of procs.data ?? []) {
+      const r = roleOf(p)
+      if (!r || r === 'game' || placed.has(`p${p.pid}`)) continue
+      // A user or group rule may still own its cores; then it is drawn where that rule put it.
+      const own = (p.applied ?? []).find((a) => a.slot === 'affinity')
+      const lps = own ? parseCores(own.value) : []
+      const what = r === 'build' ? 'build tool, lower CPU and disk priority' : r === 'balance' ? 'held back for hogging the CPU' : 'background, lower priority'
+      list.push({ key: `p${p.pid}`, label: p.name.replace(/\.exe$/i, ''), role: r, lps, title: `${p.name} (PID ${p.pid}): ${what}; ${own ? `cores ${own.value} from ${own.ruleName}` : 'no core limit'}` })
+    }
     if (game && t && gameCcd !== undefined) {
       const lps = t.ccds.find((c) => c.id === gameCcd)?.cores.flatMap((k) => k.threads) ?? []
       list.unshift({ key: 'game', label: game.name.replace(/\.exe$/i, ''), role: 'game', lps, title: `${game.name}: ${game.reason ?? 'game'}` })
