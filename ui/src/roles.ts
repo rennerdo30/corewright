@@ -7,7 +7,7 @@ export type Owner = 'game' | 'build' | 'background' | 'balance' | 'rule' | 'quic
 export function ownerOf(ruleId: string | undefined): Owner {
   const id = ruleId ?? ''
   if (id === 'autopilot-game' || id === 'autopilot-voice') return 'game'
-  if (id === 'autopilot-build-tools') return 'build'
+  if (id === 'autopilot-build-tools' || id === 'autopilot-game-builds') return 'build'
   if (id.startsWith('autopilot-background') || id === 'autopilot-game-background') return 'background'
   if (id.startsWith('autopilot-')) return 'balance'
   if (id.startsWith('quick-') || id.startsWith('quick~')) return 'quick'
@@ -20,7 +20,7 @@ export function ownerOf(ruleId: string | undefined): Owner {
 export function ownerOfName(name: string | undefined): Owner {
   const n = name ?? ''
   if (n === 'Autopilot: game' || n.startsWith('Autopilot: keep voice')) return 'game'
-  if (n.startsWith('Autopilot: compilers')) return 'build'
+  if (n.startsWith('Autopilot: compilers') || n.startsWith('Autopilot: builds')) return 'build'
   if (n.startsWith('Autopilot: background')) return 'background'
   if (n.startsWith('Autopilot:')) return 'balance'
   if (n.startsWith('Quick:')) return 'quick'

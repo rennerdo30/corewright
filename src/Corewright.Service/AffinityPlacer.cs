@@ -35,6 +35,7 @@ internal sealed class AffinityPlacer(Func<SystemTopology> topology, Func<int> ga
     /// <summary>Why a process runs where it runs, in the words the Live placements table shows.</summary>
     private static string Reason(string rule, int onlyCcd) => rule switch
     {
+        _ when rule.StartsWith("Autopilot: builds", StringComparison.Ordinal) => "A build while you play: runs on the other CCD so the game keeps its cores.",
         _ when rule.Contains("while gaming", StringComparison.Ordinal) => "Busy while you play: moved to the other CCD so the game keeps its cores.",
         _ when rule.Contains("game", StringComparison.OrdinalIgnoreCase) => onlyCcd >= 0 ? $"The game runs on CCD {onlyCcd}." : "The game's cores.",
         _ => "Background work: every core except your strongest few while you are busy, and not the game's CCD while you play.",
