@@ -168,9 +168,11 @@ public sealed class RuleEngine(IActuator actuator, IEngineEventSink sink, Func<l
     }
 
     /// <summary>The placement cap bounds background placement; the game is the one process Autopilot most wants to place
-    /// (review M1), so its rule neither counts nor is declined.</summary>
+    /// (review M1), so its rule neither counts nor is declined. Nor are builds while gaming: a parallel build starts dozens
+    /// of short compilers that would otherwise use up the cap and push learned background programs back.</summary>
     private static bool CountsTowardCap(CompiledRule? r) =>
-        r is { IsAutopilot: true } && !r.Id.Equals(Corewright.Core.Autopilot.AutopilotRules.GameRuleId, StringComparison.Ordinal);
+        r is { IsAutopilot: true } && !r.Id.Equals(Corewright.Core.Autopilot.AutopilotRules.GameRuleId, StringComparison.Ordinal) &&
+        !r.Id.Equals(Corewright.Core.Autopilot.AutopilotRules.GameBuildsRuleId, StringComparison.Ordinal);
 
     private static bool IsListed(IReadOnlyList<ProcessInfo> processes, ProcessKey key)
     {

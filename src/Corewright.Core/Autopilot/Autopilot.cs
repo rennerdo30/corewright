@@ -220,6 +220,7 @@ public static class AutopilotRules
 {
     public const string IdPrefix = "autopilot-";
     public const string GameRuleId = IdPrefix + "game";
+    public const string GameBuildsRuleId = IdPrefix + "game-builds";
 
     public static List<Rule> Build(AutopilotSettings s, SystemTopology topo, IReadOnlyList<BackgroundVerdict>? background = null)
     {
@@ -295,6 +296,22 @@ public static class AutopilotRules
                     When = when,
                     Actions = new RuleActions { CpuPriority = g.BackgroundPriority, IoPriority = "low", Affinity = backgroundAffinity is null ? null : "non-game-ccd" },
                 });
+
+                // Builds stay off the game's CCD while a game runs (owner, 2026-11-08). No load threshold, age or launcher
+                // guard: compilers are short-lived and known to be heavy, and a placed cargo/ninja hands the mask to the
+                // compilers it starts. Not foreground-dependent: a build driver's children make it a launcher.
+                if (backgroundAffinity is not null && s.BuildTools.Enabled && s.BuildTools.Programs.Count > 0)
+                    rules.Add(new Rule
+                    {
+                        Id = GameBuildsRuleId,
+                        Name = "Autopilot: builds while gaming",
+                        Priority = 7,
+                        When = Condition.All(
+                            Condition.Leaf("fact", "isTrue", null, "game.active"),
+                            Condition.Leaf("isGame", "isFalse", null),
+                            Condition.Leaf("name", "in", string.Join(", ", s.BuildTools.Programs))),
+                        Actions = new RuleActions { Affinity = "non-game-ccd" },
+                    });
             }
         }
 
@@ -353,8 +370,8 @@ public static class AutopilotRules
         foreach (var rule in rules)
         {
             rule.Origin = RuleOrigin.Autopilot;
-            // Build tools must not acquire affinity through a lower learned/gaming rule either.
-            if (rule.Actions.Affinity is not null && s.BuildTools.Programs.Count > 0)
+            // Outside games, build tools keep every core: no learned or balancing rule gives them an affinity.
+            if (rule.Actions.Affinity is not null && rule.Id != GameBuildsRuleId && s.BuildTools.Programs.Count > 0)
                 rule.When = Condition.All(rule.When, Not(Condition.Leaf("name", "in", string.Join(", ", s.BuildTools.Programs))));
         }
         return rules;

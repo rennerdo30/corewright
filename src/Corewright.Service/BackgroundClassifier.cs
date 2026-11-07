@@ -152,7 +152,8 @@ internal sealed class BackgroundClassifier
             if (p.Parent is { } parent && _byPid.TryGetValue(parent.Pid, out var pp) && pp.Key == parent) pp.HasChildren = true;
         foreach (var p in processes)
         {
-            bool conditional = p.Name.Equals("node.exe", StringComparison.OrdinalIgnoreCase) ||
+            // Runtimes that are usually the worker themselves count as launchers only while they have children.
+            bool conditional = p.Name.Equals("node.exe", StringComparison.OrdinalIgnoreCase) || p.Name.Equals("dotnet.exe", StringComparison.OrdinalIgnoreCase) ||
                 p.Name.Equals("java.exe", StringComparison.OrdinalIgnoreCase) || p.Name.Equals("gradle.exe", StringComparison.OrdinalIgnoreCase);
             p.IsLauncher = (_launchers.Contains(p.Name) && (!conditional || p.HasChildren)) ||
                 (p.LastChildStartMs != 0 && nowMs - p.LastChildStartMs < 600_000) ||

@@ -12,7 +12,7 @@ const LOW_LEVELS = ['idle', 'belowNormal']
 function roleOf(p: ProcessRow): Role | undefined {
   const ids = (p.applied ?? []).map((a) => a.ruleId)
   if (ids.includes('autopilot-game')) return 'game'
-  if (ids.includes('autopilot-build-tools')) return 'build'
+  if (ids.includes('autopilot-build-tools') || ids.includes('autopilot-game-builds')) return 'build'
   if (ids.some((id) => id.startsWith('autopilot-background') || id === 'autopilot-game-background')) return 'background'
   if (ids.includes('autopilot-balance')) return 'balance'
   return undefined
@@ -223,7 +223,7 @@ export function Autopilot() {
             title="Compilers and build tools"
             enabled={bt.enabled}
             onToggle={(v) => update((x) => (x.autopilot.buildTools.enabled = v))}
-            summary={`High load but not latency critical: ${bt.programs.length} known ${bt.programs.length === 1 ? 'tool runs' : 'tools run'} with lower CPU and I/O priority.`}
+            summary={`High load but not latency critical: ${bt.programs.length} known ${bt.programs.length === 1 ? 'tool runs' : 'tools run'} with lower CPU and I/O priority, and off the game's CCD while you play.`}
           >
             <Row title="Build priority" desc="CPU priority for compilers, linkers and build drivers.">
               <Levels levels={LOW_LEVELS} value={bt.priority} onChange={(v) => update((x) => (x.autopilot.buildTools.priority = v))} />
