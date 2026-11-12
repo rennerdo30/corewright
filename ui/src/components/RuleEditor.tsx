@@ -5,7 +5,7 @@ import { ConditionGroup, describeCondition } from './ConditionBuilder'
 import { ContextMenu, type MenuEntry } from './ContextMenu'
 import { NET_PRIORITIES, netPriorityLabel } from '../networkPriority'
 import { RuleHistory } from './RuleHistory'
-import { CorePicker } from './CorePicker'
+import { CorePicker, isolateCount } from './CorePicker'
 
 type ActionKey = keyof RuleActions
 
@@ -42,6 +42,7 @@ export function summarizeActions(a: RuleActions): string {
     if (d.kind === 'mbps') return v === 0 ? 'no upload limit' : `upload at most ${v} Mbps`
     if (d.kind === 'dscp') return `network priority ${netPriorityLabel(v as number).toLowerCase()}`
     if (d.kind === 'mb') return `${d.title.toLowerCase().replace(/ \(.*\)/, '')} ${formatMb(v as number)}`
+    if (d.kind === 'cores' && isolateCount(v as string) !== undefined) return `${isolateCount(v as string)} isolated threads`
     if (d.kind === 'cores') return v === 'all' ? 'all cores' : /^[\d\s,;-]+$/.test(String(v)) ? `threads ${v}` : `cores ${v}`
     return `${d.title.replace(' priority', '').toLowerCase()} ${levelLabel(v as string).toLowerCase()}`
   })
@@ -182,7 +183,7 @@ export function RuleEditor(props: {
                 <button className="icon" aria-label={`Remove ${d.title}`} onClick={() => setAction(d.key, null)}>
                   {'\uE711'}
                 </button>
-                {d.kind === 'cores' && <CorePicker value={(rule.actions[d.key] as string) ?? ''} onChange={(v) => setAction(d.key, v)} />}
+                {d.kind === 'cores' && <CorePicker value={(rule.actions[d.key] as string) ?? ''} ruleId={rule.id} onChange={(v) => setAction(d.key, v)} />}
               </div>
             ))}
           </section>

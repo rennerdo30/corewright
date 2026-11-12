@@ -96,6 +96,12 @@ export function Autopilot() {
     return list
   }, [placements.data, procs.data, game, t, gameCcd])
 
+  const isolated = useMemo(() => {
+    const m = new Map<number, string>()
+    for (const i of status.data?.isolations ?? []) for (const lp of parseCores(i.reserved)) m.set(lp, i.rule)
+    return m
+  }, [status.data])
+
   const keptFree = useMemo(() => {
     if (!t || !settings?.autopilot.enabled) return undefined
     const n = settings.autopilot.background.keepBestCoresFree
@@ -172,13 +178,49 @@ export function Autopilot() {
 
       {t && sys.data && (
         <section className="ap-map card">
-          <DieMap topo={t} load={sys.data.threadUsage} tokens={a.enabled ? tokens : []} gameCcd={game ? gameCcd : undefined} keptFree={keptFree} legend />
+          <DieMap
+            topo={t}
+            load={sys.data.threadUsage}
+            tokens={a.enabled ? tokens : []}
+            gameCcd={game ? gameCcd : undefined}
+            keptFree={keptFree}
+            isolated={isolated}
+            windowsCore={status.data?.windowsCore ? new Set(parseCores(status.data.windowsCore.threads)) : undefined}
+            legend
+          />
         </section>
       )}
 
       <section className="ap-groups">
         <h3>What Autopilot does</h3>
         <div className={a.mode === 'observe' || a.enabled ? '' : 'groups-off'}>
+          <Group
+            glyph={'\uE770'}
+            title="Keep Windows responsive"
+            enabled={a.keepCoreZeroFree ?? false}
+            onToggle={(v) => update((x) => (x.autopilot.keepCoreZeroFree = v))}
+            summary={
+              a.keepCoreZeroFree
+                ? status.data?.windowsCore
+                  ? `Core 0 (threads ${status.data.windowsCore.threads}) is kept for Windows: ${status.data.windowsCore.keptOff} processes moved off${status.data.windowsCore.refused ? `, ${status.data.windowsCore.refused} refused (run the installed service to reach them)` : ''}.`
+                  : 'Core 0 is kept for Windows while Autopilot is on.'
+                : 'Moves every program off core 0, where Windows handles most interrupts, input and the desktop.'
+            }
+          >
+            <Row
+              title="What stays on core 0"
+              desc="Windows’ own protected processes, the desktop shell (Explorer, Start, search, input, audio, Task Manager), interrupts and DPCs. Every other process Autopilot can reach moves to the other cores, games included. Your own rules that set CPU cores win."
+            >
+              <span />
+            </Row>
+            <Row
+              title="Why core 0"
+              desc="Many drivers deliver their interrupts and DPCs on CPU 0, so a busy program there can delay input, audio and the desktop. The gain depends on your drivers: it helps most when LatencyMon shows high DPC times on CPU 0, and costs one core of capacity."
+            >
+              <span />
+            </Row>
+          </Group>
+
           <Group
             glyph={'\uE7FC'}
             role="game"

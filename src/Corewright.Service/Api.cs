@@ -10,7 +10,14 @@ using Corewright.Service.Windows;
 namespace Corewright.Service;
 
 public sealed record StatusDto(string Version, string Mode, bool Elevated, bool Paused, int IntervalMs, int ProcessCount,
-    int RulesVersion, int ActiveRules, int ForegroundPid, bool Autopilot, GameDto? Game, string DataDirectory, string AutopilotMode, int AutopilotPlaced, bool AutopilotCapped, string? JournalProblem = null);
+    int RulesVersion, int ActiveRules, int ForegroundPid, bool Autopilot, GameDto? Game, string DataDirectory, string AutopilotMode, int AutopilotPlaced, bool AutopilotCapped, string? JournalProblem = null,
+    IsolationDto[]? Isolations = null, WindowsCoreDto? WindowsCore = null);
+
+/// <summary>PM-49: a live "isolate:N" rule. Threads = where its program runs; Reserved = whole cores no other process uses.</summary>
+public sealed record IsolationDto(string RuleId, string Rule, int Count, string Threads, string Reserved, int Processes, int KeptOff, int Refused);
+
+/// <summary>PM-49: Autopilot keeps physical core 0 for Windows.</summary>
+public sealed record WindowsCoreDto(string Threads, int KeptOff, int Refused);
 
 public sealed record AutopilotPreviewDto(int Pid, string Process, string Rule, string Slot, string Value, string Reason);
 
@@ -116,7 +123,11 @@ internal static class Api
                     Environment.IsPrivilegedProcess, m.Engine.Paused, m.IntervalMs, m.Sampler.Processes.Count,
                     m.Engine.Version, m.Engine.Rules.Rules.Count(r => !r.Id.StartsWith(AutopilotRules.IdPrefix, StringComparison.Ordinal)),
                     m.Context.ForegroundPid, m.Settings.Autopilot.Enabled,
-                    m.Game.Game is { } g ? new GameDto(g.Pid, m.Game.GameName ?? "", m.Game.Reason) : null, m.DataDirectory, m.Settings.Autopilot.Mode, m.Engine.AutopilotPlaced, m.Engine.AutopilotCapped, m.JournalProblem));
+                    m.Game.Game is { } g ? new GameDto(g.Pid, m.Game.GameName ?? "", m.Game.Reason) : null, m.DataDirectory, m.Settings.Autopilot.Mode, m.Engine.AutopilotPlaced, m.Engine.AutopilotCapped, m.JournalProblem,
+                    [.. m.Engine.GetIsolations().Select(i => new IsolationDto(i.RuleId, i.RuleName, i.Threads, AffinityParser.Format(i.Mask),
+                        AffinityParser.Format(i.Reserved), i.Owners, i.KeptOff, i.Refused))],
+                    m.Engine.WindowsCoreMask != 0 && m.Engine.GetWindowsCoreCounts() is var (kept, refused)
+                        ? new WindowsCoreDto(AffinityParser.Format(m.Engine.WindowsCoreMask), kept, refused) : null));
         });
 
         api.MapGet("/system", () =>

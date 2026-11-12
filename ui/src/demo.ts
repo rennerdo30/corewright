@@ -228,6 +228,8 @@ const status: Status = {
   autopilot: true,
   game: { pid: gamePid, name: GAME, reason: 'installed in a game library (steamapps\\common)' },
   dataDirectory: 'C:\\ProgramData\\Corewright',
+  isolations: [{ ruleId: 'quick-obs64-exe', rule: 'Quick: obs64.exe', count: 4, threads: '18-21', reserved: '18-21', processes: 1, keptOff: 214, refused: 0 }],
+  windowsCore: { threads: '0-1', keptOff: 205, refused: 0 },
 }
 
 const name = (v: string): Rule['when'] => ({ type: 'group', combinator: 'and', children: [{ type: 'cond', field: 'name', op: 'eq', value: v }] })
@@ -245,7 +247,7 @@ const rules: RuleSet = {
       when: { type: 'group', combinator: 'and', children: [{ type: 'cond', field: 'name', op: 'in', value: 'qbittorrent.exe, steamservice.exe' }, { type: 'cond', field: 'isForeground', op: 'isFalse' }] },
       actions: { cpuPriority: 'belowNormal', ioPriority: 'veryLow', uploadLimitMbps: 25, networkPriority: 8 },
     },
-    { id: 'quick-obs64-exe', name: 'Quick: obs64.exe', enabled: true, priority: 60, sustainSeconds: 0, releaseSeconds: 0, allowRealtime: false, when: name('obs64.exe'), actions: { cpuPriority: 'aboveNormal', gpuPriority: 'aboveNormal' } },
+    { id: 'quick-obs64-exe', name: 'Quick: obs64.exe', enabled: true, priority: 60, sustainSeconds: 0, releaseSeconds: 0, allowRealtime: false, when: name('obs64.exe'), actions: { cpuPriority: 'aboveNormal', gpuPriority: 'aboveNormal', affinity: 'isolate:4' } },
     {
       id: 'browser-cap',
       name: 'Browser tabs: 4 GB cap',
@@ -278,6 +280,7 @@ const settings: AppSettings = {
   version: 3,
   autopilot: {
     enabled: true,
+    keepCoreZeroFree: true,
     gameMode: {
       enabled: true,
       gamePriority: 'high',
@@ -296,8 +299,8 @@ const settings: AppSettings = {
 }
 
 const placements: Placement[] = [
-  { pid: pids.get('OneDrive.exe')!, name: 'OneDrive.exe', cores: '16-31', ccd: 1, demandThreads: 0, placedSecondsAgo: 1820, why: 'Busy while you play: moved to the other CCD so the game keeps its cores.' },
-  { pid: pids.get('CloudBackup.exe')!, name: 'CloudBackup.exe', cores: '16-31', ccd: 1, demandThreads: 0, placedSecondsAgo: 610, why: 'Busy while you play: moved to the other CCD so the game keeps its cores.' },
+  { pid: pids.get('OneDrive.exe')!, name: 'OneDrive.exe', cores: '16-17,22-31', ccd: 1, demandThreads: 0, placedSecondsAgo: 1820, why: 'Busy while you play: moved to the other CCD so the game keeps its cores.' },
+  { pid: pids.get('CloudBackup.exe')!, name: 'CloudBackup.exe', cores: '16-17,22-31', ccd: 1, demandThreads: 0, placedSecondsAgo: 610, why: 'Busy while you play: moved to the other CCD so the game keeps its cores.' },
 ]
 
 const background: BackgroundRow[] = [

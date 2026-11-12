@@ -44,6 +44,14 @@ public sealed class CompiledRule
     public int SlotMask { get; internal set; }
 
     public bool Sets(Slot slot) => (SlotMask & (1 << (int)slot)) != 0;
+
+    /// <summary>Built-in rule without per-process Activity entries (PM-49 core guards touch hundreds of processes at once).</summary>
+    public bool Quiet { get; internal set; }
+
+    /// <summary>A built-in affinity rule the engine claims itself (PM-49 core guards); never part of a compiled set.</summary>
+    public static CompiledRule Builtin(string id, string name, RuleOrigin origin) =>
+        new(new Rule { Id = id, Name = name, Origin = origin, Actions = new RuleActions { Affinity = "all" } }, static (_, _) => true, false)
+        { SlotMask = 1 << (int)Slot.Affinity, Quiet = true };
 }
 
 public sealed class CompiledRuleSet

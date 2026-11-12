@@ -88,6 +88,18 @@ public static class AffinityParser
             mask = topo.CcdMasks[ccdIndex] & topo.AllMask;
             return mask != 0;
         }
+        if (lower.StartsWith("isolate:"))
+        {
+            // PM-49: N threads of its own; the engine picks them and keeps every other process off them.
+            if (!int.TryParse(lower[8..], out int threads) || threads < 1) { error = "isolate:N needs a whole number of threads, at least 1"; return false; }
+            if (topo.LogicalCount >= 64) { error = "isolation supports up to 63 logical processors"; return false; }
+            int width = topo.PhysicalCores.Length > 0 ? Math.Max(1, topo.LogicalCount / topo.PhysicalCores.Length) : 1;
+            // Physical core 0 and at least one more core always stay for everything else.
+            int max = Math.Max(0, topo.LogicalCount - 2 * width);
+            if (threads > max) { error = $"isolate:{threads} leaves too little for Windows: at most {max} of {topo.LogicalCount} threads"; return false; }
+            mask = (ulong)AffinityModes.Isolate(threads);
+            return true;
+        }
         if (lower.StartsWith("best-cores:") && int.TryParse(lower[11..], out int best))
         {
             if (topo.CoresByRank.Length == 0) { error = "the CPU reports no core ranking"; return false; }
@@ -121,6 +133,8 @@ public static class AffinityParser
 
     public static string Format(ulong mask)
     {
+        if (AffinityModes.IsIsolate((long)mask))
+            return $"isolate:{AffinityModes.ThreadsOf((long)mask)}";
         if (AffinityModes.IsDynamic((long)mask))
             return (long)mask == AffinityModes.Game ? "auto (game CCD)" : (long)mask == AffinityModes.NonGame ? "auto (other CCDs while gaming)" : "auto (background)";
         if (mask == 0) return "none";
@@ -152,11 +166,25 @@ public static class AffinityModes
     public const long Game = unchecked((long)0x8000_0000_0000_0002UL);
     public const long NonGame = unchecked((long)0x8000_0000_0000_0003UL);
 
-    public static bool IsDynamic(long value) => value == Background || value == Game || value == NonGame;
+    /// <summary>"isolate:N" (PM-49): bit 63 plus bit 32 plus N in the low bits. Not a real mask below 64 logical processors.</summary>
+    private const long IsolateBase = unchecked((long)0x8000_0001_0000_0000UL);
+
+    public static long Isolate(int threads) => IsolateBase | (uint)threads;
+    public static bool IsIsolate(long value) => (value & unchecked((long)0xFFFF_FFFF_0000_0000UL)) == IsolateBase;
+    public static int ThreadsOf(long value) => (int)(value & 0xFFFF);
+
+    public static bool IsDynamic(long value) => value == Background || value == Game || value == NonGame || IsIsolate(value);
 }
 
 /// <summary>Resolves a dynamic affinity mode to a real mask for one process. Implemented by the host.</summary>
 public interface IAffinityPlacer
 {
     long Resolve(Engine.ProcessInfo process, long mode, Engine.EvalContext context);
+
+    /// <summary>
+    /// PM-49: picks the cores for "isolate:N". <paramref name="reserve"/> is every logical processor no other process may
+    /// use (whole cores, so an odd N leaves a sibling idle); the result is the N threads the owner runs on, 0 when N do
+    /// not fit. <paramref name="taken"/> are cores other isolations already hold.
+    /// </summary>
+    ulong PickIsolated(Engine.ProcessInfo owner, int threads, ulong taken, Engine.EvalContext context, out ulong reserve, out string? why);
 }

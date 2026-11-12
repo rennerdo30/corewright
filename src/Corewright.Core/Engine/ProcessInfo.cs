@@ -165,3 +165,18 @@ public static class ProtectedProcesses
     public static bool Is(int pid, string name, int selfPid) =>
         pid is 0 or 4 || pid == selfPid || Names.Contains(name);
 }
+
+/// <summary>
+/// PM-49 "keep core 0 for Windows": the desktop shell, input, audio and Task Manager stay on every core, so core 0 is
+/// left to them, the protected system processes, interrupts and DPCs. Everything else moves off it.
+/// </summary>
+public static class WindowsShell
+{
+    private static readonly HashSet<string> Names = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "explorer.exe", "sihost.exe", "ShellExperienceHost.exe", "StartMenuExperienceHost.exe", "SearchHost.exe",
+        "TextInputHost.exe", "ctfmon.exe", "audiodg.exe", "Taskmgr.exe", "ShellHost.exe", "LockApp.exe", "LogonUI.exe",
+    };
+
+    public static bool Is(string name) => Names.Contains(name);
+}
