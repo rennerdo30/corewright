@@ -125,7 +125,7 @@ public sealed class RuleEngine(IActuator actuator, IEngineEventSink sink, Func<l
         public ulong Reserve, Mask;
         public long Tick;
         public int Owners;
-        /// <summary>Owners this tick whose own write was refused (only allocated on failure).</summary>
+        /// <summary>Owners this tick whose own write was refused.</summary>
         public List<ProcessKey> FailedOwners = [];
     }
 
@@ -176,9 +176,9 @@ public sealed class RuleEngine(IActuator actuator, IEngineEventSink sink, Func<l
         }
     }
 
-    /// <summary>The guards will claim this process's affinity this tick if it overlaps what they remove.</summary>
-    private bool GuardsApply(ProcessInfo p) =>
-        !Paused && p.GroupId is null && (ReservedMask != 0 || (_windowsTrim != 0 && !WindowsShell.Is(p.Name)));
+    /// <summary>The guards claim this process's affinity this tick when its own mask overlaps what they remove for it.</summary>
+    private bool GuardsClaim(ProcessInfo p, long ownMask) =>
+        !Paused && p.GroupId is null && (ownMask & (long)(ReservedMask | (WindowsShell.Is(p.Name) ? 0 : _windowsTrim))) != 0;
 
     private EvalContext? _ctx;
 
@@ -262,7 +262,7 @@ public sealed class RuleEngine(IActuator actuator, IEngineEventSink sink, Func<l
     {
         ulong mask = 0;
         foreach (var r in _reservations.Values) mask |= r.Reserve;
-        if (ReservedMask != mask) _guardVersion++;
+        if (ReservedMask != mask) { _guardVersion++; _lastReserved = mask; } // one re-read, not a second next tick
         ReservedMask = mask;
         _reservationVersion++;
     }
@@ -714,7 +714,7 @@ public sealed class RuleEngine(IActuator actuator, IEngineEventSink sink, Func<l
             // A child of a guarded parent would be put back and trimmed again in the same tick, with an Activity line per
             // process start (review M6). While guards run, keep the inherited trim; the guard claims it with the real
             // original (InheritedOriginal), so it is restored when the guard ends.
-            if (slot == Slot.Affinity && source.Guard && GuardsApply(p))
+            if (slot == Slot.Affinity && source.Guard && GuardsClaim(p, source.Original))
             { st.InheritAttempts[s] = 4; continue; }
             if (!actuator.TryWrite(p.Key, slot, source.Original, out var error))
             {
