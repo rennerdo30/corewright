@@ -36,6 +36,8 @@ internal sealed unsafe class ProcessSampler : IDisposable
     private long _lastTimestamp;
     private long _tick;
     private long _lastIdle, _lastKernel, _lastUser;
+    private long _faults;
+    private double _faultSeconds;
 
     public ProcessSampler()
     {
@@ -57,6 +59,8 @@ internal sealed unsafe class ProcessSampler : IDisposable
     public int ReadyThreads { get; private set; }
     /// <summary>PM-51: hard page faults per second over all processes since the previous sample.</summary>
     public double HardFaultsPerSec { get; private set; }
+    /// <summary>The last Sample() could not read the process list; its values are from the previous sample.</summary>
+    public bool Failed { get; private set; }
 
     public bool TryGet(int pid, out ProcessInfo info) => _byPid.TryGetValue(pid, out info!);
 
@@ -76,9 +80,11 @@ internal sealed unsafe class ProcessSampler : IDisposable
         {
             // No sample: nothing to add up. The next good sample's deltas span this gap consistently.
             IntervalSeconds = 0;
+            Failed = true;
             return;
         }
 
+        Failed = false;
         long now = Stopwatch.GetTimestamp();
         double dt = _lastTimestamp == 0 ? 0 : (double)(now - _lastTimestamp) / Stopwatch.Frequency;
         _lastTimestamp = now;
@@ -133,8 +139,11 @@ internal sealed unsafe class ProcessSampler : IDisposable
             info.Threads = *(int*)(p + OffThreads);
             if (pid != 0) // the idle process's per-CPU threads are not work waiting for a processor
             {
+                uint entry = *(uint*)(p + OffNext);
+                long room = (entry != 0 ? entry : _buffer + _capacity - p) - OffThreadArray;
+                int threads = (int)Math.Clamp(Math.Min(info.Threads, room / ThreadStride), 0, int.MaxValue);
                 byte* t = p + OffThreadArray;
-                for (int i = 0; i < info.Threads; i++, t += ThreadStride)
+                for (int i = 0; i < threads; i++, t += ThreadStride)
                     if (*(uint*)(t + OffThreadState) == ThreadReady) ready++;
             }
             uint hard = *(uint*)(p + OffHardFaults);
@@ -206,7 +215,15 @@ internal sealed unsafe class ProcessSampler : IDisposable
 
         TotalIoBytesPerSec = totalIo;
         ReadyThreads = ready;
-        HardFaultsPerSec = dt > 0 ? hardFaults / dt : 0;
+        // A rate over a few milliseconds (an early tick) is noise: add up until half a second has passed.
+        _faults += hardFaults;
+        _faultSeconds += dt;
+        if (_faultSeconds >= 0.5)
+        {
+            HardFaultsPerSec = _faults / _faultSeconds;
+            _faults = 0;
+            _faultSeconds = 0;
+        }
         SampleSystem();
     }
 

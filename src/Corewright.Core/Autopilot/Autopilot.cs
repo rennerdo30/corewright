@@ -57,7 +57,11 @@ public sealed class AutopilotSettings
     /// "always" keeps core 0 free whenever the feature is on (PM-49 behaviour); "stall" only for a while after the
     /// responsiveness meter saw a CPU or interrupt stall.
     /// </summary>
-    public string KeepCoreZeroTrigger { get; set; } = "always";
+    public string KeepCoreZeroTrigger { get => _keepCoreZeroTrigger; set { _keepCoreZeroTrigger = value; KeepCoreZeroTriggerProvided = true; } }
+    private string _keepCoreZeroTrigger = "always";
+    /// <summary>A PUT without the field (clients before PM-51) keeps the stored value instead of resetting it to "always".</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public bool KeepCoreZeroTriggerProvided { get; private set; }
 
     public GameModeSettings GameMode { get; set; } = new();
     public BalanceSettings Balance { get; set; } = new();

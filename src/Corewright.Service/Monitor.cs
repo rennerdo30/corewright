@@ -262,6 +262,7 @@ internal sealed class Monitor : BackgroundService
         {
             // A client that leaves usage out (written before beta.12) keeps the current value, read under the same lock.
             if (!settings.UsageProvided) settings.Usage = Settings.Usage;
+            if (!settings.Autopilot.KeepCoreZeroTriggerProvided) settings.Autopilot.KeepCoreZeroTrigger = Settings.Autopilot.KeepCoreZeroTrigger;
             _settingsStore.Save(settings);
             Settings = settings;
             Engine.ObserveAutopilot = settings.Autopilot.Mode == "observe";
@@ -348,13 +349,19 @@ internal sealed class Monitor : BackgroundService
             {
                 Tick(lateness);
                 // PM-51: how late the timed wait ends is the scheduling delay a normal-priority thread sees right now.
+                // Unbiased interrupt time leaves out sleep and connected standby; the wall clock includes them.
                 int interval = IntervalMs;
-                long waitStart = System.Diagnostics.Stopwatch.GetTimestamp();
+                long wallStart = Environment.TickCount64;
+                Native.QueryUnbiasedInterruptTime(out long awakeStart);
                 try
                 {
                     bool woken = await _wake.WaitAsync(interval, ct);
-                    lateness = woken ? double.NaN : Math.Max(0, System.Diagnostics.Stopwatch.GetElapsedTime(waitStart).TotalMilliseconds - interval);
-                    if (lateness > 30_000) lateness = double.NaN; // sleep or hibernation, not a stall (as in usage history)
+                    Native.QueryUnbiasedInterruptTime(out long awakeEnd);
+                    double awakeMs = (awakeEnd - awakeStart) / 10_000.0;
+                    bool slept = Environment.TickCount64 - wallStart - awakeMs > 500;
+                    lateness = woken || slept ? double.NaN : Math.Max(0, awakeMs - interval);
+                    if (lateness > 30_000) lateness = double.NaN; // backstop, as in usage history
+                    if (slept) lock (Sync) _responsiveness.Resumed();
                 }
                 catch (OperationCanceledException) { break; }
             }
@@ -530,6 +537,7 @@ internal sealed class Monitor : BackgroundService
     private void UpdateResponsiveness(double lateness)
     {
         var r = _responsiveness;
+        if (_sampler.Failed) return; // no fresh process list: keep the last score rather than repeat old readings
         double memPercent = _sampler.MemoryTotal == 0 ? 0 : 100.0 * _sampler.MemoryUsed / _sampler.MemoryTotal;
         if (r.Update(_ctx.NowMs, lateness, _sampler.ReadyThreads, Topology.LogicalCount, _cores.DpcIsr, _sampler.HardFaultsPerSec, memPercent))
         {

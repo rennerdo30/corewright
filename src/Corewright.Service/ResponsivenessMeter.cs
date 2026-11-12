@@ -16,6 +16,8 @@ namespace Corewright.Service;
 internal sealed class ResponsivenessMeter
 {
     public const int StallBelow = 50, RecoverAt = 70, StallAfterMs = 1500, RecoverAfterMs = 5000, HardStallMs = 1000;
+    /// <summary>A named signal at this stall share or more is the cause (and, for CPU or interrupts, arms core 0).</summary>
+    private const double NamedCause = 0.3;
     /// <summary>How long Autopilot keeps core 0 free after the last CPU or interrupt stall ("stall" trigger).</summary>
     public const int CoreZeroHoldMs = 5 * 60_000;
 
@@ -65,12 +67,13 @@ internal sealed class ResponsivenessMeter
         double sMem = memoryUsedPercent >= 90 ? Ramp(hardFaultsPerSec, 200, 2000) : 0;
         double share = Math.Max(Math.Max(sLate, sQueue), Math.Max(sDpc, sMem));
         Score = (int)Math.Round(100 * (1 - share));
-        // The named cause wins over the bare delay when both are high: the delay is the symptom.
+        // The delay is the symptom: a named signal with a clear share is the cause even when the delay saturates first.
+        double named = Math.Max(sDpc, Math.Max(sQueue, sMem));
         Cause = share <= 0 ? "none"
-            : sDpc >= share ? "interrupts"
-            : sQueue >= share ? "cpu"
-            : sMem >= share ? "memory"
-            : "scheduling";
+            : named < NamedCause && sLate > named ? "scheduling"
+            : sDpc >= named ? "interrupts"
+            : sQueue >= named ? "cpu"
+            : "memory";
 
         bool changed = false;
         bool hard = !double.IsNaN(latenessMs) && latenessMs >= HardStallMs;
@@ -103,8 +106,15 @@ internal sealed class ResponsivenessMeter
             StallCause = Cause;
         }
         // Core 0 helps when programs crowd the processors or drivers load CPU 0, not against paging.
-        if (Stalled && Cause is "cpu" or "interrupts") CoreZeroUntilMs = nowMs + CoreZeroHoldMs;
+        if (Stalled && (sDpc >= NamedCause || sQueue >= NamedCause)) CoreZeroUntilMs = nowMs + CoreZeroHoldMs;
         return changed;
+    }
+
+    /// <summary>After sleep: a low reading from before it must not combine with one after it into a stall.</summary>
+    public void Resumed()
+    {
+        _lowSinceMs = -1;
+        LatenessMs = 0;
     }
 
     public bool CoreZeroWanted(long nowMs) => nowMs < CoreZeroUntilMs;
