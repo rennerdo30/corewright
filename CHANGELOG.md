@@ -3,7 +3,7 @@
 Release notes for every Corewright version, newest first. The release workflow publishes the section of a version
 as its GitHub release notes.
 
-## Unreleased
+## 0.1.0-beta.17
 
 ### New
 
@@ -19,6 +19,11 @@ as its GitHub release notes.
   where Windows handles most interrupts, input and the desktop, games included. The desktop shell, input, audio,
   Task Manager and Windows' protected processes stay. Your own rules that set CPU cores win. The CPU map marks the
   core.
+
+### Fixed
+
+- The game and builds-while-gaming placements no longer count against Autopilot's placement limit in Explain and
+  the Observe preview, matching what Autopilot actually does.
 
 ## 0.1.0-beta.14
 
