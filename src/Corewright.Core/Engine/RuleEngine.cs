@@ -60,7 +60,8 @@ public sealed class RuleEngine(IActuator actuator, IEngineEventSink sink, Func<l
     private readonly Tombstone[] _tombs = new Tombstone[256];
     private int _nextTomb;
     private long _tombsUntil;
-    private readonly record struct Inheritance(long From, long Until, long Changed, long Value, long Previous, long Original);
+    /// <param name="Guard">The value came from a PM-49 core guard (isolation or core 0).</param>
+    private readonly record struct Inheritance(long From, long Until, long Changed, long Value, long Previous, long Original, bool Guard = false);
     private readonly record struct Tombstone(ProcessKey Key, ProcessKey? Parent, string Name, Inheritance Cpu, Inheritance Affinity, long Expires);
     private CompiledRuleSet _set = CompiledRuleSet.Empty;
     private int _version;
@@ -98,6 +99,17 @@ public sealed class RuleEngine(IActuator actuator, IEngineEventSink sink, Func<l
     /// <summary>Logical processors Autopilot keeps for Windows (physical core 0), 0 when off. Applied only while Autopilot is on.</summary>
     public ulong WindowsCoreMask { get; set; }
 
+    /// <summary>The core-0 trim actually in force this tick: none while Autopilot is frozen or only observing.</summary>
+    private ulong _windowsTrim;
+    private ulong _lastReserved, _lastWindowsTrim;
+    /// <summary>
+    /// Bumped whenever what the guards remove may have changed (reserved cores, the core-0 trim in force, pause, resume,
+    /// rule changes): every unowned process is read again once. Never a per-tick read.
+    /// </summary>
+    private int _guardVersion = 1;
+    /// <summary>Processes of an isolation rule that refused their own write; a restarted process tries again (review M5).</summary>
+    private readonly Dictionary<string, HashSet<ProcessKey>> _ownerFailed = new(StringComparer.Ordinal);
+
     /// <summary>Every logical processor an isolation holds; no other controllable process may run there.</summary>
     public ulong ReservedMask { get; private set; }
 
@@ -113,6 +125,8 @@ public sealed class RuleEngine(IActuator actuator, IEngineEventSink sink, Func<l
         public ulong Reserve, Mask;
         public long Tick;
         public int Owners;
+        /// <summary>Owners this tick whose own write was refused.</summary>
+        public List<ProcessKey> FailedOwners = [];
     }
 
     private readonly Dictionary<string, Reservation> _reservations = new(StringComparer.Ordinal);
@@ -146,7 +160,25 @@ public sealed class RuleEngine(IActuator actuator, IEngineEventSink sink, Func<l
         }
         _set = set;
         _isolationRefused.Clear();
+        _ownerFailed.Clear();
+        _guardVersion++;
     }
+
+    /// <summary>Once per tick, before any process: refresh the guard inputs and invalidate cached reads when they change.</summary>
+    private void UpdateGuardInputs()
+    {
+        _windowsTrim = WindowsCoreMask != 0 && !FreezeAutopilot && !ObserveAutopilot && !Paused ? WindowsCoreMask : 0;
+        if (_windowsTrim != _lastWindowsTrim || ReservedMask != _lastReserved)
+        {
+            _lastWindowsTrim = _windowsTrim;
+            _lastReserved = ReservedMask;
+            _guardVersion++;
+        }
+    }
+
+    /// <summary>The guards claim this process's affinity this tick when its own mask overlaps what they remove for it.</summary>
+    private bool GuardsClaim(ProcessInfo p, long ownMask) =>
+        !Paused && p.GroupId is null && (ownMask & (long)(ReservedMask | (WindowsShell.Is(p.Name) ? 0 : _windowsTrim))) != 0;
 
     private EvalContext? _ctx;
 
@@ -158,6 +190,7 @@ public sealed class RuleEngine(IActuator actuator, IEngineEventSink sink, Func<l
         AutopilotCapped = AutopilotPlaced > AutopilotPlacementLimit;
         _previewPlacements = 0;
         _previewAllowed.Clear();
+        UpdateGuardInputs();
         bool track = _set.Rules.Length > 0 || _states.Count != 0 || WindowsCoreMask != 0 || _nowMs() < _tombsUntil;
         if (track)
         {
@@ -190,6 +223,7 @@ public sealed class RuleEngine(IActuator actuator, IEngineEventSink sink, Func<l
             Journal?.Forget(key);
             actuator.Forget(key);
             _states.Remove(key);
+            foreach (var failed in _ownerFailed.Values) failed.Remove(key);
         }
         _gone.Clear();
         ReleaseUnusedReservations();
@@ -201,14 +235,24 @@ public sealed class RuleEngine(IActuator actuator, IEngineEventSink sink, Func<l
     {
         if (_reservations.Count == 0) return;
         foreach (var (id, r) in _reservations)
-            if (r.Tick != _tick) _released.Add(id);
+            if (r.Tick != _tick || r.Owners == 0) _released.Add(id);
         if (_released.Count == 0) return;
         foreach (var id in _released)
         {
             var r = _reservations[id];
             _reservations.Remove(id);
-            sink.Emit(new EngineEvent(EngineEventKind.Info, 0, "", r.RuleName, Slots.Name(Slot.Affinity), AffinityParser.Format(r.Reserve),
-                "isolation ended: these cores are available to every process again"));
+            if (r.Tick == _tick)
+            {
+                // Its program runs but refused the write (protected, elevated, console mode): keeping everyone else off
+                // cores it never uses would only cost them. Those processes are not retried; a new one tries again.
+                if (!_ownerFailed.TryGetValue(id, out var keys)) _ownerFailed[id] = keys = [];
+                foreach (var k in r.FailedOwners) keys.Add(k);
+                sink.Emit(new EngineEvent(EngineEventKind.Failed, 0, "", r.RuleName, Slots.Name(Slot.Affinity), $"isolate:{r.Threads}",
+                    "isolation not applied: the program itself could not be moved to its threads"));
+            }
+            else
+                sink.Emit(new EngineEvent(EngineEventKind.Info, 0, "", r.RuleName, Slots.Name(Slot.Affinity), AffinityParser.Format(r.Reserve),
+                    "isolation ended: these cores are available to every process again"));
         }
         _released.Clear();
         RecomputeReserved();
@@ -218,6 +262,7 @@ public sealed class RuleEngine(IActuator actuator, IEngineEventSink sink, Func<l
     {
         ulong mask = 0;
         foreach (var r in _reservations.Values) mask |= r.Reserve;
+        if (ReservedMask != mask) { _guardVersion++; _lastReserved = mask; } // one re-read, not a second next tick
         ReservedMask = mask;
         _reservationVersion++;
     }
@@ -226,20 +271,23 @@ public sealed class RuleEngine(IActuator actuator, IEngineEventSink sink, Func<l
     /// The threads an "isolate:N" rule runs on. Chosen once by the placer (topology-aware) and kept while the rule has a
     /// process, so the isolated program never moves; every process of the rule shares them.
     /// </summary>
-    private ulong Reserve(ProcessInfo p, CompiledRule rule, int threads, EvalContext ctx)
+    private ulong Reserve(ProcessInfo p, ProcState st, CompiledRule rule, int threads, EvalContext ctx)
     {
+        int a = (int)Slot.Affinity;
         if (_reservations.TryGetValue(rule.Id, out var r))
         {
             if (r.Threads == threads)
             {
-                if (r.Tick != _tick) { r.Tick = _tick; r.Owners = 0; }
-                r.Owners++;
+                if (r.Tick != _tick) { r.Tick = _tick; r.Owners = 0; r.FailedOwners.Clear(); }
+                // An owner whose write was refused does not keep the reservation alive (review M5).
+                if (!(st.Failed[a] && st.FailedValue[a] == (long)r.Mask)) r.Owners++;
+                else r.FailedOwners.Add(p.Key);
                 return r.Mask;
             }
             _reservations.Remove(rule.Id); // The rule now asks for another count: pick again.
             RecomputeReserved();
         }
-        if (Placer is null) return 0;
+        if (Placer is null || (_ownerFailed.TryGetValue(rule.Id, out var failedKeys) && failedKeys.Contains(p.Key))) return 0;
         if (_isolationRefused.TryGetValue(rule.Id, out var refused) && refused.Version == _reservationVersion) return 0;
         ulong mask = Placer.PickIsolated(p, threads, ReservedMask, ctx, out ulong reserve, out var why);
         if (mask == 0 || (mask & ~reserve) != 0 || (reserve & ReservedMask) != 0)
@@ -263,12 +311,11 @@ public sealed class RuleEngine(IActuator actuator, IEngineEventSink sink, Func<l
     /// mask loses the reserved cores; if nothing is left it gets every free core. Processes no rule places get every
     /// free core through a built-in guard rule, which reverts as soon as nothing is reserved.
     /// </summary>
-    private void ApplyCoreGuards(ProcessInfo p, ref bool has, ref long value, ref CompiledRule? rule)
+    private void ApplyCoreGuards(ProcessInfo p, ProcState st, ref bool has, ref long value, ref CompiledRule? rule)
     {
         if (p.GroupId is not null) return; // Groups own their processes (PM-39).
         ulong isolated = ReservedMask;
-        ulong windows = WindowsCoreMask != 0 && !FreezeAutopilot && !ObserveAutopilot && !WindowsShell.Is(p.Name) &&
-            (!has || rule!.IsAutopilot) ? WindowsCoreMask : 0;
+        ulong windows = _windowsTrim != 0 && !WindowsShell.Is(p.Name) && (!has || rule!.IsAutopilot) ? _windowsTrim : 0;
         ulong trim = isolated | windows;
         if (trim == 0) return;
         int n = _ctx?.LogicalCount ?? 64;
@@ -282,8 +329,22 @@ public sealed class RuleEngine(IActuator actuator, IEngineEventSink sink, Func<l
         }
         else
         {
+            // Never widen (review H2): a process that runs on some cores keeps exactly those, minus the reserved ones.
+            // Its own mask is the original the engine captured, or the current one, read once per guard change.
+            int a = (int)Slot.Affinity;
+            ulong own;
+            if (st.Owned[a]) own = (ulong)st.Original[a];
+            else
+            {
+                if (st.GuardVersion == _guardVersion) return; // already read: no overlap, or unreadable
+                st.GuardVersion = _guardVersion;
+                if (!actuator.TryRead(p.Key, Slot.Affinity, out long current, out _)) return;
+                own = (st.InheritedMask & (1 << a)) != 0 && current == st.InheritedValue[a] ? (ulong)st.InheritedOriginal[a] : (ulong)current;
+            }
+            if ((own & trim) == 0) return; // nothing to move; an owned slot reverts to its original
+            ulong kept = own & ~trim;
             has = true;
-            value = (long)free;
+            value = (long)(kept != 0 ? kept : free);
             rule = isolated != 0 ? IsolationGuard : WindowsGuard;
         }
     }
@@ -299,7 +360,7 @@ public sealed class RuleEngine(IActuator actuator, IEngineEventSink sink, Func<l
             foreach (var st in _states.Values)
             {
                 if (st.AppliedRule[a]?.Id == r.RuleId) continue;
-                if (st.IsApplied[a] && (st.Applied[a] & (long)r.Reserve) == 0) keptOff++;
+                if (st.IsApplied[a] && (st.Applied[a] & (long)r.Reserve) == 0 && (ReferenceEquals(st.AppliedRule[a], IsolationGuard) || st.Original[a] != st.Applied[a])) keptOff++;
                 else if (st.Failed[a] && (st.FailedValue[a] & (long)r.Reserve) == 0) refused++;
             }
             list.Add(new IsolationInfo(r.RuleId, r.RuleName, r.Threads, r.Mask, r.Reserve, r.Owners, keptOff, refused));
@@ -314,7 +375,7 @@ public sealed class RuleEngine(IActuator actuator, IEngineEventSink sink, Func<l
         if (WindowsCoreMask == 0) return (0, 0);
         foreach (var st in _states.Values)
         {
-            if (st.IsApplied[a] && (st.Applied[a] & (long)WindowsCoreMask) == 0) kept++;
+            if (st.IsApplied[a] && (st.Applied[a] & (long)WindowsCoreMask) == 0 && (st.Original[a] & (long)WindowsCoreMask) != 0) kept++;
             else if (st.Failed[a] && (st.FailedValue[a] & (long)WindowsCoreMask) == 0) refused++;
         }
         return (kept, refused);
@@ -347,6 +408,7 @@ public sealed class RuleEngine(IActuator actuator, IEngineEventSink sink, Func<l
         if (Paused) return;
         RevertAll();
         Paused = true;
+        _guardVersion++;
         sink.Emit(new EngineEvent(EngineEventKind.Info, 0, "", null, null, null, "rules paused; releases requested"));
     }
 
@@ -355,12 +417,14 @@ public sealed class RuleEngine(IActuator actuator, IEngineEventSink sink, Func<l
         if (!Paused) return;
         Paused = false;
         _version++;
+        _guardVersion++;
         sink.Emit(new EngineEvent(EngineEventKind.Info, 0, "", null, null, null, "rules resumed"));
     }
 
     /// <summary>Retains failed restores for the sampler to retry. Shutdown reports the remaining ownership.</summary>
     public void RevertAll(bool stopping = false, Action<EngineEvent>? onUnrestored = null)
     {
+        _guardVersion++;
         foreach (var st in _states.Values)
         {
             for (int s = 0; s < Slots.Count; s++)
@@ -480,13 +544,13 @@ public sealed class RuleEngine(IActuator actuator, IEngineEventSink sink, Func<l
                     if ((Slot)s == Slot.Affinity && AffinityModes.IsIsolate(value))
                     {
                         if (_reservations.TryGetValue(r.Id, out var res)) won.Add($"affinity (isolated: {AffinityParser.Format(res.Mask)})");
-                        else lost.Add($"affinity (isolation: {(_isolationRefused.TryGetValue(r.Id, out var why) ? why.Why : "cores are picked on the next tick")})");
+                        else lost.Add($"affinity (isolation: {(_ownerFailed.TryGetValue(r.Id, out var fk) && fk.Contains(p.Key) ? "the program could not be moved to its threads" : _isolationRefused.TryGetValue(r.Id, out var why) ? why.Why : "cores are picked on the next tick")})");
                     }
                     else if (!retained && (Slot)s == Slot.Affinity && AffinityModes.IsDynamic(value) && (Placer?.Resolve(p, value, ctx) ?? 0) == 0)
                         lost.Add("affinity (no placement: no useful safe mask)");
-                    else if (!retained && (Slot)s == Slot.Affinity && r.IsAutopilot &&
+                    else if (!retained && (Slot)s == Slot.Affinity && CountsTowardCap(r) &&
                         (ObserveAutopilot ? _previewPlacements > AutopilotPlacementLimit && !_previewAllowed.Contains(p.Key) :
-                            AutopilotPlaced >= AutopilotPlacementLimit && !(st?.IsApplied[s] == true && st.AppliedRule[s] is { IsAutopilot: true })))
+                            AutopilotPlaced >= AutopilotPlacementLimit && !(st?.IsApplied[s] == true && CountsTowardCap(st.AppliedRule[s]))))
                         lost.Add("affinity (placement cap reached)");
                     else if ((Slot)s == Slot.CpuPriority && r.Source.Actions.CpuPriorityLowerOnly && p.BasePriority != 0 && p.BasePriority < Slots.BasePriorityOf((CpuPriorityLevel)value))
                         lost.Add("cpuPriority (already lower; left alone)");
@@ -564,7 +628,7 @@ public sealed class RuleEngine(IActuator actuator, IEngineEventSink sink, Func<l
         bool isolationOwner = false;
         if ((claimed & (1 << aff)) != 0 && AffinityModes.IsIsolate(want[aff]))
         {
-            long mask = (long)Reserve(p, rules[wantRule[aff]], AffinityModes.ThreadsOf(want[aff]), ctx);
+            long mask = (long)Reserve(p, st, rules[wantRule[aff]], AffinityModes.ThreadsOf(want[aff]), ctx);
             if (mask == 0) claimed &= ~(1 << aff);
             else { want[aff] = mask; isolationOwner = true; }
         }
@@ -573,7 +637,7 @@ public sealed class RuleEngine(IActuator actuator, IEngineEventSink sink, Func<l
         {
             if (s < 2 && st.InheritAttempts[s] > 0 && st.InheritAttempts[s] < 4) continue;
             bool has = (claimed & (1 << s)) != 0;
-            if (has && ObserveAutopilot && s == (int)Slot.Affinity && rules[wantRule[s]].IsAutopilot &&
+            if (has && ObserveAutopilot && s == (int)Slot.Affinity && CountsTowardCap(rules[wantRule[s]]) &&
                 (!AffinityModes.IsDynamic(want[s]) || (Placer?.Resolve(p, want[s], ctx) ?? 0) != 0))
             {
                 if (++_previewPlacements > AutopilotPlacementLimit) AutopilotCapped = true;
@@ -582,7 +646,13 @@ public sealed class RuleEngine(IActuator actuator, IEngineEventSink sink, Func<l
             if (has && ObserveAutopilot && rules[wantRule[s]].IsAutopilot) has = false;
             // Frozen: what Autopilot set on a process outside any group stays exactly as it is.
             if (!has && !ObserveAutopilot && FreezeAutopilot && p.GroupId is null && st.IsApplied[s] && st.AppliedRule[s] is { IsAutopilot: true } frozen &&
-                (!frozen.ForegroundDependent || ForegroundSafe(p, ctx))) continue;
+                (!frozen.ForegroundDependent || ForegroundSafe(p, ctx)))
+            {
+                // Isolation is a user-tier rule: a frozen Autopilot mask still leaves isolated cores (review H4).
+                if (s == aff && (st.Applied[s] & (long)ReservedMask) != 0)
+                    Reconcile(p, st, s, true, st.Applied[s], frozen, skipCap: true);
+                continue;
+            }
             Reconcile(p, st, s, has, want[s], has ? rules[wantRule[s]] : null, isolationOwner);
         }
     }
@@ -640,7 +710,12 @@ public sealed class RuleEngine(IActuator actuator, IEngineEventSink sink, Func<l
             st.InheritedValue[s] = inherited;
             st.InheritedOriginal[s] = source.Original;
             // Carried provenance is useful even when this process has no rule, or its put-back fails.
-            st.History[s] = new(p.Key.CreateTime, 0, p.Key.CreateTime, inherited, inherited, source.Original);
+            st.History[s] = new(p.Key.CreateTime, 0, p.Key.CreateTime, inherited, inherited, source.Original, source.Guard);
+            // A child of a guarded parent would be put back and trimmed again in the same tick, with an Activity line per
+            // process start (review M6). While guards run, keep the inherited trim; the guard claims it with the real
+            // original (InheritedOriginal), so it is restored when the guard ends.
+            if (slot == Slot.Affinity && source.Guard && GuardsClaim(p, source.Original))
+            { st.InheritAttempts[s] = 4; continue; }
             if (!actuator.TryWrite(p.Key, slot, source.Original, out var error))
             {
                 if (st.InheritAttempts[s] == 4)
@@ -702,7 +777,7 @@ public sealed class RuleEngine(IActuator actuator, IEngineEventSink sink, Func<l
     private static bool ForegroundSafe(ProcessInfo p, EvalContext ctx) => ctx.ForegroundKnown &&
         (p.SessionId == 0 || p.SessionId == ctx.ForegroundSessionId) && !ctx.IsForegroundApp(p) && !p.IsLauncher && !p.LatencyCritical && !p.IsGame;
 
-    private void Reconcile(ProcessInfo p, ProcState st, int s, bool has, long value, CompiledRule? rule, bool isolationOwner = false)
+    private void Reconcile(ProcessInfo p, ProcState st, int s, bool has, long value, CompiledRule? rule, bool isolationOwner = false, bool skipCap = false)
     {
         var slot = (Slot)s;
         if (has && slot == Slot.Affinity && AffinityModes.IsDynamic(value))
@@ -712,11 +787,12 @@ public sealed class RuleEngine(IActuator actuator, IEngineEventSink sink, Func<l
             else value = Placer.Resolve(p, value, _ctx ?? new EvalContext());
             if (value == 0) has = false;
         }
-        if (slot == Slot.Affinity && !isolationOwner) ApplyCoreGuards(p, ref has, ref value, ref rule);
         bool wasAutopilot = slot == Slot.Affinity && st.IsApplied[s] && CountsTowardCap(st.AppliedRule[s]);
-        if (has && slot == Slot.Affinity && CountsTowardCap(rule) &&
+        if (has && !skipCap && slot == Slot.Affinity && CountsTowardCap(rule) &&
             ((!wasAutopilot && AutopilotPlaced >= AutopilotPlacementLimit) || (wasAutopilot && AutopilotPlaced > AutopilotPlacementLimit)))
         { AutopilotCapped = true; has = false; }
+        // After the cap (review H3): a refused Autopilot candidate still leaves isolated cores through the guard.
+        if (slot == Slot.Affinity && !isolationOwner) ApplyCoreGuards(p, st, ref has, ref value, ref rule);
         if (!has)
         {
             if (st.Owned[s]) Revert(st, s);
@@ -741,7 +817,7 @@ public sealed class RuleEngine(IActuator actuator, IEngineEventSink sink, Func<l
 
         if (st.IsApplied[s] && st.Applied[s] == value && (st.Pending & (1 << s)) == 0)
         {
-            if (slot == Slot.Affinity && wasAutopilot != rule!.IsAutopilot) AutopilotPlaced += rule.IsAutopilot ? 1 : -1;
+            if (slot == Slot.Affinity && wasAutopilot != CountsTowardCap(rule)) AutopilotPlaced += CountsTowardCap(rule) ? 1 : -1;
             st.AppliedRule[s] = rule;
             if (slot == Slot.CpuPriority && p.BasePriority != 0 &&
                 p.BasePriority != Slots.BasePriorityOf((CpuPriorityLevel)value) && st.DriftCount < MaxDriftReapply)
@@ -790,7 +866,7 @@ public sealed class RuleEngine(IActuator actuator, IEngineEventSink sink, Func<l
         }
         else if (result.Status == WriteStatus.Succeeded)
         {
-            if (slot == Slot.Affinity && wasAutopilot != rule!.IsAutopilot) AutopilotPlaced += rule.IsAutopilot ? 1 : -1;
+            if (slot == Slot.Affinity && wasAutopilot != CountsTowardCap(rule)) AutopilotPlaced += CountsTowardCap(rule) ? 1 : -1;
             long nowFt = DateTime.UtcNow.ToFileTimeUtc();
             // Inheritance bookkeeping: the modification interval starts when the slot first leaves its original and
             // only ends with a confirmed restore; a reapply of the same value after a failed restore keeps it.
@@ -800,7 +876,7 @@ public sealed class RuleEngine(IActuator actuator, IEngineEventSink sink, Func<l
             {
                 var h = st.History[s];
                 long from = st.IsApplied[s] && h.Until == 0 ? h.From : nowFt;
-                st.History[s] = new(from, 0, nowFt, value, st.IsApplied[s] ? st.Applied[s] : value, st.Original[s]);
+                st.History[s] = new(from, 0, nowFt, value, st.IsApplied[s] ? st.Applied[s] : value, st.Original[s], rule!.Quiet);
             }
             st.Owned[s] = true;
             st.IsApplied[s] = true;
@@ -861,7 +937,7 @@ public sealed class RuleEngine(IActuator actuator, IEngineEventSink sink, Func<l
         if (s < 2 && st.History[s].From != 0)
             st.History[s] = st.History[s] with { Until = DateTime.UtcNow.ToFileTimeUtc() };
         st.RevertFailed &= ~(1 << s);
-        if (slot == Slot.Affinity && st.IsApplied[s] && st.AppliedRule[s] is { IsAutopilot: true }) AutopilotPlaced--;
+        if (slot == Slot.Affinity && st.IsApplied[s] && CountsTowardCap(st.AppliedRule[s])) AutopilotPlaced--;
         st.IsApplied[s] = false;
         st.Owned[s] = false;
         st.Pending &= ~(1 << s);
@@ -906,6 +982,8 @@ public sealed class RuleEngine(IActuator actuator, IEngineEventSink sink, Func<l
         public readonly byte[] InheritAttempts = new byte[2];
         public readonly long[] InheritedValue = new long[2], InheritedOriginal = new long[2];
         public int InheritedMask;
+        /// <summary>The guard version at which this unowned process's mask was last read (PM-49).</summary>
+        public int GuardVersion;
         public readonly CompiledRule?[] AppliedRule = new CompiledRule?[Slots.Count];
         public readonly bool[] Failed = new bool[Slots.Count];
         public readonly long[] FailedValue = new long[Slots.Count];
