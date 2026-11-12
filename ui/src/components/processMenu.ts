@@ -1,3 +1,4 @@
+import { maxIsolated } from './CorePicker'
 import type { ProcessRow, Rule, RuleActions, Topology } from '../types'
 import type { MenuEntry } from './ContextMenu'
 import { NET_PRIORITIES } from '../networkPriority'
@@ -58,6 +59,9 @@ function affinityPresets(topo: Topology | undefined, hybrid: boolean): [string, 
       out.push([`ccd${c.id}`, `CCD ${c.id} (threads ${Math.min(...lps)}–${Math.max(...lps)}${tags ? `, ${tags}` : ''})`])
     }
   if (topo.rankingAvailable) for (const n of [2, 4, 8]) if (n < topo.physical) out.push([`best-cores:${n}`, `Best ${n} cores`])
+  // PM-49: threads of its own; Corewright picks them and moves everything else off.
+  const max = maxIsolated(topo)
+  for (const n of [2, 4, 8]) if (n <= max) out.push([`isolate:${n}`, `Isolated: ${n} threads of its own`])
   return out
 }
 

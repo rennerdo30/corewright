@@ -203,16 +203,17 @@ internal sealed class GroupStore
     /// exclusive:N: N whole cores, chosen once and the same every time on the same machine: strongest first (CPPC),
     /// outside the CCD Autopilot keeps for games, skipping cores other groups already hold. Null when N do not fit.
     /// </summary>
-    public ulong? PickExclusive(int n, SystemTopology topo, int gameCcd, string exceptGroup, out string? why)
+    public ulong? PickExclusive(int n, SystemTopology topo, int gameCcd, string exceptGroup, ulong isolated, out string? why)
     {
         why = null;
         var cores = topo.CoresByRank.Length > 0 ? topo.CoresByRank : Enumerable.Range(0, topo.LogicalCount).Select(i => 1UL << i).ToArray();
         ulong game = gameCcd >= 0 && gameCcd < topo.CcdMasks.Length && topo.CcdMasks.Length > 1 ? topo.CcdMasks[gameCcd] : 0;
-        ulong taken = _groups.Values.Where(g => g.Id != exceptGroup).Aggregate(0UL, (m, g) => m | g.Exclusive);
+        // Cores a rule isolates (PM-49) are taken as well.
+        ulong taken = _groups.Values.Where(g => g.Id != exceptGroup).Aggregate(isolated, (m, g) => m | g.Exclusive);
         var free = cores.Where(c => (c & game) == 0 && (c & taken) == 0 && (c & topo.AllMask) == c).ToList();
         if (free.Count < n)
         {
-            why = $"exclusive:{n} needs {n} whole cores; {free.Count} are free outside the game CCD and other groups' cores";
+            why = $"exclusive:{n} needs {n} whole cores; {free.Count} are free outside the game CCD, other groups' cores and isolated cores";
             return null;
         }
         return free.Take(n).Aggregate(0UL, (m, c) => m | c);

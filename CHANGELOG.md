@@ -3,6 +3,23 @@
 Release notes for every Corewright version, newest first. The release workflow publishes the section of a version
 as its GitHub release notes.
 
+## Unreleased
+
+### New
+
+- **Isolated cores.** A rule (or right-click → CPU cores → "Isolated: N threads of its own") can give a program a
+  number of threads to itself. You choose how many; Corewright chooses which, based on the CPU. It takes the
+  strongest whole cores, keeps them inside one CCD so the program's threads share their cache, and uses performance
+  cores only on Intel hybrid CPUs. It never takes core 0, and it uses the game's CCD only when the program is the game.
+  Every other process Corewright can reach moves off those cores while the program runs, and moves back when it
+  exits. An odd count leaves the second thread of the last core idle, so nothing shares that core. The rule editor
+  shows the live pick and how many processes were moved off. Windows itself, interrupts and protected processes can
+  still use the cores.
+- **Keep Windows responsive** (Autopilot, off by default). While Autopilot is on, every program moves off core 0,
+  where Windows handles most interrupts, input and the desktop, games included. The desktop shell, input, audio,
+  Task Manager and Windows' protected processes stay. Your own rules that set CPU cores win. The CPU map marks the
+  core.
+
 ## 0.1.0-beta.14
 
 ### Fixed

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { api } from '../api'
+import { usePoll } from '../hooks'
 import type { Topology } from '../types'
 
 // The topology is read once when the service starts, so one request per dashboard session is enough.
@@ -31,6 +32,18 @@ const DYNAMIC: Record<string, string> = {
   'auto-game': 'Decided while a game runs: the game’s CCD.',
   'non-game-ccd': 'Decided while a game runs: every CCD except the game’s. All cores otherwise.',
   'auto-background': 'Decided by Autopilot while the foreground is busy.',
+}
+
+/** PM-49: "isolate:N" → N, else undefined. */
+export function isolateCount(value: string | null | undefined): number | undefined {
+  const m = /^isolate:(\d+)$/i.exec((value ?? '').trim())
+  return m ? Number(m[1]) : undefined
+}
+
+/** The service's limit: physical core 0 and one more core always stay for everything else. */
+export function maxIsolated(topo: Topology): number {
+  const width = Math.max(1, ...topo.ccds.flatMap((c) => c.cores.map((k) => k.threads.length)))
+  return topo.logical >= 64 ? 0 : Math.max(0, topo.logical - 2 * width)
 }
 
 /** Highest logical processor number the service can address (processor group 0). */
@@ -111,8 +124,140 @@ export function formatCores(lps: Iterable<number>): string {
 }
 
 /** "CPU cores" action: presets from the real CPU plus a map of CCDs, cores and threads to pick from. */
-export function CorePicker({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+export function CorePicker({ value, onChange, ruleId }: { value: string; onChange: (v: string) => void; ruleId?: string }) {
   const topo = useTopology()
+  if (isolateCount(value) !== undefined) return <IsolatePicker value={value} onChange={onChange} ruleId={ruleId} topo={topo} />
+  return <ListPicker value={value} onChange={onChange} topo={topo} />
+}
+
+/**
+ * PM-49 "isolate:N": the user says how many threads; the service picks them (strongest whole cores, one CCD, P-cores,
+ * never core 0, off the game's CCD unless it is the game) and moves every other process off them. The map shows the
+ * live pick once the program runs.
+ */
+function IsolatePicker({ value, onChange, ruleId, topo }: { value: string; onChange: (v: string) => void; ruleId?: string; topo?: Topology }) {
+  const n = isolateCount(value) ?? 1
+  const max = topo ? maxIsolated(topo) : 62
+  const status = usePoll(api.status, 3000)
+  const live = status.data?.isolations?.find((i) => i.ruleId === ruleId)
+  const threads = new Set(live ? parseThreadList(live.threads).lps : [])
+  const reserved = new Set(live ? parseThreadList(live.reserved).lps : [])
+  const [draft, setDraft] = useState(String(n))
+  useEffect(() => setDraft(String(n)), [n])
+  const commit = (text: string) => {
+    const v = Math.round(Number(text))
+    if (Number.isFinite(v) && v >= 1 && v <= Math.max(1, max)) onChange(`isolate:${v}`)
+  }
+  const smt = topo ? topo.ccds.some((c) => c.cores.some((k) => k.threads.length > 1)) : false
+  const odd = smt && n % 2 === 1
+  return (
+    <div className="corepick">
+      <div className="corepick-bar">
+        <ModeSelect value="isolate" topo={topo} onChange={onChange} current={value} />
+        <div className="iso-count">
+          <button className="btn subtle" aria-label="Fewer threads" disabled={n <= 1} onClick={() => onChange(`isolate:${n - 1}`)}>
+            {'\uE949'}
+          </button>
+          <input
+            className="cores-input iso-input"
+            inputMode="numeric"
+            value={draft}
+            aria-label="Isolated threads"
+            aria-invalid={Number(draft) > max}
+            onChange={(e) => {
+              setDraft(e.target.value)
+              commit(e.target.value)
+            }}
+            onBlur={() => setDraft(String(n))}
+          />
+          <button className="btn subtle" aria-label="More threads" disabled={n >= max} onClick={() => onChange(`isolate:${n + 1}`)}>
+            {'\uE948'}
+          </button>
+          <span className="iso-unit">threads of its own</span>
+        </div>
+        <span className="corepick-sum">
+          {live
+            ? `Running on threads ${live.threads}${live.reserved !== live.threads ? ` (cores ${live.reserved} reserved)` : ''}. ${live.keptOff} other process${live.keptOff === 1 ? '' : 'es'} moved off${live.refused ? `, ${live.refused} refused` : ''}.`
+            : 'Picked when the program starts.'}
+          {Number(draft) > max && <span className="corepick-warn"> · at most {max} on this CPU</span>}
+        </span>
+      </div>
+      <p className="iso-explain">
+        Corewright picks the strongest free cores{topo && topo.ccds.length > 1 ? ' inside one CCD (the game’s CCD only for a game)' : ''}
+        {topo?.hybrid ? ', performance cores only' : ''}, never core 0, and moves every other process it can control off them.
+        {odd ? ' An odd count leaves the second thread of the last core idle, so nothing shares that core.' : ''} Windows itself,
+        interrupts and protected processes can still run there.
+      </p>
+      {topo && (
+        <div className="corepick-map preview iso-map">
+          {topo.ccds.map((c) => (
+            <section key={c.id} className="corepick-ccd">
+              <div className="corepick-ccd-head static">
+                <span className="chiplet-name">{topo.ccds.length > 1 ? `CCD ${c.id}` : topo.name || 'CPU'}</span>
+                <span className="chiplet-cache">
+                  {c.l3Bytes ? `${Math.round(c.l3Bytes / 1048576)} MB L3` : ''}
+                  {c.vCache && topo.ccds.some((o) => !o.vCache) && <span className="vcache">3D V-Cache</span>}
+                </span>
+              </div>
+              <div className="corepick-cores">
+                {c.cores.map((k) => {
+                  const core0 = k.threads.includes(0)
+                  const on = k.threads.some((lp) => reserved.has(lp))
+                  return (
+                    <div key={k.id} className={`corepick-core ${on ? 'on' : ''} ${core0 ? 'win' : ''}`} title={core0 ? 'Core 0 stays with Windows' : `Core ${k.id}`}>
+                      <div className="corepick-core-head static">
+                        <span>Core {k.id}</span>
+                        {core0 && <span className="corepick-e">Win</span>}
+                        {k.ccdRank === 1 && <span className="star">★{k.tied ? '=' : ''}</span>}
+                      </div>
+                      <div className="corepick-threads">
+                        {k.threads.map((lp) => (
+                          <span key={lp} className={`corepick-thread ${threads.has(lp) ? 'on' : reserved.has(lp) ? 'idle' : ''}`} title={threads.has(lp) ? `Thread ${lp}: isolated` : reserved.has(lp) ? `Thread ${lp}: kept idle` : `Thread ${lp}`}>
+                            {lp}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            </section>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+/** The mode list shared by both pickers: every preset, specific threads, or isolated threads. */
+function ModeSelect({ value, topo, onChange, current, extra }: { value: string; topo?: Topology; onChange: (v: string) => void; current: string; extra?: React.ReactNode }) {
+  const list = presets(topo)
+  const max = topo ? maxIsolated(topo) : 2
+  return (
+    <select
+      value={value}
+      onChange={(e) => {
+        const v = e.target.value
+        if (v === 'isolate') onChange(`isolate:${Math.min(2, Math.max(1, max))}`)
+        else if (v === 'custom') onChange(topo ? formatCores(threadsOf(topo).slice(0, Math.max(1, threadsOf(topo).length / 2))) || '0' : '0')
+        else onChange(v)
+      }}
+      aria-label="CPU cores"
+      data-current={current}
+    >
+      {list.map((p) => (
+        <option key={p.value} value={p.value}>
+          {p.label}
+        </option>
+      ))}
+      {extra}
+      <option value="custom">Specific threads…</option>
+      {max >= 1 && <option value="isolate">Own threads, isolated…</option>}
+    </select>
+  )
+}
+
+function ListPicker({ value, onChange, topo }: { value: string; onChange: (v: string) => void; topo?: Topology }) {
   const list = presets(topo)
   const key = value.trim().toLowerCase()
   const isList = /^[\d\s,;-]+$/.test(key)
@@ -149,24 +294,19 @@ export function CorePicker({ value, onChange }: { value: string; onChange: (v: s
   return (
     <div className="corepick">
       <div className="corepick-bar">
-        <select
+        <ModeSelect
           value={isCustom ? 'custom' : preset.value}
-          onChange={(e) => {
-            const v = e.target.value
-            if (v === 'custom') {
+          topo={topo}
+          current={value}
+          extra={preset && !list.includes(preset) ? <option value={preset.value}>{preset.label}</option> : undefined}
+          onChange={(v) => {
+            if (v !== 'isolate' && /^[\d\s,;-]+$/.test(v)) {
+              // "Specific threads…": start from what the current choice resolves to.
               const current = isCustom ? parsed.lps : (preset.lps ?? [])
               onChange(formatCores(current.length ? current : all.slice(0, Math.max(1, all.length / 2))) || '0')
             } else onChange(v)
           }}
-        >
-          {list.map((p) => (
-            <option key={p.value} value={p.value}>
-              {p.label}
-            </option>
-          ))}
-          {preset && !list.includes(preset) && <option value={preset.value}>{preset.label}</option>}
-          <option value="custom">Specific threads…</option>
-        </select>
+        />
         {isCustom && (
           <input
             className="cores-input"

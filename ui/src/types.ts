@@ -13,6 +13,21 @@ export interface Status {
   autopilotCapped?: boolean
   game?: { pid: number; name: string; reason?: string } | null
   dataDirectory: string
+  /** PM-49: live "isolate:N" rules. threads = where the program runs; reserved = whole cores nobody else uses. */
+  isolations?: Isolation[]
+  /** PM-49: Autopilot keeps physical core 0 for Windows. */
+  windowsCore?: { threads: string; keptOff: number; refused: number } | null
+}
+
+export interface Isolation {
+  ruleId: string
+  rule: string
+  count: number
+  threads: string
+  reserved: string
+  processes: number
+  keptOff: number
+  refused: number
 }
 
 export interface Device {
@@ -62,6 +77,8 @@ export interface AppSettings {
     enabled: boolean
     mode?: 'off' | 'observe' | 'on'
     placementLimit?: number
+    /** PM-49: every process except the shell and protected ones leaves physical core 0. */
+    keepCoreZeroFree?: boolean
     launchers?: string[]
     gameMode: {
       enabled: boolean

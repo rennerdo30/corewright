@@ -24,6 +24,8 @@ export function DieMap({
   tokens = [],
   gameCcd,
   keptFree,
+  isolated,
+  windowsCore,
   legend = false,
 }: {
   topo: Topology
@@ -31,6 +33,10 @@ export function DieMap({
   tokens?: Token[]
   gameCcd?: number
   keptFree?: Set<number>
+  /** PM-49: logical processor → the rule that isolates it. */
+  isolated?: Map<number, string>
+  /** PM-49: logical processors Autopilot keeps for Windows. */
+  windowsCore?: Set<number>
   legend?: boolean
 }) {
   const usage = (lp: number) => load[lp] ?? 0
@@ -64,14 +70,18 @@ ${t.title}` } else m.set(k, { ...t, count: 1 })
                 {c.cores.map((k) => {
                   const here = tokens.filter((t) => t.lps.some((lp) => k.threads.includes(lp)))
                   const kept = keptFree?.has(k.id)
+                  const iso = k.threads.map((lp) => isolated?.get(lp)).find(Boolean)
+                  const win = k.threads.some((lp) => windowsCore?.has(lp))
                   return (
                     <div
                       key={k.id}
-                      className={`core ${k.ccdRank === 1 ? 'best' : ''} ${kept ? 'kept' : ''}`}
-                      title={`Core ${k.id}${k.performance ? `, CPPC ${k.performance}` : ''}${k.rank ? `, rank ${k.rank} of ${topo.physical}` : ''}${k.tied ? ' (tied)' : ''}${kept ? '. Kept free by Autopilot.' : ''}`}
+                      className={`core ${k.ccdRank === 1 ? 'best' : ''} ${kept ? 'kept' : ''} ${iso ? 'isolated' : ''} ${win ? 'windows' : ''}`}
+                      title={`Core ${k.id}${k.performance ? `, CPPC ${k.performance}` : ''}${k.rank ? `, rank ${k.rank} of ${topo.physical}` : ''}${k.tied ? ' (tied)' : ''}${kept ? '. Kept free by Autopilot.' : ''}${iso ? `. Isolated for ${iso}: no other process runs here.` : ''}${win ? '. Kept for Windows, interrupts and the shell.' : ''}`}
                     >
                       <div className="core-head">
                         <span>Core {k.id}</span>
+                        {iso && <span className="core-tag iso" title={`Isolated for ${iso}`}>{shortRule(iso)}</span>}
+                        {win && <span className="core-tag win">Windows</span>}
                         {k.ccdRank === 1 && <span className="star">★{k.tied ? '=' : ''}</span>}
                         {k.ccdRank === 2 && <span className="dot2">•</span>}
                       </div>
@@ -136,11 +146,28 @@ ${t.title}` } else m.set(k, { ...t, count: 1 })
             <i />
             Kept free
           </span>
+          {isolated && isolated.size > 0 && (
+            <span className="legend-item isolated">
+              <i />
+              Isolated
+            </span>
+          )}
+          {windowsCore && windowsCore.size > 0 && (
+            <span className="legend-item windows">
+              <i />
+              Kept for Windows
+            </span>
+          )}
           {topo.rankingAvailable && <span className="legend-item">★ fastest core of its CCD, • second fastest</span>}
         </div>
       )}
     </div>
   )
+}
+
+/** "Quick: obs64.exe" → "obs64": the program a quick rule is about, or the rule's own name. */
+function shortRule(name: string) {
+  return name.replace(/^Quick:\s*/, '').replace(/\.exe$/i, '')
 }
 
 /** "16-17,30-31" → [16, 17, 30, 31] */

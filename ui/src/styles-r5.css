@@ -277,3 +277,25 @@ strong.tone-critical { color: var(--critical); }
 .die-anywhere .tokens { gap: 4px; }
 .token-count { color: var(--secondary-text); }
 .cores-input[aria-invalid='true'] { border-bottom-color: var(--danger, #e81123); }
+
+/* PM-49: isolated threads ("isolate:N") and core 0 kept for Windows. Accent = isolated, neutral hatch = Windows. */
+.iso-count { display: inline-flex; align-items: center; gap: 4px; }
+.iso-count .btn { font-family: 'Segoe Fluent Icons', 'Segoe MDL2 Assets'; min-width: 32px; }
+.iso-input { width: 48px; text-align: center; font-variant-numeric: tabular-nums; }
+.iso-unit { font-size: 13px; color: var(--secondary-text); margin-left: 4px; }
+.iso-explain { margin: 0; font-size: 12px; line-height: 18px; color: var(--secondary-text); max-width: 78ch; }
+.iso-map .corepick-ccd-head.static, .iso-map .corepick-core-head.static { cursor: default; }
+.iso-map .corepick-ccd-head.static:hover, .iso-map .corepick-core-head.static:hover { background: none; }
+.iso-map .corepick-thread { cursor: default; }
+.iso-map .corepick-thread:hover { background: var(--control); color: var(--secondary-text); }
+.iso-map .corepick-thread.on, .iso-map .corepick-thread.on:hover { background: var(--accent); color: var(--on-accent); }
+.corepick-thread.idle { background: color-mix(in srgb, var(--accent) 14%, var(--control)); border-style: dashed; }
+.corepick-core.win { background-image: repeating-linear-gradient(135deg, color-mix(in srgb, var(--text) 7%, transparent) 0 5px, transparent 5px 10px); }
+.die .core.isolated { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); background: color-mix(in srgb, var(--accent) 8%, var(--layer)); }
+.die .core.windows { background-image: repeating-linear-gradient(45deg, color-mix(in srgb, var(--text) 6%, transparent) 0 4px, transparent 4px 8px); }
+.core-tag { font-size: 10px; line-height: 14px; padding: 0 5px; border-radius: 3px; max-width: 12ch; min-width: 0; margin-left: auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.core-tag.iso { background: var(--accent); color: var(--on-accent); font-weight: 600; }
+.core-tag.win { background: var(--subtle-hover); color: var(--secondary-text); }
+.legend-item.isolated i { background: var(--accent); }
+.legend-item.windows i { background-image: repeating-linear-gradient(45deg, var(--text-3) 0 2px, transparent 2px 4px); border: 1px solid var(--stroke); }
+.die .core-head { gap: 4px; }

@@ -45,6 +45,13 @@ public sealed class AutopilotSettings
     public bool Active => Mode is "observe" or "on";
     public int PlacementLimit { get; set; } = 40;
 
+    /// <summary>
+    /// PM-49 (owner, 2026-11-12: "keep core 0 clean so that the Windows system stays responsive"): while Autopilot is on,
+    /// every process except the protected system processes and the Windows shell moves off physical core 0, which keeps
+    /// it for interrupts, DPCs, input, audio and the desktop. User rules that set affinity win. Off by default.
+    /// </summary>
+    public bool KeepCoreZeroFree { get; set; }
+
     public GameModeSettings GameMode { get; set; } = new();
     public BalanceSettings Balance { get; set; } = new();
     public BackgroundSettings Background { get; set; } = new();

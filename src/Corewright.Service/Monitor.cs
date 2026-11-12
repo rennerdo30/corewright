@@ -153,6 +153,13 @@ internal sealed class Monitor : BackgroundService
         return compiled;
     }
 
+    /// <summary>PM-49: physical core 0 (both SMT threads), where Windows handles most interrupts and DPCs.</summary>
+    internal static ulong WindowsCore(SystemTopology topo)
+    {
+        foreach (var c in topo.PhysicalCores) if ((c & 1) != 0) return c & topo.AllMask;
+        return 1;
+    }
+
     /// <summary>Adds CCDs, V-Cache and the CPPC ranking to the topology used by affinity tokens (ccd0, best-cores:4, ...).</summary>
     private static SystemTopology WithLayout(SystemTopology basic, TopologyDto layout)
     {
@@ -463,6 +470,7 @@ internal sealed class Monitor : BackgroundService
             _groups.Resolve(_sampler.Processes, _byPid);
             Engine.FreezeAutopilot = _groups.AnyFreeze;
             Engine.ObserveAutopilot = ap.Mode == "observe";
+            Engine.WindowsCoreMask = ap.Mode == "on" && ap.KeepCoreZeroFree ? WindowsCore(Topology) : 0;
             Engine.AutopilotPlacementLimit = ap.PlacementLimit;
             if (_groups.AnyFreeze) _facts["autopilot.frozen"] = "true";
             else _facts.Remove("autopilot.frozen");
@@ -551,7 +559,7 @@ internal sealed class Monitor : BackgroundService
             {
                 if (existing is not null && GroupStore.Bits(existing.Exclusive) == n * Math.Max(1, CoreWidth()))
                     exclusive = existing.Exclusive; // renewal keeps its cores
-                else if (_groups.PickExclusive(n, Topology, AutopilotRules.GameCcd(Settings.Autopilot.GameMode.Placement, Topology), id, out var why) is { } mask)
+                else if (_groups.PickExclusive(n, Topology, AutopilotRules.GameCcd(Settings.Autopilot.GameMode.Placement, Topology), id, Engine.ReservedMask, out var why) is { } mask)
                     exclusive = mask;
                 else
                     return (409, new GroupErrorDto("placement-unavailable", why));
