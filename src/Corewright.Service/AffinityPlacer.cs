@@ -56,8 +56,8 @@ internal sealed class AffinityPlacer(Func<SystemTopology> topology, Func<int> ga
         var cores = new List<ulong>(topo.PhysicalCores.Length);
         foreach (var c in topo.CoresByRank) if ((c & topo.AllMask) == c && c != 0) cores.Add(c);
         foreach (var c in topo.PhysicalCores) if ((c & topo.AllMask) == c && c != 0 && !cores.Contains(c)) cores.Add(c);
-        if (cores.Count == 0)
-            for (int i = 0; i < topo.LogicalCount; i++) cores.Add(1UL << i);
+        // Without physical-core boundaries an SMT sibling could stay shared: refuse rather than claim isolation.
+        if (cores.Count == 0) { why = "the CPU layout (physical cores) is unknown, so threads cannot be isolated safely"; return 0; }
 
         ulong core0 = 0;
         foreach (var c in cores) if ((c & 1) != 0) { core0 = c; break; }
@@ -123,7 +123,8 @@ internal sealed class AffinityPlacer(Func<SystemTopology> topology, Func<int> ga
 
         // Everything else needs room: at least two physical cores (core 0 included) stay outside all isolations.
         int remainingCores = 0;
-        foreach (var c in cores) if ((c & (taken | reserve)) == 0) remainingCores++;
+        ulong held = taken | groupCores() | reserve;
+        foreach (var c in cores) if ((c & held) == 0) remainingCores++;
         if (remainingCores < 2)
         {
             why = $"isolate:{threads} would leave fewer than two cores for every other process";
