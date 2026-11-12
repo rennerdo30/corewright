@@ -3,6 +3,21 @@
 Release notes for every Corewright version, newest first. The release workflow publishes the section of a version
 as its GitHub release notes.
 
+## 0.1.0-beta.18
+
+### New
+
+- **Responsiveness.** The Overview shows how responsive the PC is, from 100 % (programs get a processor without
+  delay) down to 0 %, with a 5-minute chart and the reason when it drops: too many threads waiting for a processor,
+  drivers keeping a processor busy with interrupts, paging with little free memory, or threads simply waking up late.
+  Corewright measures this from what it already reads every tick, so it costs nothing extra.
+- **Stall detection.** When responsiveness stays below 50 % for a moment, Corewright records a stall in Activity with
+  its cause and length. Rules can react to it through the facts `system.stall`, `system.stallCause` and
+  `system.responsiveness`.
+- **Keep Windows responsive only when needed.** Autopilot's "Keep Windows responsive" has a new **When** setting:
+  Always, as before, or **When the system stalls**: core 0 is then kept for Windows only after a stall caused by a
+  crowded processor queue or driver interrupts, until 5 minutes after the last one.
+
 ## 0.1.0-beta.17
 
 ### New
