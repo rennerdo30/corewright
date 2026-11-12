@@ -7,7 +7,7 @@ import { PageHeader, plural } from '../components/PageHeader'
 import { bytes, percent } from '../format'
 import { useDescriptions } from '../host'
 import { usePoll } from '../hooks'
-import type { Device } from '../types'
+import type { Device, Responsiveness as ResponsivenessInfo } from '../types'
 import { deviceLabel, deviceSeries, display, openDeviceSection } from './Devices'
 
 const rate = (n: number) => (n < 1024 ? `${Math.round(n)} B/s` : `${bytes(n)}/s`)
@@ -87,6 +87,7 @@ export function Overview({ onOpen }: { onOpen: (p: Page) => void }) {
         <Metric title="CPU" onDetails={() => openDeviceSection('cpu', onOpen)} value={percent(s.cpu)} sub={topo.data?.name} peak={`peak ${pct(peakCpu)} in 5 min`}>
           <Spark time={s.historyTime} values={s.historyCpu} colorVar="--chart-1" top={100} topLabel="100 %" midLabel="50 %" format={pct} />
         </Metric>
+        <Responsiveness r={s.responsiveness} time={s.historyTime} values={s.historyResponsiveness} />
         <Metric
           title="Memory"
           onDetails={() => openDeviceSection('memory', onOpen)}
@@ -166,6 +167,38 @@ export function Overview({ onOpen }: { onOpen: (p: Page) => void }) {
         </table>
       </section>
     </div>
+  )
+}
+
+/** PM-51: like Process Lasso's responsiveness line: 100 % = threads get a processor without delay. */
+const CAUSES: Record<ResponsivenessInfo['cause'], string> = {
+  none: 'no delay',
+  scheduling: 'threads wake up late',
+  cpu: 'too many threads waiting for a processor',
+  interrupts: 'drivers keep a processor busy with interrupts',
+  memory: 'paging: little free memory',
+}
+
+function Responsiveness({ r, time, values }: { r?: ResponsivenessInfo; time: number[]; values?: number[] }) {
+  if (!r) return null
+  const lowest = (values ?? []).reduce((m, v) => Math.min(m, v), 100)
+  const why =
+    r.cause === 'cpu' ? `${r.readyPerCpu.toFixed(1)} waiting threads per processor`
+    : r.cause === 'interrupts' ? `CPU ${r.dpcIsrCpu}: ${r.dpcIsrPercent.toFixed(0)} % interrupts and DPCs`
+    : r.cause === 'memory' ? `${r.hardFaultsPerSec.toFixed(0)} hard faults/s`
+    : r.cause === 'scheduling' ? `woke up ${r.latenessMs.toFixed(0)} ms late`
+    : `delay ${r.latenessMs.toFixed(0)} ms, ${r.readyPerCpu.toFixed(1)} waiting per processor`
+  const stalls = r.stalls === 0 ? 'no stall since start' : `${plural(r.stalls, 'stall', 'stalls')}, last ${new Date(r.lastStall ?? 0).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
+  return (
+    <Metric
+      title="Responsiveness"
+      value={`${r.score} %`}
+      valueLabel={r.stalled ? 'stall' : undefined}
+      sub={r.cause === 'none' ? `${CAUSES.none}: ${why}` : `${CAUSES[r.cause]} (${why})`}
+      peak={values?.length ? `lowest ${lowest.toFixed(0)} % · ${stalls}` : stalls}
+    >
+      <Spark time={time} values={values ?? []} colorVar={r.stalled ? '--critical' : '--success'} top={100} topLabel="100 %" midLabel="50 %" format={pct} />
+    </Metric>
   )
 }
 

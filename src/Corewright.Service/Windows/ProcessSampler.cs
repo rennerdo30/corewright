@@ -18,6 +18,8 @@ internal sealed unsafe class ProcessSampler : IDisposable
     private const int OffPrivateWs = 8, OffHardFaults = 16, OffCycles = 24, OffPeakVirtual = 112, OffVirtual = 120;
     private const int OffPageFaults = 128, OffPeakWs = 136, OffPagedPool = 160, OffNonPagedPool = 176, OffPeakPagefile = 192;
     private const int OffReadOps = 208, OffWriteOps = 216, OffOtherOps = 224;
+    // SYSTEM_THREAD_INFORMATION (x64, 80 bytes) entries follow the 256-byte process entry; ThreadState@68, 1 = Ready.
+    private const int OffThreadArray = 256, ThreadStride = 80, OffThreadState = 68, ThreadReady = 1;
 
     private readonly Dictionary<ProcessKey, ProcessInfo> _live = [];
     private readonly Dictionary<int, ProcessInfo> _byPid = [];
@@ -34,6 +36,8 @@ internal sealed unsafe class ProcessSampler : IDisposable
     private long _lastTimestamp;
     private long _tick;
     private long _lastIdle, _lastKernel, _lastUser;
+    private long _faults;
+    private double _faultSeconds;
 
     public ProcessSampler()
     {
@@ -51,6 +55,12 @@ internal sealed unsafe class ProcessSampler : IDisposable
     public long CpuBusyDelta { get; private set; }
     public ulong MemoryTotal { get; private set; }
     public ulong MemoryUsed { get; private set; }
+    /// <summary>PM-51: threads waiting for a processor at the moment of the snapshot (Task Manager's processor queue).</summary>
+    public int ReadyThreads { get; private set; }
+    /// <summary>PM-51: hard page faults per second over all processes since the previous sample.</summary>
+    public double HardFaultsPerSec { get; private set; }
+    /// <summary>The last Sample() could not read the process list; its values are from the previous sample.</summary>
+    public bool Failed { get; private set; }
 
     public bool TryGet(int pid, out ProcessInfo info) => _byPid.TryGetValue(pid, out info!);
 
@@ -70,9 +80,11 @@ internal sealed unsafe class ProcessSampler : IDisposable
         {
             // No sample: nothing to add up. The next good sample's deltas span this gap consistently.
             IntervalSeconds = 0;
+            Failed = true;
             return;
         }
 
+        Failed = false;
         long now = Stopwatch.GetTimestamp();
         double dt = _lastTimestamp == 0 ? 0 : (double)(now - _lastTimestamp) / Stopwatch.Frequency;
         _lastTimestamp = now;
@@ -80,6 +92,8 @@ internal sealed unsafe class ProcessSampler : IDisposable
         _tick++;
         _list.Clear();
         double totalIo = 0;
+        int ready = 0;
+        long hardFaults = 0;
 
         byte* p = _buffer;
         while (true)
@@ -123,12 +137,23 @@ internal sealed unsafe class ProcessSampler : IDisposable
             info.LastCpuTime = cpu;
             info.LastIoBytes = io;
             info.Threads = *(int*)(p + OffThreads);
+            if (pid != 0) // the idle process's per-CPU threads are not work waiting for a processor
+            {
+                uint entry = *(uint*)(p + OffNext);
+                long room = (entry != 0 ? entry : _buffer + _capacity - p) - OffThreadArray;
+                int threads = (int)Math.Clamp(Math.Min(info.Threads, room / ThreadStride), 0, int.MaxValue);
+                byte* t = p + OffThreadArray;
+                for (int i = 0; i < threads; i++, t += ThreadStride)
+                    if (*(uint*)(t + OffThreadState) == ThreadReady) ready++;
+            }
+            uint hard = *(uint*)(p + OffHardFaults);
+            if (!isNew && hard > info.HardFaults) hardFaults += hard - info.HardFaults;
             info.Handles = *(int*)(p + OffHandles);
             info.BasePriority = *(int*)(p + OffBasePrio);
             info.WorkingSet = (long)*(nuint*)(p + OffWorkingSet);
             info.PrivateBytes = (long)*(nuint*)(p + OffPrivate);
             info.PrivateWorkingSet = *(long*)(p + OffPrivateWs);
-            info.HardFaults = *(uint*)(p + OffHardFaults);
+            info.HardFaults = hard;
             info.CycleTime = *(long*)(p + OffCycles);
             info.PeakVirtualSize = (long)*(nuint*)(p + OffPeakVirtual);
             info.VirtualSize = (long)*(nuint*)(p + OffVirtual);
@@ -189,6 +214,16 @@ internal sealed unsafe class ProcessSampler : IDisposable
         _gone.Clear();
 
         TotalIoBytesPerSec = totalIo;
+        ReadyThreads = ready;
+        // A rate over a few milliseconds (an early tick) is noise: add up until half a second has passed.
+        _faults += hardFaults;
+        _faultSeconds += dt;
+        if (_faultSeconds >= 0.5)
+        {
+            HardFaultsPerSec = _faults / _faultSeconds;
+            _faults = 0;
+            _faultSeconds = 0;
+        }
         SampleSystem();
     }
 

@@ -180,24 +180,42 @@ internal static unsafe partial class CpuTopologyProbe
 internal sealed unsafe class CoreUsageSampler
 {
     private const int Stride = 48; // SYSTEM_PROCESSOR_PERFORMANCE_INFORMATION
-    private long[] _idle = [], _total = [];
+    private long[] _idle = [], _total = [], _dpcIsr = [];
 
     public float[] Usage { get; private set; } = [];
+    /// <summary>PM-51: share of each logical processor's time spent in DPCs and interrupts since the previous sample.</summary>
+    public float[] DpcIsr { get; private set; } = [];
+
+    /// <summary>Shares need at least this much time per processor (100 ns units); an early tick keeps the previous window.</summary>
+    private const long MinWindow = 5_000_000;
 
     public void Sample()
     {
         int count = Math.Min(64, (int)Native.GetActiveProcessorCount(0));
         byte* buf = stackalloc byte[64 * Stride];
-        if (Native.NtQuerySystemInformation(8, buf, (uint)(count * Stride), out _) < 0) return;
-        if (_idle.Length != count) { _idle = new long[count]; _total = new long[count]; Usage = new float[count]; }
+        if (Native.NtQuerySystemInformation(8, buf, (uint)(count * Stride), out _) < 0)
+        {
+            Array.Clear(DpcIsr); // a failed read must not repeat old driver load as current
+            return;
+        }
+        if (_idle.Length != count)
+        { _idle = new long[count]; _total = new long[count]; _dpcIsr = new long[count]; Usage = new float[count]; DpcIsr = new float[count]; }
         for (int i = 0; i < count; i++)
         {
-            long idle = *(long*)(buf + i * Stride), kernel = *(long*)(buf + i * Stride + 8), user = *(long*)(buf + i * Stride + 16);
+            byte* e = buf + i * Stride;
+            long idle = *(long*)e, kernel = *(long*)(e + 8), user = *(long*)(e + 16);
+            long dpcIsr = *(long*)(e + 24) + *(long*)(e + 32); // DpcTime@24, InterruptTime@32
             long total = kernel + user; // kernel time includes idle time
             long dTotal = total - _total[i], dIdle = idle - _idle[i];
-            if (_total[i] != 0 && dTotal > 0) Usage[i] = (float)Math.Clamp(100.0 * (dTotal - dIdle) / dTotal, 0, 100);
+            if (_total[i] != 0 && dTotal < MinWindow) continue;
+            if (_total[i] != 0 && dTotal > 0)
+            {
+                Usage[i] = (float)Math.Clamp(100.0 * (dTotal - dIdle) / dTotal, 0, 100);
+                DpcIsr[i] = (float)Math.Clamp(100.0 * (dpcIsr - _dpcIsr[i]) / dTotal, 0, 100);
+            }
             _idle[i] = idle;
             _total[i] = total;
+            _dpcIsr[i] = dpcIsr;
         }
     }
 }

@@ -52,6 +52,17 @@ public sealed class AutopilotSettings
     /// </summary>
     public bool KeepCoreZeroFree { get; set; }
 
+    /// <summary>
+    /// PM-51 (owner, 2026-11-13: "detect system stalls … in such cases, it starts … activating our [core 0] feature"):
+    /// "always" keeps core 0 free whenever the feature is on (PM-49 behaviour); "stall" only for a while after the
+    /// responsiveness meter saw a CPU or interrupt stall.
+    /// </summary>
+    public string KeepCoreZeroTrigger { get => _keepCoreZeroTrigger; set { _keepCoreZeroTrigger = value; KeepCoreZeroTriggerProvided = true; } }
+    private string _keepCoreZeroTrigger = "always";
+    /// <summary>A PUT without the field (clients before PM-51) keeps the stored value instead of resetting it to "always".</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public bool KeepCoreZeroTriggerProvided { get; private set; }
+
     public GameModeSettings GameMode { get; set; } = new();
     public BalanceSettings Balance { get; set; } = new();
     public BackgroundSettings Background { get; set; } = new();
@@ -422,6 +433,7 @@ public static class AutopilotRules
         { errors.Add(new("settings", "autopilot", "Autopilot sections must not be null")); return errors; }
         if (a.Mode is not ("off" or "observe" or "on")) errors.Add(new("settings", "mode", "mode must be off, observe or on"));
         Range("placementLimit", a.PlacementLimit, 1, 1000);
+        if (a.KeepCoreZeroTrigger is not ("always" or "stall")) errors.Add(new("settings", "keepCoreZeroTrigger", "keepCoreZeroTrigger must be always or stall"));
         if (a.Launchers is null || a.Background.Exclusions is null || a.Balance.Exclusions is null || a.BuildTools.Programs is null ||
             a.GameMode.Games is null || a.GameMode.NotGames is null || a.GameMode.KeepResponsive is null || a.GameMode.Placement is null)
         { errors.Add(new("settings", "autopilot", "Autopilot lists and game placement must not be null")); return errors; }

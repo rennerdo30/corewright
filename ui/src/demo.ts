@@ -69,6 +69,8 @@ const system: SystemInfo = {
   historyNetReceive: wave(HIST, 2.5e6, 1.6e6, 5),
   historyNetSend: wave(HIST, 0.4e6, 0.25e6, 6),
   threadUsage,
+  responsiveness: { score: 100, cause: 'none', latenessMs: 0.4, readyPerCpu: 0.1, dpcIsrPercent: 6.2, dpcIsrCpu: 0, hardFaultsPerSec: 3, stalled: false, stalls: 1, lastStall: now - 140_000, coreZeroSecondsLeft: 160 },
+  historyResponsiveness: Array.from({ length: HIST }, (_, i) => (i > 150 && i < 158 ? [72, 41, 28, 33, 46, 64, 81, 94][i - 151] : 100)),
 }
 
 const GAME = 'StarfallOdyssey.exe'
@@ -229,7 +231,8 @@ const status: Status = {
   game: { pid: gamePid, name: GAME, reason: 'installed in a game library (steamapps\\common)' },
   dataDirectory: 'C:\\ProgramData\\Corewright',
   isolations: [{ ruleId: 'quick-obs64-exe', rule: 'Quick: obs64.exe', count: 4, threads: '18-21', reserved: '18-21', processes: 1, keptOff: 214, refused: 0 }],
-  windowsCore: { threads: '0-1', keptOff: 205, refused: 0 },
+  windowsCore: { threads: '0-1', keptOff: 205, refused: 0, byStall: true },
+  responsiveness: system.responsiveness,
 }
 
 const name = (v: string): Rule['when'] => ({ type: 'group', combinator: 'and', children: [{ type: 'cond', field: 'name', op: 'eq', value: v }] })
@@ -281,6 +284,7 @@ const settings: AppSettings = {
   autopilot: {
     enabled: true,
     keepCoreZeroFree: true,
+    keepCoreZeroTrigger: 'stall',
     gameMode: {
       enabled: true,
       gamePriority: 'high',

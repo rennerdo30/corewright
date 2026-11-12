@@ -79,6 +79,11 @@ internal static unsafe partial class Native
     [return: MarshalAs(UnmanagedType.Bool)]
     public static partial bool GetSystemTimes(out long idle, out long kernel, out long user);
 
+    /// <summary>100 ns units since boot, without time spent in sleep or hibernation.</summary>
+    [LibraryImport("kernel32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static partial bool QueryUnbiasedInterruptTime(out long time);
+
     [LibraryImport("kernel32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     public static partial bool GlobalMemoryStatusEx(MEMORYSTATUSEX* buffer);

@@ -56,7 +56,14 @@ internal sealed class Monitor : BackgroundService
     private readonly float[] _hCpu = new float[HistoryCapacity];
     private readonly float[] _hMem = new float[HistoryCapacity];
     private readonly float[] _hIo = new float[HistoryCapacity];
+    private readonly float[] _hResp = new float[HistoryCapacity];
     private int _hCount, _hNext;
+
+    private readonly ResponsivenessMeter _responsiveness = new();
+    private bool _coreZeroByStall;
+    public ResponsivenessMeter Responsiveness => _responsiveness;
+    /// <summary>PM-51: core 0 is kept free right now because of a stall (trigger "stall"), not permanently.</summary>
+    public bool CoreZeroByStall => _coreZeroByStall;
 
     public Monitor(ServiceOptions options, RuleStore store, SettingsStore settingsStore, EventBuffer events, ILogger<Monitor> log, string dataDirectory)
     {
@@ -255,6 +262,7 @@ internal sealed class Monitor : BackgroundService
         {
             // A client that leaves usage out (written before beta.12) keeps the current value, read under the same lock.
             if (!settings.UsageProvided) settings.Usage = Settings.Usage;
+            if (!settings.Autopilot.KeepCoreZeroTriggerProvided) settings.Autopilot.KeepCoreZeroTrigger = Settings.Autopilot.KeepCoreZeroTrigger;
             _settingsStore.Save(settings);
             Settings = settings;
             Engine.ObserveAutopilot = settings.Autopilot.Mode == "observe";
@@ -301,7 +309,7 @@ internal sealed class Monitor : BackgroundService
         finally { Native.CloseHandle(h); }
     }
 
-    public (long[] Time, float[] Cpu, float[] Mem, float[] Io, float[] Gpu, float[] NetRx, float[] NetTx) History()
+    public (long[] Time, float[] Cpu, float[] Mem, float[] Io, float[] Gpu, float[] NetRx, float[] NetTx, float[] Resp) History()
     {
         lock (Sync)
         {
@@ -312,6 +320,7 @@ internal sealed class Monitor : BackgroundService
             var gpu = new float[_hCount];
             var rx = new float[_hCount];
             var tx = new float[_hCount];
+            var resp = new float[_hCount];
             int start = (_hNext - _hCount + HistoryCapacity) % HistoryCapacity;
             for (int i = 0; i < _hCount; i++)
             {
@@ -323,8 +332,9 @@ internal sealed class Monitor : BackgroundService
                 gpu[i] = _hGpu[j];
                 rx[i] = _hNetRx[j];
                 tx[i] = _hNetTx[j];
+                resp[i] = _hResp[j];
             }
-            return (t, c, m, io, gpu, rx, tx);
+            return (t, c, m, io, gpu, rx, tx, resp);
         }
     }
 
@@ -334,10 +344,25 @@ internal sealed class Monitor : BackgroundService
             IsWindowsService ? "service" : "console", Topology.LogicalCount, Topology.IsHybrid);
         try
         {
+            double lateness = double.NaN;
             while (!ct.IsCancellationRequested)
             {
-                Tick();
-                try { await _wake.WaitAsync(IntervalMs, ct); }
+                Tick(lateness);
+                // PM-51: how late the timed wait ends is the scheduling delay a normal-priority thread sees right now.
+                // Unbiased interrupt time leaves out sleep and connected standby; the wall clock includes them.
+                int interval = IntervalMs;
+                long wallStart = Environment.TickCount64;
+                Native.QueryUnbiasedInterruptTime(out long awakeStart);
+                try
+                {
+                    bool woken = await _wake.WaitAsync(interval, ct);
+                    Native.QueryUnbiasedInterruptTime(out long awakeEnd);
+                    double awakeMs = (awakeEnd - awakeStart) / 10_000.0;
+                    bool slept = Environment.TickCount64 - wallStart - awakeMs > 500;
+                    lateness = woken || slept ? double.NaN : Math.Max(0, awakeMs - interval);
+                    if (lateness > 30_000) lateness = double.NaN; // backstop, as in usage history
+                    if (slept) lock (Sync) _responsiveness.Resumed();
+                }
                 catch (OperationCanceledException) { break; }
             }
         }
@@ -374,12 +399,14 @@ internal sealed class Monitor : BackgroundService
         }
     }
 
-    private void Tick()
+    private void Tick(double lateness = double.NaN)
     {
         lock (Sync)
         {
             _sampler.Sample();
             _ctx.NowMs = Environment.TickCount64;
+            _cores.Sample();
+            UpdateResponsiveness(lateness);
             _actuator.Network.RetryPending(_ctx.NowMs);
             bool ruleDemand = !Engine.Paused && Engine.Rules.NeedsNetwork;
             bool needNetwork = ruleDemand || (IsClientActive && _ctx.NowMs - Interlocked.Read(ref _networkLastUse) < 5000);
@@ -470,13 +497,18 @@ internal sealed class Monitor : BackgroundService
             _groups.Resolve(_sampler.Processes, _byPid);
             Engine.FreezeAutopilot = _groups.AnyFreeze;
             Engine.ObserveAutopilot = ap.Mode == "observe";
-            Engine.WindowsCoreMask = ap.Mode == "on" && ap.KeepCoreZeroFree ? WindowsCore(Topology) : 0;
+            bool coreZero = ap.Mode == "on" && ap.KeepCoreZeroFree && (ap.KeepCoreZeroTrigger != "stall" || _responsiveness.CoreZeroWanted(_ctx.NowMs));
+            if (ap.Mode == "on" && ap.KeepCoreZeroFree && ap.KeepCoreZeroTrigger == "stall" && coreZero != _coreZeroByStall)
+                Events.Emit(new(EngineEventKind.Info, 0, "", "Autopilot", null, null, coreZero
+                    ? $"core 0 kept for Windows until {ResponsivenessMeter.CoreZeroHoldMs / 60_000} minutes after the stall ({_responsiveness.Describe(_responsiveness.Cause)})"
+                    : $"no stall for {ResponsivenessMeter.CoreZeroHoldMs / 60_000} minutes: core 0 open to every program again"));
+            _coreZeroByStall = coreZero && ap.KeepCoreZeroTrigger == "stall";
+            Engine.WindowsCoreMask = coreZero ? WindowsCore(Topology) : 0;
             Engine.AutopilotPlacementLimit = ap.PlacementLimit;
             if (_groups.AnyFreeze) _facts["autopilot.frozen"] = "true";
             else _facts.Remove("autopilot.frozen");
             _ctx.ForegroundBusy = _ctx.ForegroundKnown && _sampler.TryGet(_ctx.ForegroundPid, out var front) && front.CpuPercent * Topology.LogicalCount / 100 >= 0.5;
             _ctx.SystemUnderPressure = _sampler.SystemCpuPercent >= 60 || (_ctx.ForegroundKnown && _ctx.ForegroundBusy);
-            if (IsClientActive) _cores.Sample(); // Loose masks do not need per-thread load.
             Engine.Evaluate(_sampler.Processes, _ctx);
 
             // Cheap system counters always; the costly ones (GPU counters, per-thread load) only while someone watches.
@@ -495,9 +527,32 @@ internal sealed class Monitor : BackgroundService
             _hGpu[_hNext] = (float)Gpu.Utilization;
             _hNetRx[_hNext] = (float)_network.ReceiveBytesPerSec;
             _hNetTx[_hNext] = (float)_network.SendBytesPerSec;
+            _hResp[_hNext] = _responsiveness.Score;
             _hNext = (_hNext + 1) % HistoryCapacity;
             if (_hCount < HistoryCapacity) _hCount++;
         }
+    }
+
+    /// <summary>PM-51: score, stall start and end in Activity, and the facts rules can read.</summary>
+    private void UpdateResponsiveness(double lateness)
+    {
+        var r = _responsiveness;
+        if (_sampler.Failed) return; // no fresh process list: keep the last score rather than repeat old readings
+        double memPercent = _sampler.MemoryTotal == 0 ? 0 : 100.0 * _sampler.MemoryUsed / _sampler.MemoryTotal;
+        if (r.Update(_ctx.NowMs, lateness, _sampler.ReadyThreads, Topology.LogicalCount, _cores.DpcIsr, _sampler.HardFaultsPerSec, memPercent))
+        {
+            Events.Emit(new(EngineEventKind.Info, 0, "", null, null, null, r.Stalled
+                ? $"system stall: responsiveness {r.Score} % ({r.Describe(r.Cause)})"
+                : $"responsive again after {(_ctx.NowMs - r.StallStartMs) / 1000} s (lowest {r.StallLowest} %, {ResponsivenessMeter.CauseName(r.StallCause)})"));
+        }
+        SetFactIfChanged("system.stall", r.Stalled ? "true" : "false");
+        SetFactIfChanged("system.responsiveness", r.ScoreText);
+        SetFactIfChanged("system.stallCause", r.Stalled ? r.StallCause : "none");
+    }
+
+    private void SetFactIfChanged(string key, string value)
+    {
+        if (!_facts.TryGetValue(key, out var old) || !ReferenceEquals(old, value) && old != value) _facts[key] = value;
     }
 
     private void NetworkFailure(string? error)

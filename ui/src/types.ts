@@ -15,8 +15,27 @@ export interface Status {
   dataDirectory: string
   /** PM-49: live "isolate:N" rules. threads = where the program runs; reserved = whole cores nobody else uses. */
   isolations?: Isolation[]
-  /** PM-49: Autopilot keeps physical core 0 for Windows. */
-  windowsCore?: { threads: string; keptOff: number; refused: number } | null
+  /** PM-49: Autopilot keeps physical core 0 for Windows; byStall (PM-51): only for a while after a stall. */
+  windowsCore?: { threads: string; keptOff: number; refused: number; byStall?: boolean } | null
+  responsiveness?: Responsiveness
+}
+
+/** PM-51: how responsive the PC is (100 = no delay) and why it is not. */
+export interface Responsiveness {
+  score: number
+  cause: 'none' | 'scheduling' | 'cpu' | 'interrupts' | 'memory'
+  latenessMs: number
+  readyPerCpu: number
+  dpcIsrPercent: number
+  dpcIsrCpu: number
+  hardFaultsPerSec: number
+  stalled: boolean
+  /** Stalls since the service started. */
+  stalls: number
+  /** Unix ms of the last stall's start. */
+  lastStall?: number
+  /** Seconds Autopilot still keeps core 0 free after a stall. */
+  coreZeroSecondsLeft: number
 }
 
 export interface Isolation {
@@ -79,6 +98,8 @@ export interface AppSettings {
     placementLimit?: number
     /** PM-49: every process except the shell and protected ones leaves physical core 0. */
     keepCoreZeroFree?: boolean
+    /** PM-51: always, or only for a while after a stall. */
+    keepCoreZeroTrigger?: 'always' | 'stall'
     launchers?: string[]
     gameMode: {
       enabled: boolean
@@ -154,6 +175,8 @@ export interface SystemInfo {
   historyNetReceive: number[]
   historyNetSend: number[]
   threadUsage: number[]
+  responsiveness: Responsiveness
+  historyResponsiveness: number[]
 }
 
 export interface CoreInfo {
