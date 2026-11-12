@@ -11,13 +11,20 @@ namespace Corewright.Service;
 
 public sealed record StatusDto(string Version, string Mode, bool Elevated, bool Paused, int IntervalMs, int ProcessCount,
     int RulesVersion, int ActiveRules, int ForegroundPid, bool Autopilot, GameDto? Game, string DataDirectory, string AutopilotMode, int AutopilotPlaced, bool AutopilotCapped, string? JournalProblem = null,
-    IsolationDto[]? Isolations = null, WindowsCoreDto? WindowsCore = null);
+    IsolationDto[]? Isolations = null, WindowsCoreDto? WindowsCore = null, ResponsivenessDto? Responsiveness = null);
+
+/// <summary>
+/// PM-51: Score 0..100 (100 = no delay), Cause none/scheduling/cpu/interrupts/memory, the signals behind it, stalls since
+/// start, and how many seconds Autopilot still keeps core 0 free after a stall (trigger "stall").
+/// </summary>
+public sealed record ResponsivenessDto(int Score, string Cause, double LatenessMs, double ReadyPerCpu, double DpcIsrPercent, int DpcIsrCpu,
+    double HardFaultsPerSec, bool Stalled, int Stalls, long? LastStall, int CoreZeroSecondsLeft);
 
 /// <summary>PM-49: a live "isolate:N" rule. Threads = where its program runs; Reserved = whole cores no other process uses.</summary>
 public sealed record IsolationDto(string RuleId, string Rule, int Count, string Threads, string Reserved, int Processes, int KeptOff, int Refused);
 
-/// <summary>PM-49: Autopilot keeps physical core 0 for Windows.</summary>
-public sealed record WindowsCoreDto(string Threads, int KeptOff, int Refused);
+/// <summary>PM-49: Autopilot keeps physical core 0 for Windows. ByStall (PM-51): only for a while after a stall.</summary>
+public sealed record WindowsCoreDto(string Threads, int KeptOff, int Refused, bool ByStall = false);
 
 public sealed record AutopilotPreviewDto(int Pid, string Process, string Rule, string Slot, string Value, string Reason);
 
@@ -26,7 +33,8 @@ public sealed record CoresDto(int LogicalProcessors, bool Hybrid, string Perform
 public sealed record SystemDto(double Cpu, ulong MemoryTotal, ulong MemoryUsed, double IoBytesPerSec, int ProcessCount,
     CoresDto Cores, long[] HistoryTime, float[] HistoryCpu, float[] HistoryMemory, float[] HistoryIo,
     double Gpu, long GpuMemory, GpuAdapterDto[] GpuAdapters, double NetReceive, double NetSend,
-    float[] HistoryGpu, float[] HistoryNetReceive, float[] HistoryNetSend, float[] ThreadUsage);
+    float[] HistoryGpu, float[] HistoryNetReceive, float[] HistoryNetSend, float[] ThreadUsage,
+    ResponsivenessDto Responsiveness, float[] HistoryResponsiveness);
 
 /// <summary>Optional per-process values; only the groups a client asks for are filled in.</summary>
 public sealed record ProcessExtDto(
@@ -127,12 +135,13 @@ internal static class Api
                     [.. m.Engine.GetIsolations().Select(i => new IsolationDto(i.RuleId, i.RuleName, i.Threads, AffinityParser.Format(i.Mask),
                         AffinityParser.Format(i.Reserved), i.Owners, i.KeptOff, i.Refused))],
                     m.Engine.WindowsCoreMask != 0 && m.Engine.GetWindowsCoreCounts() is var (kept, refused)
-                        ? new WindowsCoreDto(AffinityParser.Format(m.Engine.WindowsCoreMask), kept, refused) : null));
+                        ? new WindowsCoreDto(AffinityParser.Format(m.Engine.WindowsCoreMask), kept, refused, m.CoreZeroByStall) : null,
+                    Responsiveness(m)));
         });
 
         api.MapGet("/system", () =>
         {
-            var (t, c, mem, io, gpu, rx, tx) = m.History();
+            var (t, c, mem, io, gpu, rx, tx, resp) = m.History();
             var topo = m.Topology;
             lock (m.Sync)
                 return TypedResults.Ok(new SystemDto(m.Sampler.SystemCpuPercent, m.Sampler.MemoryTotal, m.Sampler.MemoryUsed,
@@ -141,7 +150,8 @@ internal static class Api
                         AffinityParser.Format(topo.EfficiencyMask)),
                     t, c, mem, io,
                     m.Gpu?.Utilization ?? 0, m.Gpu?.DedicatedUsed ?? 0, m.Gpu?.Adapters ?? [],
-                    m.Network.ReceiveBytesPerSec, m.Network.SendBytesPerSec, gpu, rx, tx, [.. m.Cores.Usage]));
+                    m.Network.ReceiveBytesPerSec, m.Network.SendBytesPerSec, gpu, rx, tx, [.. m.Cores.Usage],
+                    Responsiveness(m), resp));
         });
 
         api.MapGet("/topology", IResult () => m.CpuLayout is { } layout ? TypedResults.Ok(layout) : TypedResults.NotFound());
@@ -419,6 +429,16 @@ internal static class Api
     }
 
     private static RuleErrorDto ToDto(RuleError e) => new(e.RuleId, e.RuleName, e.Message);
+
+    /// <summary>Call under <see cref="Monitor.Sync"/>.</summary>
+    private static ResponsivenessDto Responsiveness(Monitor m)
+    {
+        var r = m.Responsiveness;
+        long left = r.CoreZeroUntilMs - Environment.TickCount64;
+        return new ResponsivenessDto(r.Score, r.Cause, Math.Round(r.LatenessMs, 1), Math.Round(r.ReadyPerCpu, 2), Math.Round(r.DpcIsrPercent, 1),
+            r.DpcIsrCpu, Math.Round(r.HardFaultsPerSec), r.Stalled, r.Stalls, r.Stalls > 0 ? r.LastStallUnixMs : null,
+            m.CoreZeroByStall && left > 0 ? (int)((left + 999) / 1000) : 0);
+    }
 
     /// <summary>Loopback-only host check (DNS rebinding) and bearer-token check for /api.</summary>
     public static Func<HttpContext, Func<Task>, Task> Guard(Monitor m, byte[] token, int port) => async (ctx, next) =>

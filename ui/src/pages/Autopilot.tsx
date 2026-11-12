@@ -202,11 +202,26 @@ export function Autopilot() {
             summary={
               a.keepCoreZeroFree
                 ? status.data?.windowsCore
-                  ? `Core 0 (threads ${status.data.windowsCore.threads}) is kept for Windows: ${status.data.windowsCore.keptOff} processes moved off${status.data.windowsCore.refused ? `, ${status.data.windowsCore.refused} refused (run the installed service to reach them)` : ''}.`
-                  : 'Core 0 is kept for Windows while Autopilot is on.'
+                  ? `Core 0 (threads ${status.data.windowsCore.threads}) is kept for Windows${status.data.windowsCore.byStall && status.data.responsiveness ? ` after a stall, for ${Math.ceil(status.data.responsiveness.coreZeroSecondsLeft / 60)} more min` : ''}: ${status.data.windowsCore.keptOff} processes moved off${status.data.windowsCore.refused ? `, ${status.data.windowsCore.refused} refused (run the installed service to reach them)` : ''}.`
+                  : a.keepCoreZeroTrigger === 'stall'
+                    ? `Waiting for a stall; responsiveness is ${status.data?.responsiveness?.score ?? 100} %. Every program may use core 0 until then.`
+                    : 'Core 0 is kept for Windows while Autopilot is on.'
                 : 'Moves every program off core 0, where Windows handles most interrupts, input and the desktop.'
             }
           >
+            <Row
+              title="When"
+              desc={
+                (a.keepCoreZeroTrigger ?? 'always') === 'stall'
+                  ? 'Only when the PC stalls because programs crowd the processors or drivers keep a processor busy with interrupts, then for 5 minutes after the last stall. Stalls from paging do not count: a free core does not help there. Overview → Responsiveness shows the measurement.'
+                  : 'All the time while Autopilot is on.'
+              }
+            >
+              <select aria-label="When to keep core 0 free" value={a.keepCoreZeroTrigger ?? 'always'} onChange={(e) => update((x) => (x.autopilot.keepCoreZeroTrigger = e.target.value as 'always' | 'stall'))}>
+                <option value="always">Always</option>
+                <option value="stall">When the system stalls</option>
+              </select>
+            </Row>
             <Row
               title="What stays on core 0"
               desc="Windows’ own protected processes, the desktop shell (Explorer, Start, search, input, audio, Task Manager), interrupts and DPCs. Every other process Autopilot can reach moves to the other cores, games included. Your own rules that set CPU cores win."
