@@ -3,6 +3,18 @@
 Release notes for every Corewright version, newest first. The release workflow publishes the section of a version
 as its GitHub release notes.
 
+## 0.1.0-beta.20
+
+### New
+
+- **Autopilot actions.** The Autopilot page's "Where things run" tab is now **Autopilot actions** and lists everything
+  Autopilot does right now, not only which cores it gave a program. One block per Autopilot part (game, voice and
+  streaming, out of the game's way, builds, compilers, held back for hogging the CPU, learned background programs,
+  kept off core 0) shows how many processes it changes and what it changes for all of them; each row shows the
+  process, its CPU use, what changed from what to what, why, and for how long. Busiest processes come first.
+- **API:** `GET /api/v1/autopilot/actions` returns every setting Autopilot holds on every process: the setting, its
+  original and current value, since when, and the reason for learned and balanced programs.
+
 ## 0.1.0-beta.19
 
 ### New
