@@ -139,3 +139,26 @@ input:not([type='checkbox']), select, textarea { border-color: var(--stroke-cont
 /* Overview map card */
 .ov-map { padding: 14px; }
 .ov-map .card-head { margin-bottom: 10px; }
+
+/* Autopilot actions (PM-56): one block per Autopilot rule, busiest processes first. */
+.aa-list { display: flex; flex-direction: column; }
+.aa-group { border-bottom: 1px solid var(--divider); padding-bottom: 4px; }
+.aa-group:last-child { border-bottom: 0; }
+.aa-head { display: grid; grid-template-columns: 4px 1fr; column-gap: 10px; padding: 12px 14px 4px; }
+.aa-bar { grid-row: span 2; width: 4px; border-radius: 2px; background: var(--role); }
+.aa-title { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; min-width: 0; }
+.aa-title strong { font-size: 14px; font-weight: 600; }
+.aa-n { color: var(--secondary-text); font-size: 12px; font-variant-numeric: tabular-nums; }
+.aa-chip { font-size: 12px; padding: 1px 8px; border-radius: 10px; color: var(--text);
+  background: color-mix(in srgb, var(--role) 14%, transparent); border: 1px solid color-mix(in srgb, var(--role) 40%, transparent); }
+.aa-what { margin: 2px 0 0; }
+.aa-table { table-layout: fixed; }
+.aa-table td { border-bottom: 0; padding: 5px 14px; vertical-align: top; }
+.aa-table td.aa-proc { padding-left: 28px; width: 260px; overflow: hidden; text-overflow: ellipsis; }
+.aa-table td.aa-cpu { width: 64px; font-variant-numeric: tabular-nums; }
+.aa-table td.aa-changes { white-space: normal; }
+.aa-table td.aa-since { width: 72px; }
+.aa-change { display: inline-block; margin-right: 14px; }
+.aa-arrow { color: var(--secondary-text); margin: 0 2px; }
+.aa-why { margin-top: 2px; max-width: 560px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.aa-more { margin: 0 0 6px 18px; font-size: 13px; color: var(--accent-text, var(--accent)); }

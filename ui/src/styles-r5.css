@@ -137,7 +137,7 @@
 
 /* Autopilot: settings right under the map, live lists capped and scrolling inside their card. */
 .ap-groups h3 { margin-top: 4px; }
-.ap-scroll { max-height: 340px; overflow: auto; }
+.ap-scroll { max-height: min(70vh, 720px); overflow: auto; }
 .ap-scroll .ap-table th { position: sticky; top: 0; z-index: 1; background: var(--layer); }
 .decision.crit { color: var(--caution); }
 
