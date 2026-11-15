@@ -35,7 +35,8 @@ const SLOT_LABELS: Record<string, string> = {
 
 const VISIBLE = 5
 
-const value = (slot: string, v: string) => (slot === 'affinity' ? (v === 'all' ? 'all' : v) : levelLabel(v) || v)
+const value = (slot: string, v: string) =>
+  slot === 'affinity' ? v : slot === 'efficiencyMode' ? ({ on: 'On', off: 'Off', auto: 'Windows decides' }[v] ?? v) : levelLabel(v) || v
 
 function since(ms: number): string {
   if (!ms) return ''
@@ -84,21 +85,24 @@ export function groupActions(actions: AutopilotAction[], procs: ProcessRow[]): G
   return [...byRule.entries()]
     .sort(([a], [b]) => order(a) - order(b) || a.localeCompare(b))
     .map(([ruleId, map]) => {
-      const rows = [...map.values()].sort((a, b) => b.cpu - a.cpu || a.process.localeCompare(b.process))
+      // Busiest first in whole-percent steps, so rows do not reshuffle on every poll.
+      const rows = [...map.values()].sort((a, b) => Math.round(b.cpu) - Math.round(a.cpu) || a.process.localeCompare(b.process) || a.pid - b.pid)
       const meta = RULES.find((r) => r.id === ruleId)
       // A change is common when every row has it with the same target; its "from" is named only when that is shared too.
       const common: { slot: string; text: string }[] = []
       for (const c of rows[0].changes) {
         const all = rows.map((r) => r.changes.find((x) => x.slot === c.slot))
         if (rows.length < 2 || all.some((x) => !x || x.to !== c.to)) continue
-        const from = all.every((x) => x!.from === c.from) ? `${value(c.slot, c.from)} ` : ''
-        common.push({ slot: c.slot, text: `${SLOT_LABELS[c.slot] ?? c.slot} ${from}→ ${value(c.slot, c.to)}` })
+        const label = SLOT_LABELS[c.slot] ?? c.slot
+        const same = all.every((x) => x!.from === c.from)
+        common.push({ slot: c.slot, text: same && c.from === c.to ? `${label} ${value(c.slot, c.to)} (already)` : `${label} ${same ? `${value(c.slot, c.from)} ` : ''}→ ${value(c.slot, c.to)}` })
       }
       return { ruleId, title: meta?.title ?? names.get(ruleId) ?? ruleId, what: meta?.what ?? '', rows, common }
     })
 }
 
-export function AutopilotActions({ actions, procs, mode }: { actions: AutopilotAction[]; procs: ProcessRow[]; mode: 'off' | 'observe' | 'on' }) {
+export function AutopilotActions({ actions, procs, mode }: { actions?: AutopilotAction[]; procs: ProcessRow[]; mode: 'off' | 'observe' | 'on' }) {
+  if (!actions) return <div className="ap-empty">Loading…</div>
   const groups = groupActions(actions, procs)
   if (groups.length === 0)
     return (

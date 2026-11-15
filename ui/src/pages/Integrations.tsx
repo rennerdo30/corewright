@@ -19,6 +19,7 @@ const ENDPOINTS: { group: string; items: [Method[], string, string][] }[] = [
       [['GET'], '/processes?include=…', 'Every process with the settings Corewright applied'],
       [['GET'], '/processes/{pid}/explain', 'Which rules match a process and which settings they win'],
       [['GET'], '/events?after={seq}', 'Changes Corewright made, for polling'],
+      [['GET'], '/autopilot/actions', 'Everything Autopilot changes right now: process, setting, from, to, since and why'],
       [['GET'], '/autopilot/placements', 'Where Autopilot placed each process, and why'],
       [['GET'], '/api-calls', 'The last 100 calls that changed something or were rejected, and which program made them'],
     ],

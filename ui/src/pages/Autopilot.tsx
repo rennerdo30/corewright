@@ -31,7 +31,7 @@ export function Autopilot() {
   const topo = usePoll(api.topology, 600_000)
   const procs = usePoll(() => api.processes(), 3000)
   const placements = usePoll(api.placements, 3000)
-  const actions = usePoll(api.autopilotActions, 3000)
+  const actions = usePoll(api.autopilotActions, 3000, tab === 'actions')
   const preview = usePoll(api.autopilotPreview, 5000, settings?.autopilot.mode === 'observe')
 
   useEffect(() => {
@@ -117,7 +117,8 @@ export function Autopilot() {
   const bt = a.buildTools
   const bg = a.background
   const total = managed.build.length + managed.background.length + managed.balance.length + managed.game.length
-  const changed = new Set((actions.data ?? []).map((x) => x.pid)).size
+  // The core-0 guard touches nearly every process; counting it would make the badge meaningless (review, PM-56).
+  const changed = new Set((actions.data ?? []).filter((x) => x.ruleId !== 'autopilot-windows-core').map((x) => x.pid)).size
 
   return (
     <div className="page dense autopilot">
@@ -363,7 +364,7 @@ export function Autopilot() {
               : 'Hours of observation per program. Decisions update once a minute; statistics are kept for 30 days.'}
           </span>
         </div>
-        <div className="ap-scroll">{tab === 'actions' ? <AutopilotActions actions={actions.data ?? []} procs={procs.data ?? []} mode={a.mode ?? (a.enabled ? 'on' : 'off')} /> : <Learned />}</div>
+        <div className="ap-scroll">{tab === 'actions' ? <AutopilotActions actions={actions.data} procs={procs.data ?? []} mode={a.mode ?? (a.enabled ? 'on' : 'off')} /> : <Learned />}</div>
       </section>
 
     </div>
