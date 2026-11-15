@@ -3,7 +3,7 @@
  * real machine's processes, paths or user names are ever published. Only built with VITE_DEMO=1; the normal
  * build drops this file (the import in api.ts is behind a compile-time constant).
  */
-import type { AppSettings, BackgroundRow, Device, EngineEvent, Placement, ProcessRow, Rule, RuleSet, Status, SystemInfo, Topology } from './types'
+import type { AppSettings, BackgroundRow, Device, EngineEvent, Placement, AutopilotAction, ProcessRow, Rule, RuleSet, Status, SystemInfo, Topology } from './types'
 
 const now = Date.now()
 const wave = (n: number, base: number, amp: number, seed: number) =>
@@ -307,6 +307,17 @@ const placements: Placement[] = [
   { pid: pids.get('CloudBackup.exe')!, name: 'CloudBackup.exe', cores: '16-17,22-31', ccd: 1, demandThreads: 0, placedSecondsAgo: 610, why: 'Busy while you play: moved to the other CCD so the game keeps its cores.' },
 ]
 
+// Everything Autopilot holds (PM-56), derived from the demo processes' applied settings.
+const actions: AutopilotAction[] = processes.flatMap((p, i) =>
+  (p.applied ?? [])
+    .filter((a) => a.ruleId.startsWith('autopilot-'))
+    .map((a) => ({
+      pid: p.pid, process: p.name, ruleId: a.ruleId, rule: a.ruleName, slot: a.slot,
+      from: a.slot === 'affinity' ? 'all' : 'normal', to: a.value,
+      sinceMs: now - (60 + ((i * 397) % 3600)) * 1000,
+      reason: a.ruleId === 'autopilot-balance' ? 'Used 2.3 cores for 2 s while the PC was busy' : null,
+    })))
+
 const background: BackgroundRow[] = [
   { name: 'OneDrive.exe', program: 'c:\\program files\\microsoft onedrive\\onedrive.exe', observedMinutes: 2210, foregroundPercent: 0, averageCores: 0.4, peakCores: 2.1, p95Cores: 0.8, service: false, verdict: 'Background: placed', affinity: 'auto', reason: 'never in front in 37 h' },
   { name: 'python.exe (render_batch.py)', program: 'python.exe (render_batch.py)', observedMinutes: 380, foregroundPercent: 0, averageCores: 5.2, peakCores: 7.8, p95Cores: 6, service: false, verdict: 'Background: placed, lower priority', affinity: 'auto', reason: 'never in front, bursts to 6 cores' },
@@ -410,6 +421,8 @@ export async function demoRequest(method: string, path: string, body?: unknown):
       return json(rules)
     case '/autopilot/placements':
       return json(placements)
+    case '/autopilot/actions':
+      return json(actions)
     case '/autopilot/background':
       return json(background)
     case '/facts':

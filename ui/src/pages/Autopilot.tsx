@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { api, ApiError } from '../api'
+import { AutopilotActions } from '../components/AutopilotActions'
 import { DieMap, parseCores, type Role, type Token } from '../components/DieMap'
 import { Group, Levels, ListRow, NumberBox, Row, Toggle } from '../components/SettingsControls'
 import { usePoll } from '../hooks'
@@ -22,7 +23,7 @@ export function Autopilot() {
   const [settings, setSettings] = useState<AppSettings>()
   const [errors, setErrors] = useState<RuleError[]>([])
   const [savedAt, setSavedAt] = useState<number>()
-  const [tab, setTab] = useState<'placements' | 'learned'>('placements')
+  const [tab, setTab] = useState<'actions' | 'learned'>('actions')
   const timer = useRef<number | undefined>(undefined)
 
   const status = usePoll(api.status, 2000)
@@ -30,6 +31,7 @@ export function Autopilot() {
   const topo = usePoll(api.topology, 600_000)
   const procs = usePoll(() => api.processes(), 3000)
   const placements = usePoll(api.placements, 3000)
+  const actions = usePoll(api.autopilotActions, 3000)
   const preview = usePoll(api.autopilotPreview, 5000, settings?.autopilot.mode === 'observe')
 
   useEffect(() => {
@@ -115,6 +117,7 @@ export function Autopilot() {
   const bt = a.buildTools
   const bg = a.background
   const total = managed.build.length + managed.background.length + managed.balance.length + managed.game.length
+  const changed = new Set((actions.data ?? []).map((x) => x.pid)).size
 
   return (
     <div className="page dense autopilot">
@@ -347,20 +350,20 @@ export function Autopilot() {
         {/* Lists scroll inside the card so the settings stay one short scroll away (owner, 2026-11-02). */}
         <div className="ap-tabs">
           <div className="seg">
-            <button className={tab === 'placements' ? 'on' : ''} onClick={() => setTab('placements')}>
-              Where things run{placements.data?.length ? <span className="seg-count">{placements.data.length}</span> : null}
+            <button className={tab === 'actions' ? 'on' : ''} onClick={() => setTab('actions')}>
+              Autopilot actions{changed ? <span className="seg-count">{changed}</span> : null}
             </button>
             <button className={tab === 'learned' ? 'on' : ''} onClick={() => setTab('learned')}>
               What Corewright has learned
             </button>
           </div>
           <span className="secondary tiny">
-            {tab === 'placements'
-              ? 'Programs Autopilot keeps off your strongest cores, or off the game’s CCD while you play. Builds and programs that start other programs are never placed.'
+            {tab === 'actions'
+              ? 'Every process Autopilot changes right now, busiest first. Your own rules always win over these.'
               : 'Hours of observation per program. Decisions update once a minute; statistics are kept for 30 days.'}
           </span>
         </div>
-        <div className="ap-scroll">{tab === 'placements' ? <Placements rows={placements.data ?? []} procs={procs.data ?? []} /> : <Learned />}</div>
+        <div className="ap-scroll">{tab === 'actions' ? <AutopilotActions actions={actions.data ?? []} procs={procs.data ?? []} mode={a.mode ?? (a.enabled ? 'on' : 'off')} /> : <Learned />}</div>
       </section>
 
     </div>
@@ -410,41 +413,6 @@ function placementHint(t?: Topology) {
   if (vc.length === 1) return `Automatic puts games on CCD ${vc[0].id}, the one with 3D V-Cache.`
   const fastest = t.ccds.find((c) => c.cores.some((k) => k.rank === 1))
   return `Automatic puts games on CCD ${fastest?.id ?? 0}${vc.length > 1 ? ': both CCDs have V-Cache, this one has the fastest cores.' : ', the one with the fastest cores.'}`
-}
-
-function Placements({ rows, procs }: { rows: { pid: number; name: string; cores: string; ccd: number; demandThreads: number; placedSecondsAgo: number; why: string }[]; procs: ProcessRow[] }) {
-  const roles = new Map(procs.map((p) => [p.pid, roleOf(p)]))
-  if (rows.length === 0) return <div className="ap-empty">No process has automatic cores right now. Background programs appear here as soon as Autopilot places them.</div>
-  return (
-    <table className="ap-table">
-      <thead>
-        <tr>
-          <th>Process</th>
-          <th>Cores</th>
-          <th className="num">Placed</th>
-          <th>Why there</th>
-        </tr>
-      </thead>
-      <tbody>
-        {rows.map((r) => (
-          <tr key={r.pid}>
-            <td>
-              <span className={`count role-${roles.get(r.pid) ?? 'background'}`}>
-                <i />
-                {r.name}
-              </span>
-              <span className="secondary tiny"> {r.pid}</span>
-            </td>
-            <td>{r.ccd >= 0 ? `CCD ${r.ccd}, ${r.cores}` : r.cores}</td>
-            <td className="num secondary">{r.placedSecondsAgo >= 120 ? `${Math.round(r.placedSecondsAgo / 60)} min ago` : `${Math.round(r.placedSecondsAgo)} s ago`}</td>
-            <td className="secondary why" title={r.why}>
-              {r.why}
-            </td>
-          </tr>
-        ))}
-      </tbody>
-    </table>
-  )
 }
 
 function Learned() {

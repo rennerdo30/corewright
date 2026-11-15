@@ -1,4 +1,4 @@
-import type { UsageInfo, ApiCall, MemoryModule, RuleHit, AppSettings, BackgroundRow, DevicesInfo, EngineEvent, Placement, Explain, ImportResponse, ProcessRow, RuleSet, RulesResult, Status, SystemInfo, Topology } from './types'
+import type { UsageInfo, ApiCall, MemoryModule, RuleHit, AppSettings, BackgroundRow, DevicesInfo, EngineEvent, Placement, AutopilotAction, Explain, ImportResponse, ProcessRow, RuleSet, RulesResult, Status, SystemInfo, Topology } from './types'
 
 declare global {
   interface Window {
@@ -56,6 +56,7 @@ export const api = {
   clearUsage: () => request<void>('DELETE', '/usage'),
   background: () => request<BackgroundRow[]>('GET', '/autopilot/background'),
   placements: () => request<Placement[]>('GET', '/autopilot/placements'),
+  autopilotActions: () => request<AutopilotAction[]>('GET', '/autopilot/actions'),
   autopilotPreview: () => request<{ pid: number; process: string; rule: string; slot: string; value: string; reason: string }[]>('GET', '/autopilot/preview'),
   /** One process with every detail (PM-53): command line, user, start time, current settings. */
   process: (pid: number) => request<ProcessRow>('GET', `/processes/${pid}`),

@@ -28,6 +28,9 @@ public sealed record WindowsCoreDto(string Threads, int KeptOff, int Refused, bo
 
 public sealed record AutopilotPreviewDto(int Pid, string Process, string Rule, string Slot, string Value, string Reason);
 
+/// <summary>PM-56: one setting an Autopilot rule holds on one process: what it was, what it is now, since when and why.</summary>
+public sealed record AutopilotActionDto(int Pid, string Process, string RuleId, string Rule, string Slot, string From, string To, long SinceMs, string? Reason);
+
 public sealed record CoresDto(int LogicalProcessors, bool Hybrid, string PerformanceCores, string EfficiencyCores);
 
 public sealed record SystemDto(double Cpu, ulong MemoryTotal, ulong MemoryUsed, double IoBytesPerSec, int ProcessCount,
@@ -102,6 +105,7 @@ public sealed record ImportResponseDto(bool Applied, string? Source, Rule[] Rule
 [JsonSerializable(typeof(UsageDto))]
 [JsonSerializable(typeof(PlacementDto[]))]
 [JsonSerializable(typeof(AutopilotPreviewDto[]))]
+[JsonSerializable(typeof(AutopilotActionDto[]))]
 [JsonSerializable(typeof(ImportRequestDto))]
 [JsonSerializable(typeof(ImportResponseDto))]
 internal sealed partial class ApiJson : JsonSerializerContext;
@@ -363,6 +367,26 @@ internal static class Api
         api.MapGet("/autopilot/placements", () =>
         {
             lock (m.Sync) return TypedResults.Ok(m.Placer.Snapshot(Environment.TickCount64, m.Engine).ToArray());
+        });
+
+        // PM-56: everything Autopilot does right now, core guards included; the dashboard's "Autopilot actions" list.
+        api.MapGet("/autopilot/actions", () =>
+        {
+            lock (m.Sync)
+            {
+                ulong all = m.Topology.AllMask;
+                string Fmt(Slot slot, long v) => slot == Slot.Affinity
+                    ? ((ulong)v & all) == all ? "all" : AffinityParser.Format((ulong)v & all)
+                    : Slots.FormatValue(slot, v);
+                var rows = new List<AutopilotActionDto>();
+                foreach (var (key, name, slot, original, applied, since, rule) in m.Engine.GetAutopilotActions())
+                {
+                    string? reason = rule.ForegroundDependent && m.Sampler.TryGet(key.Pid, out var p) && p.Key == key ? p.BackgroundReason : null;
+                    long sinceMs = since > 0 ? (since - 116444736000000000L) / 10_000 : 0;
+                    rows.Add(new(key.Pid, name, rule.Id, rule.Name, Slots.Name(slot), Fmt(slot, original), Fmt(slot, applied), sinceMs, reason));
+                }
+                return TypedResults.Ok(rows.ToArray());
+            }
         });
 
         api.MapGet("/autopilot/preview", () =>

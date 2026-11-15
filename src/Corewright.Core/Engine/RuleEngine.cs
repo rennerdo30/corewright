@@ -480,6 +480,20 @@ public sealed class RuleEngine(IActuator actuator, IEngineEventSink sink, Func<l
         return rows;
     }
 
+    /// <summary>
+    /// Every slot an Autopilot rule holds right now, core guards included (PM-56: the dashboard lists everything Autopilot
+    /// does, not only placements). Allocates per call; only the API calls it.
+    /// </summary>
+    public List<(ProcessKey Key, string Name, Slot Slot, long Original, long Applied, long SinceFt, CompiledRule Rule)> GetAutopilotActions()
+    {
+        var rows = new List<(ProcessKey, string, Slot, long, long, long, CompiledRule)>();
+        foreach (var st in _states.Values)
+            for (int s = 0; s < Slots.Count; s++)
+                if (st.IsApplied[s] && st.AppliedRule[s] is { IsAutopilot: true } r)
+                    rows.Add((st.Key, st.Name, (Slot)s, st.Original[s], st.Applied[s], st.ModifiedSince[s], r));
+        return rows;
+    }
+
     /// <summary>Slots whose last write to this process failed (with the value that was refused).</summary>
     public List<(Slot Slot, long Value)> GetFailed(ProcessKey key)
     {

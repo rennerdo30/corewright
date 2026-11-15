@@ -377,6 +377,20 @@ export interface ImportResponse {
   errors: RuleError[]
 }
 
+/** One setting an Autopilot rule holds on one process (GET /autopilot/actions, PM-56). */
+export interface AutopilotAction {
+  pid: number
+  process: string
+  ruleId: string
+  rule: string
+  slot: string
+  from: string
+  to: string
+  /** Unix ms when the setting left its original value; 0 when unknown. */
+  sinceMs: number
+  reason?: string | null
+}
+
 export interface Placement {
   pid: number
   name: string
