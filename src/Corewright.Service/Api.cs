@@ -79,6 +79,7 @@ public sealed record ImportResponseDto(bool Applied, string? Source, Rule[] Rule
 [JsonSerializable(typeof(StatusDto))]
 [JsonSerializable(typeof(SystemDto))]
 [JsonSerializable(typeof(DevicesDto))]
+[JsonSerializable(typeof(ProcessDto))]
 [JsonSerializable(typeof(ProcessDto[]))]
 [JsonSerializable(typeof(TopologyDto))]
 [JsonSerializable(typeof(Corewright.Service.Windows.MemoryModuleDto[]))]
@@ -194,6 +195,25 @@ internal static class Api
                 for (int i = 0; i < list.Count; i++)
                     result[i] = ToDto(m, list[i], ext, inc.Contains("ext"), inc.Contains("gpu"), groups, net);
                 return TypedResults.Ok(result);
+            }
+        });
+
+        // One process with every detail group (PM-53, the dashboard's details panel). Handle reads cover this process only,
+        // outside the engine lock, throttled like the list; network rates stay with /processes?include=net.
+        api.MapGet("/processes/{pid:int}", IResult (int pid) =>
+        {
+            const DetailGroups all = DetailGroups.Settings | DetailGroups.Identity | DetailGroups.CommandLine | DetailGroups.Gui;
+            ProcessKey key;
+            lock (m.Sync)
+            {
+                if (!m.Sampler.TryGet(pid, out var p)) return TypedResults.NotFound();
+                key = p.Key;
+            }
+            m.Details.RefreshOne(key, all);
+            lock (m.Sync)
+            {
+                if (!m.Sampler.TryGet(pid, out var p) || p.Key != key) return TypedResults.NotFound();
+                return TypedResults.Ok(ToDto(m, p, ext: true, sampler: true, gpu: true, groups: all));
             }
         });
 

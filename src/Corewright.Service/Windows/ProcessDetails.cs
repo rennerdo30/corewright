@@ -62,6 +62,27 @@ internal sealed unsafe class ProcessDetailsCache
         }
     }
 
+    /// <summary>
+    /// The details panel (PM-53): reads one process only and keeps every other cached entry, so an open panel costs a
+    /// few handle reads every <see cref="RefreshMs"/> instead of a sweep over all processes.
+    /// </summary>
+    public void RefreshOne(ProcessKey key, DetailGroups groups)
+    {
+        if (key.Pid is 0 or 4) return;
+        long now = Environment.TickCount64;
+        ProcessDetail? d;
+        lock (_lock)
+        {
+            _lastUse = now;
+            if (!_map.TryGetValue(key, out d)) _map[key] = d = new ProcessDetail();
+        }
+        bool settings = groups.HasFlag(DetailGroups.Settings) && now - d.SettingsAt > RefreshMs;
+        bool gui = groups.HasFlag(DetailGroups.Gui) && now - d.GuiAt > RefreshMs;
+        bool identity = groups.HasFlag(DetailGroups.Identity) && !d.IdentityLoaded;
+        bool cmd = groups.HasFlag(DetailGroups.CommandLine) && !d.CommandLineLoaded;
+        if (settings || gui || identity || cmd) Read(key, d, settings, gui, identity, cmd, now);
+    }
+
     public ProcessDetail? Get(ProcessKey key)
     {
         lock (_lock) return _map.GetValueOrDefault(key);

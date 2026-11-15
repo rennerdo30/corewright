@@ -441,6 +441,31 @@ export async function demoRequest(method: string, path: string, body?: unknown):
     }
     return hits
   }
+  // PM-53: one process with every detail, as /processes/{pid} returns it.
+  const one = p.match(/^\/processes\/(\d+)$/)
+  if (one) {
+    const row = processes.find((x) => x.pid === Number(one[1]))
+    if (!row) return undefined
+    const age = ((row.pid * 7919) % 86_400) * 1000 + 600_000
+    const args = row.name === 'obs64.exe' ? ' --startreplaybuffer --minimize-to-tray --scene "Gaming"'
+      : row.name === 'firefox.exe' ? ` -contentproc -childID ${row.pid % 40} -isForBrowser -prefsLen 31337 -prefMapSize 244787 -jsInitLen 231800 -parentBuildID 20261110094512 -greomni "C:\\Program Files\\Mozilla Firefox\\omni.ja" -appomni "C:\\Program Files\\Mozilla Firefox\\browser\\omni.ja" -appDir "C:\\Program Files\\Mozilla Firefox\\browser" {7b2f0c9a-5d1e-4e8b-9f3a-1c2d3e4f5a6b} 1 tab`
+      : row.name === 'cl.exe' ? ' /c /Zi /nologo /W4 /O2 /MP src\\render\\pipeline.cpp' : ''
+    return json({
+      ...row,
+      ext: {
+        ...row.ext,
+        started: now - age,
+        cpuTimeMs: Math.round(age * Math.max(0.002, row.cpu / 100)),
+        peakWorkingSet: row.workingSet * 1.4,
+        readBytes: row.workingSet * 3.1,
+        writeBytes: row.workingSet * 0.7,
+        elevated: row.session === 0,
+        commandLine: row.path ? `"${row.path}"${args}` : undefined,
+        gdiObjects: row.session === 0 ? 0 : 40 + (row.pid % 300),
+        userObjects: row.session === 0 ? 0 : 20 + (row.pid % 150),
+      },
+    })
+  }
   const explain = p.match(/^\/processes\/(\d+)\/explain$/)
   if (explain) {
     const row = processes.find((x) => x.pid === Number(explain[1]))
