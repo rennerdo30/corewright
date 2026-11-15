@@ -1,5 +1,5 @@
 import { useVirtualizer } from '@tanstack/react-virtual'
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { api } from '../api'
 import { ContextMenu, type MenuEntry } from '../components/ContextMenu'
 import { Dot, PageHeader, joinAnd } from '../components/PageHeader'
@@ -494,10 +494,20 @@ function ProcessPanel({ p, title, parent, onSelect, onClose, onCreateRule, onCop
 }) {
   // One process with every detail group (PM-53); the list row fills in until the first answer arrives.
   const detail = usePoll(() => api.process(p.pid), 2000)
-  const explain = usePoll(() => api.explain(p.pid), 2000)
-  const d = detail.data?.pid === p.pid ? detail.data : p
-  const x = d.ext
-  const loaded = !!detail.data
+  // An answer counts only for the process the list shows under this PID (Windows reuses PIDs while the panel is open).
+  const fresh = detail.data && detail.data.pid === p.pid && detail.data.name === p.name && detail.data.path === p.path ? detail.data : undefined
+  const d = fresh ?? p
+  const x = fresh?.ext
+  const loaded = !!fresh
+  // A new start time under the same PID is another process: the rule list starts over instead of showing the old one's.
+  const started = x?.started
+  const seen = useRef<number | undefined>(undefined)
+  const [restarts, setRestarts] = useState(0)
+  useEffect(() => {
+    if (started === undefined) return
+    if (seen.current !== undefined && seen.current !== started) setRestarts((n) => n + 1)
+    seen.current = started
+  }, [started])
   const applied = d.applied ?? []
   const settings = SETTING_COLUMNS.map((c) => {
     const raw = c.value(d)
@@ -591,7 +601,7 @@ function ProcessPanel({ p, title, parent, onSelect, onClose, onCreateRule, onCop
         ))}
       </div>
 
-      <RuleEvaluation rules={explain.data?.rules} />
+      <RuleEvaluation key={restarts} pid={p.pid} />
 
       {!p.protected && (
         <button className="btn primary wide" onClick={() => onCreateRule(ruleFor(p))}>
@@ -627,8 +637,11 @@ function ServicesBlock({ p }: { p: ProcessRow }) {
 }
 
 /** Rules that set something on this process first, then matching-but-overruled ones, the rest collapsed. */
-function RuleEvaluation({ rules }: { rules?: ExplainRule[] }) {
+function RuleEvaluation({ pid }: { pid: number }) {
+  const explain = usePoll(() => api.explain(pid), 2000)
+  const rules: ExplainRule[] | undefined = explain.data?.pid === pid ? explain.data.rules : undefined
   const [showOthers, setShowOthers] = useState(false)
+  if (!explain.data) return <><h3>Rules</h3><div className="secondary">Reading rules…</div></>
   if (!rules?.length) return <><h3>Rules</h3><div className="secondary">No enabled rules.</div></>
   const applied = rules.filter((r) => r.active && r.won.length > 0)
   const overruled = rules.filter((r) => r.matches && !(r.active && r.won.length > 0))

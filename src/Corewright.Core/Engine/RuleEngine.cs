@@ -600,11 +600,13 @@ public sealed class RuleEngine(IActuator actuator, IEngineEventSink sink, Func<l
                 bool narrows = placedBy is { IsAutopilot: true } && !shell && (placedMask & WindowsCoreMask) != 0;
                 bool won = narrows || byWindows || (byIsolation && core0Removed);
                 string why = $"Core 0 (threads {AffinityParser.Format(WindowsCoreMask)}) is kept for Windows, interrupts and the shell.";
-                result.Add(new ExplainEntry(WindowsGuardId, WindowsGuard.Name, 0, won || userPlaced, !shell && !userPlaced,
-                    narrows ? [$"affinity (narrows {placedBy!.Name})"] : won ? ["affinity"] : [], userPlaced ? [$"affinity (to {placedBy!.Name})"] : [], null,
+                // A user or group rule that places the process is exempt from the core-0 trim (ApplyCoreGuards): not matching.
+                result.Add(new ExplainEntry(WindowsGuardId, WindowsGuard.Name, 0, won, !shell && !userPlaced,
+                    narrows ? [$"affinity (narrows {placedBy!.Name})"] : won ? ["affinity"] : [], [], null,
                     shell ? "Part of the Windows shell: it may use core 0."
+                        : userPlaced ? $"{why} {placedBy!.Name} places this process, so its cores stay as that rule sets them."
                         : narrows ? $"{why} The cores {placedBy!.Name} sets lose core 0."
-                        : won || userPlaced ? why : $"{why} This process does not run on it, so nothing changes."));
+                        : won ? why : $"{why} This process does not run on it, so nothing changes."));
             }
         }
         return result;
