@@ -299,3 +299,27 @@ strong.tone-critical { color: var(--critical); }
 .legend-item.isolated i { background: var(--accent); }
 .legend-item.windows i { background-image: repeating-linear-gradient(45deg, var(--text-3) 0 2px, transparent 2px 4px); border: 1px solid var(--stroke); }
 .die .core-head { gap: 4px; }
+
+/* Process details panel (PM-53): live tiles, command line, facts, settings with who set them. */
+.pd-tiles { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; margin: 4px 0 12px; }
+.pd-tiles > div { display: flex; flex-direction: column; gap: 2px; padding: 6px 8px; background: var(--layer); border: 1px solid var(--stroke-card); border-radius: var(--radius-control); min-width: 0; }
+.pd-tiles span { font-size: 12px; color: var(--secondary-text); }
+.pd-tiles strong { font-size: 14px; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pd-cmd { margin: -4px 0 12px; }
+.pd-cmd-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 2px; }
+.pd-cmd-head .icon.small { width: 28px; height: 24px; }
+.pd-cmd-text { margin-bottom: 4px; white-space: pre-wrap; word-break: break-word; line-height: 18px; color: var(--text); }
+.pd-cmd-text > .clamped { display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
+.pd-facts { margin-top: 4px; }
+.pd-facts > strong { font-weight: 500; min-width: 0; overflow-wrap: anywhere; }
+.pd-facts .link { font-weight: 500; text-align: right; }
+.pd-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.pd-head .tiny { font-weight: 400; }
+.pd-settings { display: flex; flex-direction: column; gap: 2px; font-size: 13px; }
+.pd-setting { display: grid; grid-template-columns: 1fr auto; column-gap: 12px; padding: 5px 10px; border-radius: var(--radius-control); }
+.pd-setting > span { color: var(--secondary-text); }
+.pd-setting > strong { font-weight: 600; text-align: right; }
+.pd-setting.quiet > strong { color: var(--text-3); font-weight: 400; }
+.pd-setting > em { grid-column: 1 / -1; justify-self: end; font-style: normal; font-size: 12px; color: var(--role, var(--accent)); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
+.pd-setting.set { background: color-mix(in srgb, var(--role, var(--accent)) 10%, transparent); box-shadow: inset 2px 0 0 var(--role, var(--accent)); }
+.pd-setting.set > strong { color: var(--role, var(--accent)); }

@@ -1,12 +1,12 @@
 import { useVirtualizer } from '@tanstack/react-virtual'
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { api } from '../api'
 import { ContextMenu, type MenuEntry } from '../components/ContextMenu'
 import { Dot, PageHeader, joinAnd } from '../components/PageHeader'
 import { ProcessIcon } from '../components/ProcessIcon'
 import { buildProcessMenu } from '../components/processMenu'
 import { bytes, newId, percent } from '../format'
-import { isHost, levelLabel, post, useDescriptions } from '../host'
+import { isHost, post, useDescriptions } from '../host'
 import { usePoll } from '../hooks'
 import { quickId, quickRule, quickSubject, setQuick } from '../quick'
 import { isServiceHost, serviceHostLabel, serviceLines, serviceSearchText } from '../services'
@@ -380,7 +380,18 @@ export function Processes({ onCreateRule }: { onCreateRule: (r: Rule) => void })
           </div>
         </div>
       </div>
-      {sel && <ProcessPanel p={sel} title={label(sel)} onClose={() => setSelected(undefined)} onCreateRule={onCreateRule} />}
+      {sel && (
+        <ProcessPanel
+          key={sel.pid}
+          p={sel}
+          title={label(sel)}
+          parent={sel.parentPid != null ? list.find((x) => x.pid === sel.parentPid) : undefined}
+          onSelect={setSelected}
+          onClose={() => setSelected(undefined)}
+          onCreateRule={onCreateRule}
+          onCopy={(text) => navigator.clipboard.writeText(text).then(() => notify('Copied'))}
+        />
+      )}
       {menu && (
         <ContextMenu
           x={menu.x}
@@ -419,8 +430,91 @@ function heat(level: number): React.CSSProperties | undefined {
   return { background: `color-mix(in srgb, var(--heat) ${Math.round(12 + v * 58)}%, transparent)` }
 }
 
-function ProcessPanel({ p, title, onClose, onCreateRule }: { p: ProcessRow; title: string; onClose: () => void; onCreateRule: (r: Rule) => void }) {
-  const explain = usePoll(() => api.explain(p.pid), 2000)
+/** "3 min ago", "2 h 5 min ago", "4 days ago". */
+function ago(ms: number): string {
+  const s = Math.max(0, Math.floor((Date.now() - ms) / 1000))
+  if (s < 60) return 'just now'
+  const m = Math.floor(s / 60)
+  if (m < 60) return `${m} min ago`
+  const h = Math.floor(m / 60)
+  if (h < 10 && m % 60) return `${h} h ${m % 60} min ago`
+  if (h < 48) return `${h} h ago`
+  return `${Math.floor(h / 24)} days ago`
+}
+
+/** Start time: "14:02" today, otherwise the date too, plus how long ago. */
+function startedText(ms: number): string {
+  const d = new Date(ms)
+  const today = d.toDateString() === new Date().toDateString()
+  const at = today ? d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' }) : d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+  return `${at} · ${ago(ms)}`
+}
+
+/** Tile values: "552 MB", "6.2 MB", "1.4 GB" (a decimal only below 10). */
+function compactBytes(n: number): string {
+  if (n < 1024) return '0 MB'
+  const units = ['KB', 'MB', 'GB', 'TB']
+  let v = n / 1024
+  let i = 0
+  while (v >= 1000 && i < units.length - 1) {
+    v /= 1024
+    i++
+  }
+  return `${v < 10 ? v.toFixed(1) : Math.round(v)} ${units[i]}`
+}
+
+/** CPU time as "1 h 4 min", "3 min 12 s", "0.4 s". */
+function cpuTime(ms: number): string {
+  if (ms < 10_000) return `${(ms / 1000).toFixed(1)} s`
+  const s = Math.floor(ms / 1000)
+  if (s < 3600) return `${Math.floor(s / 60)} min ${s % 60} s`
+  return `${Math.floor(s / 3600)} h ${Math.floor((s % 3600) / 60)} min`
+}
+
+/** The executable part of a command line (quoted or up to the first space), so the arguments can stand out. */
+function splitCommandLine(cmd: string): [string, string] {
+  const t = cmd.trimStart()
+  const end = t.startsWith('"') ? t.indexOf('"', 1) + 1 : t.indexOf(' ')
+  if (end <= 0) return [t, '']
+  return [t.slice(0, end), t.slice(end)]
+}
+
+/** Settings rows: the six core ones always, caps and network only when something is set. */
+const SETTING_COLUMNS = COLUMNS.filter((c) => c.slot)
+const ALWAYS_SHOWN = new Set(['cpuPriority', 'affinity', 'ioPriority', 'gpuPriority', 'memoryPriority', 'efficiencyMode'])
+
+function ProcessPanel({ p, title, parent, onSelect, onClose, onCreateRule, onCopy }: {
+  p: ProcessRow
+  title: string
+  parent?: ProcessRow
+  onSelect: (pid: number) => void
+  onClose: () => void
+  onCreateRule: (r: Rule) => void
+  onCopy: (text: string) => void
+}) {
+  // One process with every detail group (PM-53); the list row fills in until the first answer arrives.
+  const detail = usePoll(() => api.process(p.pid), 2000)
+  // An answer counts only for the process the list shows under this PID (Windows reuses PIDs while the panel is open).
+  const fresh = detail.data && detail.data.pid === p.pid && detail.data.name === p.name && detail.data.path === p.path ? detail.data : undefined
+  const d = fresh ?? p
+  const x = fresh?.ext
+  const loaded = !!fresh
+  // A new start time under the same PID is another process: the rule list starts over instead of showing the old one's.
+  const started = x?.started
+  const seen = useRef<number | undefined>(undefined)
+  const [restarts, setRestarts] = useState(0)
+  useEffect(() => {
+    if (started === undefined) return
+    if (seen.current !== undefined && seen.current !== started) setRestarts((n) => n + 1)
+    seen.current = started
+  }, [started])
+  const applied = d.applied ?? []
+  const settings = SETTING_COLUMNS.map((c) => {
+    const raw = c.value(d)
+    const a = applied.find((s) => s.slot === c.slot)
+    return { c, raw, a, text: raw === undefined ? '–' : c.format ? c.format(raw) : String(raw), quiet: !a && raw === c.defaultValue }
+  }).filter((s) => ALWAYS_SHOWN.has(s.c.slot!) || s.a || (s.raw !== undefined && !s.quiet))
+  const setCount = new Set(applied.map((a) => a.slot)).size
   return (
     <aside className="panel">
       <div className="panel-head">
@@ -430,7 +524,7 @@ function ProcessPanel({ p, title, onClose, onCreateRule }: { p: ProcessRow; titl
             <h2 title={title}>{title}</h2>
             <div className="secondary tiny">
               {p.name} · PID {p.pid}
-              {p.parentPid != null ? ` · parent ${p.parentPid}` : ''}
+              {x?.bits ? ` · ${x.bits}-bit` : ''}
             </div>
           </div>
         </div>
@@ -438,37 +532,76 @@ function ProcessPanel({ p, title, onClose, onCreateRule }: { p: ProcessRow; titl
           {'\uE711'}
         </button>
       </div>
-      {p.path && <div className="path">{p.path}</div>}
       {p.protected && <div className="banner warn">Protected system process. Corewright never changes it.</div>}
-      {p.services?.length ? <ServicesBlock p={p} /> : null}
 
-      <div className="kv">
-        <span>Priority</span>
-        <strong>{levelLabel(p.priority) || '–'}</strong>
-        <span>CPU</span>
-        <strong>{percent(p.cpu)}</strong>
-        <span>Private memory</span>
-        <strong>{bytes(p.privateBytes)}</strong>
-        <span>Working set</span>
-        <strong>{bytes(p.workingSet)}</strong>
-        <span>Threads · handles</span>
-        <strong>
-          {p.threads} · {p.handles}
-        </strong>
+      <div className="pd-tiles">
+        <div title="CPU now"><span>CPU</span><strong>{percent(d.cpu)}</strong></div>
+        <div title={`Private memory: ${bytes(d.privateBytes)}`}><span>Memory</span><strong>{compactBytes(d.privateBytes)}</strong></div>
+        <div title="Disk read and write now"><span>Disk/s</span><strong>{compactBytes(d.ioBytesPerSec)}</strong></div>
+        <div title="GPU now"><span>GPU</span><strong>{x?.gpu !== undefined ? percent(x.gpu) : '–'}</strong></div>
       </div>
 
-      <h3>Applied by Corewright</h3>
-      {p.applied?.length ? (
-        <div className="kv">
-          {p.applied.map((a) => (
-            <AppliedRow key={a.slot} slot={a.slot} value={levelLabel(a.value) || a.value} rule={a.ruleName} />
-          ))}
-        </div>
-      ) : (
-        <div className="secondary">Nothing. The process runs with its own settings.</div>
-      )}
+      {p.path && <div className="path" title="Program file">{p.path}</div>}
+      <CommandLine value={x?.commandLine} path={p.path} loaded={loaded} unreadable={p.pid === 0 || p.pid === 4} onCopy={onCopy} />
+      {p.services?.length ? <ServicesBlock p={p} /> : null}
 
-      <RuleEvaluation rules={explain.data?.rules} />
+      <div className="kv pd-facts">
+        <span>Started</span>
+        <strong>{x?.started ? startedText(x.started) : '–'}</strong>
+        <span>Parent</span>
+        <strong>
+          {parent ? (
+            <button className="link" onClick={() => onSelect(parent.pid)} title={parent.path ?? parent.name}>
+              {parent.name} · {parent.pid}
+            </button>
+          ) : (
+            'None running'
+          )}
+        </strong>
+        <span>User</span>
+        <strong title={x?.elevated ? 'Runs with administrator rights' : undefined}>
+          {x?.user ?? '–'}
+          {x?.elevated ? ' · admin' : ''}
+          {` · session ${d.session}`}
+        </strong>
+        <span>CPU time</span>
+        <strong>{x?.cpuTimeMs !== undefined ? cpuTime(x.cpuTimeMs) : '–'}</strong>
+        <span>Working set</span>
+        <strong>
+          {bytes(d.workingSet)}
+          {x?.peakWorkingSet ? <span className="secondary"> · peak {bytes(x.peakWorkingSet)}</span> : null}
+        </strong>
+        <span>Disk total</span>
+        <strong>{x?.readBytes !== undefined ? `${bytes(x.readBytes)} read · ${bytes(x.writeBytes ?? 0)} written` : '–'}</strong>
+        <span>Threads · handles</span>
+        <strong>
+          {d.threads.toLocaleString()} · {d.handles.toLocaleString()}
+        </strong>
+        {x?.gdiObjects || x?.userObjects ? (
+          <>
+            <span>GDI · USER objects</span>
+            <strong>
+              {(x.gdiObjects ?? 0).toLocaleString()} · {(x.userObjects ?? 0).toLocaleString()}
+            </strong>
+          </>
+        ) : null}
+      </div>
+
+      <h3 className="pd-head">
+        Settings
+        <span className="secondary tiny">{setCount ? `${setCount} set by Corewright` : 'none set by Corewright'}</span>
+      </h3>
+      <div className="pd-settings">
+        {settings.map((s) => (
+          <div key={s.c.id} className={`pd-setting ${s.a ? `set role-${ownerOf(s.a.ruleId)}` : ''} ${s.quiet ? 'quiet' : ''}`}>
+            <span>{s.c.label}</span>
+            <strong>{s.text || '–'}</strong>
+            {s.a && <em title={`Set by ${s.a.ruleName}`}>{s.a.ruleName}</em>}
+          </div>
+        ))}
+      </div>
+
+      <RuleEvaluation key={restarts} pid={p.pid} />
 
       {!p.protected && (
         <button className="btn primary wide" onClick={() => onCreateRule(ruleFor(p))}>
@@ -504,8 +637,11 @@ function ServicesBlock({ p }: { p: ProcessRow }) {
 }
 
 /** Rules that set something on this process first, then matching-but-overruled ones, the rest collapsed. */
-function RuleEvaluation({ rules }: { rules?: ExplainRule[] }) {
+function RuleEvaluation({ pid }: { pid: number }) {
+  const explain = usePoll(() => api.explain(pid), 2000)
+  const rules: ExplainRule[] | undefined = explain.data?.pid === pid ? explain.data.rules : undefined
   const [showOthers, setShowOthers] = useState(false)
+  if (!explain.data) return <><h3>Rules</h3><div className="secondary">Reading rules…</div></>
   if (!rules?.length) return <><h3>Rules</h3><div className="secondary">No enabled rules.</div></>
   const applied = rules.filter((r) => r.active && r.won.length > 0)
   const overruled = rules.filter((r) => r.matches && !(r.active && r.won.length > 0))
@@ -540,7 +676,7 @@ function RuleEvaluation({ rules }: { rules?: ExplainRule[] }) {
                   {r.ruleName}
                 </div>
                 <div className="tiny secondary">
-                  {!r.active ? 'waiting for “apply after”' : `everything it sets is owned by a higher rule (${r.lost.join(', ')})`}
+                  {r.unavailable ?? (!r.active ? (r.lost.length ? `overruled: ${r.lost.join(', ')}` : 'waiting for “apply after”') : r.lost.length ? `overruled: ${r.lost.join(', ')}` : r.reason ?? 'nothing to change')}
                 </div>
               </li>
             ))}
@@ -567,12 +703,47 @@ function RuleEvaluation({ rules }: { rules?: ExplainRule[] }) {
   )
 }
 
-function AppliedRow({ slot, value, rule }: { slot: string; value: string; rule: string }) {
+/** The full command line, the program part dimmed so the arguments stand out; long ones fold to four lines. */
+function CommandLine({ value, path, loaded, unreadable, onCopy }: { value?: string; path?: string; loaded: boolean; unreadable: boolean; onCopy: (text: string) => void }) {
+  const [open, setOpen] = useState(false)
+  if (unreadable) return null
+  if (!value)
+    return (
+      <div className="pd-cmd empty secondary tiny">
+        {loaded ? 'Command line not readable: a protected process, or another user’s without the installed service.' : 'Reading the command line…'}
+      </div>
+    )
+  const [program, args] = splitCommandLine(value)
+  if (!args.trim())
+    return (
+      <div className="pd-cmd empty secondary tiny" title={value}>
+        Started without command-line arguments.
+      </div>
+    )
+  // The program file is shown just above: here its name is enough, so the arguments get the space.
+  const unquoted = program.replace(/^"|"$/g, '')
+  const shownProgram = path && unquoted.toLowerCase() === path.toLowerCase() ? (unquoted.split('\\').pop() ?? unquoted) : program
+  const long = shownProgram.length + args.length > 220
   return (
-    <>
-      <span title={`Set by ${rule}`}>{slot}</span>
-      <strong>{value}</strong>
-    </>
+    <div className="pd-cmd">
+      <div className="pd-cmd-head">
+        <span className="secondary tiny">Command line</span>
+        <button className="icon small" onClick={() => onCopy(value)} aria-label="Copy command line" title="Copy command line">
+          {'\uE8C8'}
+        </button>
+      </div>
+      <div className="path pd-cmd-text">
+        <div className={long && !open ? 'clamped' : undefined}>
+          <span className="secondary" title={program}>{shownProgram}</span>
+          <span>{args}</span>
+        </div>
+      </div>
+      {long && (
+        <button className="link tiny" onClick={() => setOpen((v) => !v)}>
+          {open ? 'Show less' : 'Show all'}
+        </button>
+      )}
+    </div>
   )
 }
 

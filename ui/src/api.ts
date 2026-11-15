@@ -57,6 +57,8 @@ export const api = {
   background: () => request<BackgroundRow[]>('GET', '/autopilot/background'),
   placements: () => request<Placement[]>('GET', '/autopilot/placements'),
   autopilotPreview: () => request<{ pid: number; process: string; rule: string; slot: string; value: string; reason: string }[]>('GET', '/autopilot/preview'),
+  /** One process with every detail (PM-53): command line, user, start time, current settings. */
+  process: (pid: number) => request<ProcessRow>('GET', `/processes/${pid}`),
   explain: (pid: number) => request<Explain>('GET', `/processes/${pid}/explain`),
   rules: () => request<RuleSet>('GET', '/rules'),
   saveRules: (set: RuleSet) => request<RulesResult>('PUT', '/rules', set),

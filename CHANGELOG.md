@@ -3,6 +3,23 @@
 Release notes for every Corewright version, newest first. The release workflow publishes the section of a version
 as its GitHub release notes.
 
+## 0.1.0-beta.19
+
+### New
+
+- **More process details.** The details panel shows the full command line (arguments first, with a copy button;
+  long ones fold to four lines), when the process started, its parent (click to open it), the user and whether it
+  runs as administrator, CPU time, peak memory, total disk reads and writes, and live CPU, memory, disk and GPU.
+  One **Settings** list shows the process's current priority, cores, I/O, GPU and memory priority and efficiency
+  mode, and marks every value a rule set, in that rule's colour.
+- **API:** `GET /api/v1/processes/{pid}` returns one process with every detail.
+
+### Fixed
+
+- The details panel no longer says "Nothing applied" while listing "Isolation: kept off isolated cores — sets
+  affinity", or "owned by a higher rule ()" with an empty list. The isolation and core-0 guards now count as applied
+  only when they actually changed the process.
+
 ## 0.1.0-beta.18
 
 ### New

@@ -99,6 +99,7 @@ All endpoints are under `http://127.0.0.1:47830/api/v1` and need `Authorization:
 |---|---|
 | `GET status`, `GET system`, `GET topology` | Service state, live system data with history, CPU layout and core ranking |
 | `GET processes?include=ext,gpu,settings,identity,cmdline,gui` | Processes with the details you ask for |
+| `GET processes/{pid}` | One process with every detail: command line, user, start time, current settings |
 | `GET processes/{pid}/explain` | Which rules match and what they set |
 | `GET`/`PUT rules`, `POST rules/validate` | Read, replace or check the rule set |
 | `GET`/`PUT settings` | Autopilot and app settings |

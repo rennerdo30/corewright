@@ -566,17 +566,48 @@ public sealed class RuleEngine(IActuator actuator, IEngineEventSink sink, Func<l
         bool isolationOwner = owner[aff] is { } o && AffinityModes.IsIsolate(o.Values[aff]) && _reservations.ContainsKey(o.Id);
         if (!Paused && !p.IsProtected && p.GroupId is null && !isolationOwner)
         {
+            // A guard only "sets affinity" when it actually wrote this process (PM-54). Both trims are written as one
+            // value under the isolation guard while an isolation exists, so the original and applied masks tell which
+            // of the two removed something. A process that never ran on the trimmed cores is left alone.
+            var appliedAff = st is not null && st.IsApplied[aff] ? st.AppliedRule[aff] : null;
+            bool byIsolation = ReferenceEquals(appliedAff, IsolationGuard), byWindows = ReferenceEquals(appliedAff, WindowsGuard);
+            ulong original = st is not null ? (ulong)st.Original[aff] : 0, applied = st is not null ? (ulong)st.Applied[aff] : 0;
+            bool core0Removed = (byIsolation || byWindows) && (original & WindowsCoreMask) != 0 && (applied & WindowsCoreMask) == 0;
+            bool reservedRemoved = byIsolation && (original & ReservedMask) != 0 && (applied & ReservedMask) == 0;
+            var placedBy = owner[aff];
+            // A rule that places this process keeps the slot, but the guards trim its mask (ApplyCoreGuards): that trim is
+            // the guard's effect, so it counts only when the rule's mask really includes the trimmed cores (review P2).
+            ulong placedMask = 0;
+            if (placedBy is not null)
+            {
+                long v = placedBy.Values[aff];
+                placedMask = (ulong)(AffinityModes.IsDynamic(v) ? Placer?.Resolve(p, v, ctx) ?? 0 : v);
+            }
             if (ReservedMask != 0)
-                result.Add(new ExplainEntry(IsolationGuardId, IsolationGuard.Name, 0, true, true,
-                    owner[aff] is null ? ["affinity"] : [], owner[aff] is null ? [] : [$"affinity (narrows {owner[aff]!.Name})"], null,
-                    $"Cores {AffinityParser.Format(ReservedMask)} are isolated for {string.Join(", ", _reservations.Values.Select(v => v.RuleName))}; every other process stays off them."));
-            bool userPlaced = owner[aff] is { IsAutopilot: false };
+            {
+                bool narrows = (placedMask & ReservedMask) != 0;
+                bool won = narrows || (byIsolation && (reservedRemoved || !core0Removed));
+                string why = $"Cores {AffinityParser.Format(ReservedMask)} are isolated for {string.Join(", ", _reservations.Values.Select(v => v.RuleName))}; every other process stays off them.";
+                result.Add(new ExplainEntry(IsolationGuardId, IsolationGuard.Name, 0, won, true,
+                    narrows ? [$"affinity (narrows {placedBy!.Name})"] : won ? ["affinity"] : [], [], null,
+                    narrows ? $"{why} The cores {placedBy!.Name} sets lose the isolated ones."
+                        : won ? why : $"{why} This process does not run on them, so nothing changes."));
+            }
+            bool userPlaced = placedBy is { IsAutopilot: false };
             bool shell = WindowsShell.Is(p.Name);
             if (WindowsCoreMask != 0 && !FreezeAutopilot && !ObserveAutopilot)
-                result.Add(new ExplainEntry(WindowsGuardId, WindowsGuard.Name, 0, true, !shell && !userPlaced,
-                    owner[aff] is null && ReservedMask == 0 && !shell ? ["affinity"] : [],
-                    userPlaced ? [$"affinity (to {owner[aff]!.Name})"] : [], null,
-                    shell ? "Part of the Windows shell: it may use core 0." : $"Core 0 (threads {AffinityParser.Format(WindowsCoreMask)}) is kept for Windows, interrupts and the shell."));
+            {
+                bool narrows = placedBy is { IsAutopilot: true } && !shell && (placedMask & WindowsCoreMask) != 0;
+                bool won = narrows || byWindows || (byIsolation && core0Removed);
+                string why = $"Core 0 (threads {AffinityParser.Format(WindowsCoreMask)}) is kept for Windows, interrupts and the shell.";
+                // A user or group rule that places the process is exempt from the core-0 trim (ApplyCoreGuards): not matching.
+                result.Add(new ExplainEntry(WindowsGuardId, WindowsGuard.Name, 0, won, !shell && !userPlaced,
+                    narrows ? [$"affinity (narrows {placedBy!.Name})"] : won ? ["affinity"] : [], [], null,
+                    shell ? "Part of the Windows shell: it may use core 0."
+                        : userPlaced ? $"{why} {placedBy!.Name} places this process, so its cores stay as that rule sets them."
+                        : narrows ? $"{why} The cores {placedBy!.Name} sets lose core 0."
+                        : won ? why : $"{why} This process does not run on it, so nothing changes."));
+            }
         }
         return result;
     }
