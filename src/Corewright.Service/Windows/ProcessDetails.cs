@@ -21,6 +21,8 @@ internal sealed class ProcessDetail
     public int? Bits;
     public bool CommandLineLoaded;
     public string? CommandLine;
+    /// <summary>1 while one request reads this process; a concurrent request skips it and returns the cached values.</summary>
+    public int Reading;
 }
 
 /// <summary>
@@ -53,12 +55,7 @@ internal sealed unsafe class ProcessDetailsCache
             if (key.Pid is 0 or 4) continue;
             ProcessDetail d;
             lock (_lock) d = _map[key];
-            bool settings = groups.HasFlag(DetailGroups.Settings) && now - d.SettingsAt > RefreshMs;
-            bool gui = groups.HasFlag(DetailGroups.Gui) && now - d.GuiAt > RefreshMs;
-            bool identity = groups.HasFlag(DetailGroups.Identity) && !d.IdentityLoaded;
-            bool cmd = groups.HasFlag(DetailGroups.CommandLine) && !d.CommandLineLoaded;
-            if (!settings && !gui && !identity && !cmd) continue;
-            Read(key, d, settings, gui, identity, cmd, now);
+            Update(key, d, groups, now);
         }
     }
 
@@ -76,11 +73,28 @@ internal sealed unsafe class ProcessDetailsCache
             _lastUse = now;
             if (!_map.TryGetValue(key, out d)) _map[key] = d = new ProcessDetail();
         }
-        bool settings = groups.HasFlag(DetailGroups.Settings) && now - d.SettingsAt > RefreshMs;
-        bool gui = groups.HasFlag(DetailGroups.Gui) && now - d.GuiAt > RefreshMs;
-        bool identity = groups.HasFlag(DetailGroups.Identity) && !d.IdentityLoaded;
-        bool cmd = groups.HasFlag(DetailGroups.CommandLine) && !d.CommandLineLoaded;
-        if (settings || gui || identity || cmd) Read(key, d, settings, gui, identity, cmd, now);
+        Update(key, d, groups, now);
+    }
+
+    /// <summary>
+    /// Reads what is due for one process. The list and the details panel may ask at the same time: only one request
+    /// reads a process at a time (the throttle is checked after taking it), the other answers from the cache.
+    /// </summary>
+    private static void Update(ProcessKey key, ProcessDetail d, DetailGroups groups, long now)
+    {
+        if (Interlocked.Exchange(ref d.Reading, 1) != 0) return;
+        try
+        {
+            bool settings = groups.HasFlag(DetailGroups.Settings) && now - d.SettingsAt > RefreshMs;
+            bool gui = groups.HasFlag(DetailGroups.Gui) && now - d.GuiAt > RefreshMs;
+            bool identity = groups.HasFlag(DetailGroups.Identity) && !d.IdentityLoaded;
+            bool cmd = groups.HasFlag(DetailGroups.CommandLine) && !d.CommandLineLoaded;
+            if (settings || gui || identity || cmd) Read(key, d, settings, gui, identity, cmd, now);
+        }
+        finally
+        {
+            Volatile.Write(ref d.Reading, 0);
+        }
     }
 
     public ProcessDetail? Get(ProcessKey key)
